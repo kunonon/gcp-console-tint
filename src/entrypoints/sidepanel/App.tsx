@@ -463,7 +463,10 @@ function App() {
                     if (key != null) handleMatchTypeChange(key as MatchType);
                   }}
                 >
-                  <Select.Trigger className="h-8 min-w-0 rounded-md border border-border bg-transparent px-2 text-sm">
+                  {/* No gap utility here: Select.Indicator is absolutely positioned (see the
+                      .select__trigger override in style.css), so flex gap between it and
+                      Select.Value has no effect — spacing comes from that unlayered CSS instead. */}
+                  <Select.Trigger className="flex h-8 min-w-0 items-center rounded-md border border-border bg-transparent px-2 text-sm">
                     <Select.Value />
                     <Select.Indicator />
                   </Select.Trigger>
