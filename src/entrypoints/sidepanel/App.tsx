@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertDialog, Button, Card, Input, Switch, Tooltip } from '@heroui/react';
+import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import type { PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
 import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings, cloneProjectSettings } from '../../utils/settings';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
 import ColorSwatchField from '../../components/ColorSwatchField';
+import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -165,10 +166,6 @@ function App() {
   const [newRulePattern, setNewRulePattern] = useState('');
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  // The id of the rule pending a Delete confirmation (list page only), or null when the
-  // confirmation dialog is closed. A single id is enough since only one row's Delete can be
-  // in flight at a time.
-  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   // Native HTML5 drag-and-drop only lets an element itself be `draggable`; to restrict drag
   // initiation to the grip handle (rather than the whole row, e.g. its icon buttons or text)
   // we track whether the most recent mousedown landed on the grip, and cancel dragstart
@@ -240,16 +237,10 @@ function App() {
     save({ ...settings, projectRules: next });
   };
 
+  // Delete is confirm-gated via DeleteConfirmPopover (anchored to the row's Delete button);
+  // this handler is only ever invoked from that popover's confirm action.
   const handleDeleteRule = (id: string) => {
     save({ ...settings, projectRules: settings.projectRules.filter((r) => r.id !== id) });
-  };
-
-  // Delete is confirm-gated: clicking the row's Delete button only opens the AlertDialog
-  // (via setConfirmingDeleteId); the actual removal happens here, from the dialog's own
-  // "Delete" action. The dialog's onOpenChange resets confirmingDeleteId to null on every
-  // close path (Cancel, ESC, or this confirm), so this handler only needs to delete.
-  const handleConfirmDelete = () => {
-    if (confirmingDeleteId !== null) handleDeleteRule(confirmingDeleteId);
   };
 
   const handleGripMouseDown = () => {
@@ -394,8 +385,6 @@ function App() {
     updateCurrentSettings({ platformBarTextAuto: true });
   };
 
-  const confirmingRule = settings.projectRules.find((r) => r.id === confirmingDeleteId);
-
   const currentRule =
     view.type === 'detail' ? settings.projectRules.find((r) => r.id === view.ruleId) : undefined;
   // Falls back to the built-in defaults only for the transient frame before the "rule
@@ -494,18 +483,22 @@ function App() {
                       onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
                       hexHidableOnNarrow
                     />
-                    <IconButtonTooltip label="Remove color">
+                    <DeleteConfirmPopover
+                      message={`Remove "${entry.name || '(unnamed)'}"?`}
+                      confirmLabel="Remove"
+                      tooltipLabel="Remove color"
+                      onConfirm={() => handleRemoveColor(entry.id)}
+                    >
                       <Button
                         isIconOnly
                         variant="outline"
                         size="sm"
                         aria-label="Remove color"
                         className="shrink-0"
-                        onPress={() => handleRemoveColor(entry.id)}
                       >
                         <TrashIcon />
                       </Button>
-                    </IconButtonTooltip>
+                    </DeleteConfirmPopover>
                   </div>
                 ))}
                 <IconButtonTooltip label="Add color">
@@ -733,52 +726,22 @@ function App() {
                       <DuplicateIcon />
                     </Button>
                   </IconButtonTooltip>
-                  <IconButtonTooltip label="Delete">
-                    <Button
-                      isIconOnly
-                      variant="outline"
-                      size="sm"
-                      aria-label="Delete"
-                      className="shrink-0"
-                      onPress={() => setConfirmingDeleteId(rule.id)}
-                    >
+                  <DeleteConfirmPopover
+                    message={`Delete "${rule.pattern}"?`}
+                    confirmLabel="Delete"
+                    tooltipLabel="Delete"
+                    onConfirm={() => handleDeleteRule(rule.id)}
+                  >
+                    <Button isIconOnly variant="outline" size="sm" aria-label="Delete" className="shrink-0">
                       <TrashIcon />
                     </Button>
-                  </IconButtonTooltip>
+                  </DeleteConfirmPopover>
                 </div>
               ))}
             </div>
           )}
         </Card.Content>
       </Card>
-
-      <AlertDialog
-        isOpen={confirmingDeleteId !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirmingDeleteId(null);
-        }}
-      >
-        <AlertDialog.Backdrop isKeyboardDismissDisabled={false}>
-          <AlertDialog.Container>
-            <AlertDialog.Dialog>
-              <AlertDialog.Header>
-                <AlertDialog.Heading>Delete rule?</AlertDialog.Heading>
-              </AlertDialog.Header>
-              <AlertDialog.Body>
-                {confirmingRule && `"${confirmingRule.pattern}" will be permanently removed.`}
-              </AlertDialog.Body>
-              <AlertDialog.Footer>
-                <Button slot="close" variant="outline">
-                  Cancel
-                </Button>
-                <Button slot="close" variant="danger" onPress={handleConfirmDelete}>
-                  Delete
-                </Button>
-              </AlertDialog.Footer>
-            </AlertDialog.Dialog>
-          </AlertDialog.Container>
-        </AlertDialog.Backdrop>
-      </AlertDialog>
     </div>
   );
 }

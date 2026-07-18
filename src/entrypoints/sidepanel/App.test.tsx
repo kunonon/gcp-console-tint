@@ -95,6 +95,27 @@ async function closePicker(user: ReturnType<typeof userEvent.setup>) {
   });
 }
 
+// Opens a DeleteConfirmPopover by clicking its trigger button (e.g. a row's "Delete", or a
+// palette entry's "Remove color") and returns the opened popover.
+async function openDeleteConfirm(user: ReturnType<typeof userEvent.setup>, trigger: HTMLElement) {
+  await user.click(trigger);
+  return screen.findByRole('dialog');
+}
+
+// Opens the DeleteConfirmPopover from `trigger` and clicks its confirm action (labeled
+// `confirmLabel`, e.g. "Delete" or "Remove"), waiting for the popover to close afterward.
+async function confirmDelete(
+  user: ReturnType<typeof userEvent.setup>,
+  trigger: HTMLElement,
+  confirmLabel: string,
+) {
+  const popover = await openDeleteConfirm(user, trigger);
+  await user.click(within(popover).getByRole('button', { name: confirmLabel }));
+  await waitFor(() => {
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+}
+
 function getPaletteSwatch(dialog: HTMLElement, entryLabel: string): HTMLButtonElement {
   return within(dialog).getByRole('button', { name: entryLabel }) as HTMLButtonElement;
 }
@@ -449,7 +470,7 @@ describe('App', () => {
 
     // Remove the middle entry ("Color 2"), leaving ['Primary', 'Color 3'] (length 2).
     const removeButtons = within(getCard('Color palette')).getAllByRole('button', { name: 'Remove color' });
-    await user.click(removeButtons[1]);
+    await confirmDelete(user, removeButtons[1], 'Remove');
     await waitFor(async () => {
       expect((await getStoredSettings()).projectRules[0].settings.palette.map((e) => e.name)).toEqual([
         'Primary',
@@ -515,7 +536,7 @@ describe('App', () => {
 
     // "default" (Primary) is referenced by Top bar and Platform Bar; remove the second, unreferenced entry.
     const removeButtons = within(paletteCard).getAllByRole('button', { name: 'Remove color' });
-    await user.click(removeButtons[1]);
+    await confirmDelete(user, removeButtons[1], 'Remove');
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
@@ -525,6 +546,79 @@ describe('App', () => {
       expect(settings.topBarPaletteId).toBe('default');
       expect(settings.platformBarPaletteId).toBe('default');
     });
+  });
+
+  it('Remove color opens a confirmation popover naming the entry, without deleting yet (falls back to "(unnamed)")', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    const before = await getStoredSettings();
+    const paletteCard = getCard('Color palette');
+    const popover = await openDeleteConfirm(user, within(paletteCard).getByRole('button', { name: 'Remove color' }));
+
+    expect(popover.textContent).toContain('Remove "Primary"?');
+    expect(within(popover).getByRole('button', { name: 'Remove' })).toBeTruthy();
+    expect(await getStoredSettings()).toEqual(before);
+  });
+
+  it('Remove color popover falls back to "(unnamed)" in its message when the entry has an empty name', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    const nameInput = within(getCard('Color palette')).getByLabelText('Color name') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: '' } });
+    await waitFor(async () => {
+      expect((await getStoredSettings()).projectRules[0].settings.palette[0].name).toBe('');
+    });
+
+    const paletteCard = getCard('Color palette');
+    const popover = await openDeleteConfirm(user, within(paletteCard).getByRole('button', { name: 'Remove color' }));
+    expect(popover.textContent).toContain('Remove "(unnamed)"?');
+  });
+
+  it('clicking outside the Remove color confirmation popover leaves the entry and storage unchanged and closes it', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    const before = await getStoredSettings();
+    const paletteCard = getCard('Color palette');
+    // Grab a non-interactive reference before opening (the detail page's <h1>, which merely
+    // shows the rule pattern): see the equivalent Delete-popover test for why the reference
+    // must be captured before the popover opens. Not the "Color palette" switch label itself,
+    // since clicking that would toggle it rather than act as a neutral outside click.
+    const heading = screen.getByRole('heading', { name: 'my-project' });
+    await openDeleteConfirm(user, within(paletteCard).getByRole('button', { name: 'Remove color' }));
+    await user.click(heading);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(await getStoredSettings()).toEqual(before);
+  });
+
+  it('confirming Remove color deletes the palette entry and closes the popover', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    const paletteCard = getCard('Color palette');
+    await confirmDelete(user, within(paletteCard).getByRole('button', { name: 'Remove color' }), 'Remove');
+
+    await waitFor(async () => {
+      expect((await getStoredSettings()).projectRules[0].settings.palette).toHaveLength(0);
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('removing a palette entry clears its reference within the same rule only, leaving other rules unaffected', async () => {
@@ -537,7 +631,7 @@ describe('App', () => {
     await openRuleDetail(user, 'alpha');
 
     const paletteCard = getCard('Color palette');
-    await user.click(within(paletteCard).getByRole('button', { name: 'Remove color' }));
+    await confirmDelete(user, within(paletteCard).getByRole('button', { name: 'Remove color' }), 'Remove');
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
@@ -569,7 +663,7 @@ describe('App', () => {
     await closePicker(user);
 
     const paletteCard = getCard('Color palette');
-    await user.click(within(paletteCard).getByRole('button', { name: 'Remove color' }));
+    await confirmDelete(user, within(paletteCard).getByRole('button', { name: 'Remove color' }), 'Remove');
 
     await waitFor(async () => {
       const settings = (await getStoredSettings()).projectRules[0].settings;
@@ -667,7 +761,7 @@ describe('App', () => {
 
     const paletteCard = getCard('Color palette');
     const removeButton = within(paletteCard).getByRole('button', { name: 'Remove color' });
-    await user.click(removeButton);
+    await confirmDelete(user, removeButton, 'Remove');
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
@@ -1164,7 +1258,7 @@ describe('App', () => {
       expect(rules[0].settings.palette[0].color).toBe('#ff6d00');
     });
 
-    it('Delete opens a confirmation dialog naming the rule pattern, without deleting yet', async () => {
+    it('Delete opens a confirmation popover naming the rule pattern, without deleting yet', async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
@@ -1172,17 +1266,19 @@ describe('App', () => {
       await addRule(user, 'my-project');
       const before = await getStoredSettings();
 
-      await user.click(within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
+      const popover = await openDeleteConfirm(
+        user,
+        within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }),
+      );
 
-      const dialog = await screen.findByRole('alertdialog');
-      expect(within(dialog).getByText('Delete rule?')).toBeTruthy();
-      expect(dialog.textContent).toContain('"my-project" will be permanently removed.');
-      // No deletion has happened yet: only the dialog opened.
+      expect(popover.textContent).toContain('Delete "my-project"?');
+      expect(within(popover).getByRole('button', { name: 'Delete' })).toBeTruthy();
+      // No deletion has happened yet: only the popover opened.
       expect(await getStoredSettings()).toEqual(before);
       expect(getRuleRow('my-project')).toBeTruthy();
     });
 
-    it('Cancel in the delete confirmation dialog leaves the rule and storage unchanged and closes the dialog', async () => {
+    it('clicking outside the delete confirmation popover leaves the rule and storage unchanged and closes it (no Cancel button; dismissal is cancel)', async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
@@ -1190,18 +1286,21 @@ describe('App', () => {
       await addRule(user, 'my-project');
       const before = await getStoredSettings();
 
-      await user.click(within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
-      const dialog = await screen.findByRole('alertdialog');
-      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      // Grab the reference before opening: react-aria's Popover marks the rest of the page
+      // aria-hidden while open (established Popover behavior in this app), which would make
+      // getByRole fail to find it if queried only after opening.
+      const heading = screen.getByRole('heading', { name: 'GCP Console Tint' });
+      await openDeleteConfirm(user, within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
+      await user.click(heading);
 
       await waitFor(() => {
-        expect(screen.queryByRole('alertdialog')).toBeNull();
+        expect(screen.queryByRole('dialog')).toBeNull();
       });
       expect(await getStoredSettings()).toEqual(before);
       expect(getRuleRow('my-project')).toBeTruthy();
     });
 
-    it('pressing Escape in the delete confirmation dialog closes it without deleting', async () => {
+    it('pressing Escape in the delete confirmation popover closes it without deleting', async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
@@ -1209,19 +1308,17 @@ describe('App', () => {
       await addRule(user, 'my-project');
       const before = await getStoredSettings();
 
-      await user.click(within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
-      await screen.findByRole('alertdialog');
-
+      await openDeleteConfirm(user, within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
       await user.keyboard('{Escape}');
 
       await waitFor(() => {
-        expect(screen.queryByRole('alertdialog')).toBeNull();
+        expect(screen.queryByRole('dialog')).toBeNull();
       });
       expect(await getStoredSettings()).toEqual(before);
       expect(getRuleRow('my-project')).toBeTruthy();
     });
 
-    it('confirming Delete in the dialog removes the rule from the list and storage, and closes the dialog', async () => {
+    it('confirming Delete in the popover removes the rule from the list and storage, and closes the popover', async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
@@ -1229,15 +1326,13 @@ describe('App', () => {
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
 
-      await user.click(within(getRuleRow('alpha')).getByRole('button', { name: 'Delete' }));
-      const dialog = await screen.findByRole('alertdialog');
-      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+      await confirmDelete(user, within(getRuleRow('alpha')).getByRole('button', { name: 'Delete' }), 'Delete');
 
       await waitFor(async () => {
         expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['beta']);
       });
       expect(screen.queryByText('alpha')).toBeNull();
-      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByRole('dialog')).toBeNull();
     });
 
     it('reorders rules via drag-and-drop from the grip handle, and persists the new order to storage', async () => {
