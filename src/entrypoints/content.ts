@@ -12,6 +12,11 @@ export default defineContentScript({
       return rounded;
     };
 
+    // Crossfade colors when the settings for the current page change (e.g. switching GCP
+    // projects). Honors the user's reduced-motion preference. Optional-chained because
+    // jsdom has no matchMedia.
+    const animate = !(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+
     const bar = document.createElement('div');
     bar.style.position = 'fixed';
     bar.style.top = '0';
@@ -19,6 +24,7 @@ export default defineContentScript({
     bar.style.right = '0';
     bar.style.zIndex = '2147483647';
     bar.style.pointerEvents = 'none';
+    if (animate) bar.style.transition = 'background-color 300ms ease, height 200ms ease';
     document.documentElement.appendChild(bar);
 
     const platformBarStyle = document.createElement('style');
@@ -61,6 +67,9 @@ export default defineContentScript({
         if (project.platformBarStripes) {
           declarations.push(`background-image: ${stripeGradient(platformBarColor)} !important;`);
         }
+        if (animate) {
+          declarations.push('transition: background-color 300ms ease !important;');
+        }
         rules.push(`#ocb-platform-bar { ${declarations.join(' ')} }`);
       }
       if (project.platformBarTextEnabled) {
@@ -69,7 +78,11 @@ export default defineContentScript({
               resolveColor(paletteEnabled, palette, project.platformBarPaletteId, project.platformBarColor),
             )
           : resolveColor(paletteEnabled, palette, project.platformBarTextPaletteId, project.platformBarTextColor);
-        rules.push(`.cfc-platform-bar-left *, .cfc-platform-bar-right * { color: ${textColor} !important; }`);
+        const textDeclarations = [`color: ${textColor} !important;`];
+        if (animate) {
+          textDeclarations.push('transition: color 300ms ease !important;');
+        }
+        rules.push(`.cfc-platform-bar-left *, .cfc-platform-bar-right * { ${textDeclarations.join(' ')} }`);
       }
       platformBarStyle.textContent = rules.join('\n');
     };

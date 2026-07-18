@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import contentScript from './entrypoints/content';
 
@@ -272,8 +272,10 @@ describe('content script', () => {
     const { bar, styleEl } = getElements();
     // topBar references the "default" palette entry -> resolves to the palette color.
     expect(hexOrRgb('#123456')).toContain(bar.style.backgroundColor);
-    // platformBar has no reference (paletteId: null) -> uses its own raw color.
-    expect(styleEl.textContent).toContain('#ocb-platform-bar { background-color: #000000 !important; }');
+    // platformBar has no reference (paletteId: null) -> uses its own raw color. (Not asserting
+    // a trailing "}" here: with transitions enabled, content.ts appends a
+    // `transition: ...` declaration after this one, inside the same rule.)
+    expect(styleEl.textContent).toContain('#ocb-platform-bar { background-color: #000000 !important;');
     expect(styleEl.textContent).toContain('color: #abcdef !important;');
   });
 
@@ -818,6 +820,66 @@ describe('content script', () => {
       await flush();
 
       expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+    });
+  });
+
+  describe('project-switch transitions', () => {
+    it('does not throw and treats motion as enabled when window.matchMedia is undefined (plain jsdom)', async () => {
+      expect(window.matchMedia).toBeUndefined();
+
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#111111' }));
+      setTestProjectLocation();
+
+      expect(() => runContentScript()).not.toThrow();
+      await flush();
+
+      const { bar, styleEl } = getElements();
+      expect(bar.style.transition).not.toBe('');
+      expect(styleEl.textContent).toContain('transition:');
+    });
+
+    it('applies background-color/height transitions to the bar element when motion is not reduced', async () => {
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#111111' }));
+      setTestProjectLocation();
+
+      runContentScript();
+      await flush();
+
+      const { bar } = getElements();
+      expect(bar.style.transition).toContain('background-color');
+      expect(bar.style.transition).toContain('height');
+    });
+
+    it('adds transition declarations to the generated Platform Bar and text CSS rules', async () => {
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#111111' }));
+      setTestProjectLocation();
+
+      runContentScript();
+      await flush();
+
+      const { styleEl } = getElements();
+      expect(styleEl.textContent).toContain('transition: background-color 300ms ease !important');
+      expect(styleEl.textContent).toContain('transition: color 300ms ease !important');
+    });
+
+    describe('when the user prefers reduced motion', () => {
+      afterEach(() => {
+        vi.unstubAllGlobals();
+      });
+
+      it('omits all transition declarations from both the bar element and the generated CSS rules', async () => {
+        vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+
+        await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#111111' }));
+        setTestProjectLocation();
+
+        runContentScript();
+        await flush();
+
+        const { bar, styleEl } = getElements();
+        expect(bar.style.transition).toBe('');
+        expect(styleEl.textContent).not.toContain('transition');
+      });
     });
   });
 });
