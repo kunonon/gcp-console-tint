@@ -11,7 +11,8 @@ function renderHarness(onConfirm: () => void) {
   return render(
     <div>
       <DeleteConfirmPopover
-        message='Delete "my-project"?'
+        question="Delete this rule?"
+        target="my-project"
         confirmLabel="Delete"
         tooltipLabel="Delete"
         onConfirm={onConfirm}
@@ -31,15 +32,54 @@ describe('DeleteConfirmPopover', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
   });
 
-  it('clicking the trigger opens a popover showing the message and a confirm button', async () => {
+  it('clicking the trigger opens a popover showing the question and target as separate lines, plus a confirm button', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     const dialog = screen.getByRole('dialog');
-    expect(dialog.textContent).toContain('Delete "my-project"?');
+    expect(within(dialog).getByText('Delete this rule?')).toBeTruthy();
+    expect(within(dialog).getByText('my-project')).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeTruthy();
+  });
+
+  it('renders the target on its own element, styled as monospace/muted so it reads as data rather than prose (not concatenated into the question text)', async () => {
+    const user = userEvent.setup();
+    renderHarness(() => {});
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = screen.getByRole('dialog');
+
+    const question = within(dialog).getByText('Delete this rule?');
+    const target = within(dialog).getByText('my-project');
+
+    // Two distinct elements, not one combined string.
+    expect(question).not.toBe(target);
+    expect(target.className).toContain('font-mono');
+    expect(target.className).toContain('text-muted');
+    expect(question.className).not.toContain('font-mono');
+  });
+
+  it('renders the confirm button at full width (w-full) rather than right-aligned', async () => {
+    const user = userEvent.setup();
+    renderHarness(() => {});
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = screen.getByRole('dialog');
+
+    const confirmButton = within(dialog).getByRole('button', { name: 'Delete' });
+    expect(confirmButton.className).toContain('w-full');
+    expect(confirmButton.className).not.toContain('self-end');
+  });
+
+  it('renders a Popover.Arrow pointing at the trigger', async () => {
+    const user = userEvent.setup();
+    renderHarness(() => {});
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(document.querySelector('[data-slot="popover-overlay-arrow-group"]')).toBeTruthy();
   });
 
   it('clicking the confirm button calls onConfirm and closes the popover', async () => {
@@ -102,11 +142,12 @@ describe('DeleteConfirmPopover', () => {
     expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull();
   });
 
-  it('renders distinct message and confirmLabel per instance (e.g. Remove color usage)', async () => {
+  it('renders distinct question/target/confirmLabel per instance (e.g. Remove color usage)', async () => {
     const user = userEvent.setup();
     render(
       <DeleteConfirmPopover
-        message='Remove "Primary"?'
+        question="Remove this color?"
+        target="Primary"
         confirmLabel="Remove"
         tooltipLabel="Remove color"
         onConfirm={() => {}}
@@ -117,7 +158,8 @@ describe('DeleteConfirmPopover', () => {
 
     await user.click(screen.getByRole('button', { name: 'Remove color' }));
     const dialog = screen.getByRole('dialog');
-    expect(dialog.textContent).toContain('Remove "Primary"?');
+    expect(within(dialog).getByText('Remove this color?')).toBeTruthy();
+    expect(within(dialog).getByText('Primary')).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeTruthy();
   });
 });

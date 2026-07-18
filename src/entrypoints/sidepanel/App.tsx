@@ -484,7 +484,8 @@ function App() {
                       hexHidableOnNarrow
                     />
                     <DeleteConfirmPopover
-                      message={`Remove "${entry.name || '(unnamed)'}"?`}
+                      question="Remove this color?"
+                      target={entry.name || '(unnamed)'}
                       confirmLabel="Remove"
                       tooltipLabel="Remove color"
                       onConfirm={() => handleRemoveColor(entry.id)}
@@ -727,7 +728,8 @@ function App() {
                     </Button>
                   </IconButtonTooltip>
                   <DeleteConfirmPopover
-                    message={`Delete "${rule.pattern}"?`}
+                    question="Delete this rule?"
+                    target={rule.pattern}
                     confirmLabel="Delete"
                     tooltipLabel="Delete"
                     onConfirm={() => handleDeleteRule(rule.id)}

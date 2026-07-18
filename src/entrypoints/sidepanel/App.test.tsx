@@ -559,12 +559,13 @@ describe('App', () => {
     const paletteCard = getCard('Color palette');
     const popover = await openDeleteConfirm(user, within(paletteCard).getByRole('button', { name: 'Remove color' }));
 
-    expect(popover.textContent).toContain('Remove "Primary"?');
+    expect(within(popover).getByText('Remove this color?')).toBeTruthy();
+    expect(within(popover).getByText('Primary')).toBeTruthy();
     expect(within(popover).getByRole('button', { name: 'Remove' })).toBeTruthy();
     expect(await getStoredSettings()).toEqual(before);
   });
 
-  it('Remove color popover falls back to "(unnamed)" in its message when the entry has an empty name', async () => {
+  it('Remove color popover falls back to "(unnamed)" in its target line when the entry has an empty name', async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
@@ -579,7 +580,8 @@ describe('App', () => {
 
     const paletteCard = getCard('Color palette');
     const popover = await openDeleteConfirm(user, within(paletteCard).getByRole('button', { name: 'Remove color' }));
-    expect(popover.textContent).toContain('Remove "(unnamed)"?');
+    expect(within(popover).getByText('Remove this color?')).toBeTruthy();
+    expect(within(popover).getByText('(unnamed)')).toBeTruthy();
   });
 
   it('clicking outside the Remove color confirmation popover leaves the entry and storage unchanged and closes it', async () => {
@@ -1271,11 +1273,15 @@ describe('App', () => {
         within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }),
       );
 
-      expect(popover.textContent).toContain('Delete "my-project"?');
+      expect(within(popover).getByText('Delete this rule?')).toBeTruthy();
+      expect(within(popover).getByText('my-project')).toBeTruthy();
       expect(within(popover).getByRole('button', { name: 'Delete' })).toBeTruthy();
-      // No deletion has happened yet: only the popover opened.
+      // No deletion has happened yet: only the popover opened. (Not also asserting the row's
+      // DOM presence here: the popover's target line intentionally repeats the same pattern
+      // text as its own element, and getByText, unlike getByRole, does not filter out the
+      // aria-hidden row underneath while the popover is open, so a getRuleRow() call here
+      // would ambiguously match both.)
       expect(await getStoredSettings()).toEqual(before);
-      expect(getRuleRow('my-project')).toBeTruthy();
     });
 
     it('clicking outside the delete confirmation popover leaves the rule and storage unchanged and closes it (no Cancel button; dismissal is cancel)', async () => {

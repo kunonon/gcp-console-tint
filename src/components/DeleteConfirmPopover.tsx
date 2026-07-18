@@ -1,7 +1,12 @@
 import { Button, Popover, Tooltip } from '@heroui/react';
 
 interface DeleteConfirmPopoverProps {
-  message: string;
+  /** Plain-language question, e.g. "Delete this rule?" (kept separate from `target` so a
+   * regex pattern or color name never runs into the surrounding sentence). */
+  question: string;
+  /** The specific item being acted on, e.g. a rule's pattern or a palette entry's name.
+   * Rendered on its own line in a monospace, muted style so it reads as data, not prose. */
+  target: string;
   confirmLabel: string;
   tooltipLabel: string;
   onConfirm: () => void;
@@ -20,8 +25,15 @@ interface DeleteConfirmPopoverProps {
 // element to track hover/focus on and doesn't care what's nested inside. tabIndex={-1} on
 // Tooltip.Trigger removes its wrapper from the Tab order for the same reason as
 // IconButtonTooltip in App.tsx (the child Button is already focusable).
+//
+// Concentric corners: the popover's own radius is min(32px, --radius-3xl) = 24px (confirmed
+// in @heroui/styles' generated CSS), and Popover.Dialog's padding here is p-3 = 12px, so the
+// confirm button's radius is pinned to 24 - 12 = 12px (= --radius-xl, an existing step in
+// this theme's radius scale) via `rounded-xl`, overriding the Button component's own default
+// (24px) so its corners trace the same center point as the popover's outer corners.
 export default function DeleteConfirmPopover({
-  message,
+  question,
+  target,
   confirmLabel,
   tooltipLabel,
   onConfirm,
@@ -33,9 +45,17 @@ export default function DeleteConfirmPopover({
         <Popover>
           <Popover.Trigger>{children}</Popover.Trigger>
           <Popover.Content>
+            <Popover.Arrow />
             <Popover.Dialog className="flex max-w-64 flex-col gap-2 p-3">
-              <span className="text-sm">{message}</span>
-              <Button slot="close" variant="danger" size="sm" className="self-end" onPress={onConfirm}>
+              <span className="text-sm">{question}</span>
+              <span className="truncate font-mono text-sm text-muted">{target}</span>
+              <Button
+                slot="close"
+                variant="danger"
+                size="sm"
+                className="w-full rounded-xl"
+                onPress={onConfirm}
+              >
                 {confirmLabel}
               </Button>
             </Popover.Dialog>
