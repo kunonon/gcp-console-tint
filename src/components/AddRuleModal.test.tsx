@@ -45,6 +45,28 @@ describe('AddRuleModal', () => {
     expect(within(dialog).getByRole('heading', { name: 'Add project rule' })).toBeTruthy();
   });
 
+  it('has no extra focusable wrapper: Modal.Trigger\'s own Pressable wrapper div is removed from the Tab order (tabindex=-1), leaving the trigger Button as the only stop', () => {
+    renderHarness(() => {});
+
+    const button = screen.getByRole('button', { name: 'Add rule' });
+    const wrapper = button.closest('[data-slot="modal-trigger"]') as HTMLElement | null;
+    expect(wrapper).toBeTruthy();
+    expect(wrapper!.tabIndex).toBe(-1);
+    expect(button.tabIndex).toBe(0);
+  });
+
+  it('reaches the trigger with a single Tab from the top of the document, and opens the modal by pressing Enter on it (keyboard-only, not just a pointer click)', async () => {
+    const user = userEvent.setup();
+    renderHarness(() => {});
+
+    await user.tab();
+    const button = screen.getByRole('button', { name: 'Add rule' });
+    expect(document.activeElement).toBe(button);
+
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+
   it('offers all four match types, in order, as radio options', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});

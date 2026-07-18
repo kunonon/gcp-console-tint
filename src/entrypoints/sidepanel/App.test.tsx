@@ -1040,17 +1040,32 @@ describe('App', () => {
       expect(button.tabIndex).toBe(0);
     }
 
+    // Add rule and Delete additionally nest inside a Modal.Trigger / Popover.Trigger, each of
+    // which renders its own Pressable wrapper div[role="button"] (tabbable by default) between
+    // the Tooltip.Trigger and the real button. AddRuleModal/DeleteConfirmPopover pass
+    // tabIndex={-1} to that trigger too, so it must be checked separately from the outer
+    // tooltip-trigger wrapper above (a bug here previously slipped past this test, since it only
+    // ever inspected the outermost wrapper).
+    function expectNoIntermediateWrapper(button: HTMLElement, dataSlot: string) {
+      const wrapper = button.closest(`[data-slot="${dataSlot}"]`) as HTMLElement | null;
+      expect(wrapper).toBeTruthy();
+      expect(wrapper!.tabIndex).toBe(-1);
+    }
+
     // List page: Edit / Duplicate / Delete on the rule row, plus Add rule.
     const row = getRuleRow('my-project');
     for (const label of ['Edit', 'Duplicate', 'Delete']) {
       expectSingleTabStop(within(row).getByRole('button', { name: label }));
     }
+    expectNoIntermediateWrapper(within(row).getByRole('button', { name: 'Delete' }), 'popover-trigger');
     expectSingleTabStop(screen.getByRole('button', { name: 'Add rule' }));
+    expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Add rule' }), 'modal-trigger');
 
     // Detail page: Back, Remove color, Add color.
     await openRuleDetail(user, 'my-project');
     expectSingleTabStop(screen.getByRole('button', { name: 'Back' }));
     expectSingleTabStop(screen.getByRole('button', { name: 'Remove color' }));
+    expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Remove color' }), 'popover-trigger');
     expectSingleTabStop(screen.getByRole('button', { name: 'Add color' }));
   });
 

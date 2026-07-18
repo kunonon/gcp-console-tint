@@ -63,7 +63,16 @@ export default function AddRuleModal({ onAdd, children }: AddRuleModalProps) {
     <Tooltip delay={500}>
       <Tooltip.Trigger tabIndex={-1}>
         <Modal isOpen={isOpen} onOpenChange={setIsOpen}>
-          <Modal.Trigger>{children}</Modal.Trigger>
+          {/* Modal.Trigger wraps its child in a Pressable div[role="button"] that is itself
+              tabbable by default, on top of our own already-focusable Button child — the same
+              redundant-wrapper shape as Tooltip.Trigger (see IconButtonTooltip in App.tsx).
+              Pressable's cloneElement merges props via mergeProps(pressProps, focusableProps,
+              child.props) with child.props last, so an explicit tabIndex={-1} here wins over
+              focusableProps' default tabIndex=0, removing the wrapper from the Tab order while
+              leaving the inner Button as the only stop. The wrapper's onClick (from pressProps)
+              still fires on the native button's own Enter/Space-triggered click event, which
+              bubbles up to it, so keyboard activation is unaffected. */}
+          <Modal.Trigger tabIndex={-1}>{children}</Modal.Trigger>
           <Modal.Backdrop>
             <Modal.Container size="sm">
               <Modal.Dialog>

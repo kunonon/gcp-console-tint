@@ -43,7 +43,12 @@ export default function DeleteConfirmPopover({
     <Tooltip delay={500}>
       <Tooltip.Trigger tabIndex={-1}>
         <Popover>
-          <Popover.Trigger>{children}</Popover.Trigger>
+          {/* tabIndex={-1} here removes Popover.Trigger's own Pressable wrapper div
+              (role="button", tabbable by default) from the Tab order, for the same reason and
+              via the same mergeProps(..., child.props) last-wins mechanism as Tooltip.Trigger's
+              own tabIndex={-1} above — see IconButtonTooltip in App.tsx. Without it, tabbing hit
+              both the wrapper and the real button inside `children` as two separate stops. */}
+          <Popover.Trigger tabIndex={-1}>{children}</Popover.Trigger>
           <Popover.Content>
             <Popover.Arrow />
             <Popover.Dialog className="flex max-w-64 flex-col gap-2 p-3">

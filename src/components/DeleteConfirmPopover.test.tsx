@@ -32,6 +32,28 @@ describe('DeleteConfirmPopover', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
   });
 
+  it('has no extra focusable wrapper: Popover.Trigger\'s own Pressable wrapper div is removed from the Tab order (tabindex=-1), leaving the trigger button as the only stop', () => {
+    renderHarness(() => {});
+
+    const button = screen.getByRole('button', { name: 'Delete' });
+    const wrapper = button.closest('[data-slot="popover-trigger"]') as HTMLElement | null;
+    expect(wrapper).toBeTruthy();
+    expect(wrapper!.tabIndex).toBe(-1);
+    expect(button.tabIndex).toBe(0);
+  });
+
+  it('reaches the trigger with a single Tab from the top of the document, and opens the popover by pressing Enter on it (keyboard-only, not just a pointer click)', async () => {
+    const user = userEvent.setup();
+    renderHarness(() => {});
+
+    await user.tab();
+    const button = screen.getByRole('button', { name: 'Delete' });
+    expect(document.activeElement).toBe(button);
+
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+
   it('clicking the trigger opens a popover showing the question and target as separate lines, plus a confirm button', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
