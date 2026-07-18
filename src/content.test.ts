@@ -83,8 +83,12 @@ function setLocation(url: string) {
   window.history.pushState({}, '', url);
 }
 
-function triggerLocationChange() {
-  window.dispatchEvent(new Event('wxt:locationchange'));
+// Mirrors WXT's WxtLocationChangeEvent payload: the handler must read the project id from
+// event.newUrl (the real event fires before window.location is committed).
+function triggerLocationChange(newUrl: string = location.href) {
+  const event = new Event('wxt:locationchange') as Event & { newUrl: URL };
+  event.newUrl = new URL(newUrl, location.origin);
+  window.dispatchEvent(event);
 }
 
 // Defaults schemaVersion to a valid/current value so existing tests that seed storage
@@ -616,6 +620,29 @@ describe('content script', () => {
 
     setLocation('/?project=my-project');
     triggerLocationChange();
+
+    expect(hexOrRgb('#222222')).toContain(getElements().bar.style.backgroundColor);
+  });
+
+  it('resolves the project from event.newUrl even when window.location has not been committed yet', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
+        projectRules: [
+          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+        ],
+      }),
+    );
+    setLocation('/');
+
+    runContentScript();
+    await flush();
+
+    expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+
+    // The real Navigation API `navigate` event fires BEFORE the URL is committed, so
+    // window.location still points at '/' here. Only event.newUrl carries the target URL.
+    triggerLocationChange('/?project=my-project');
 
     expect(hexOrRgb('#222222')).toContain(getElements().bar.style.backgroundColor);
   });

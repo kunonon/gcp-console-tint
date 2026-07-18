@@ -76,9 +76,9 @@ export default defineContentScript({
 
     let lastSettings: TintSettings = DEFAULT_SETTINGS;
 
-    const applySettings = (settings: TintSettings) => {
+    const applySettings = (settings: TintSettings, url: URL = new URL(location.href)) => {
       lastSettings = settings;
-      const projectId = new URLSearchParams(location.search).get('project');
+      const projectId = url.searchParams.get('project');
       const project = resolveProjectSettings(settings, projectId);
       applyProjectSettings(project);
     };
@@ -101,8 +101,11 @@ export default defineContentScript({
 
     // GCP Console is an SPA: the `?project=` query param can change without a full page
     // reload. Re-resolve and re-apply against the last known settings whenever that happens.
-    ctx.addEventListener(window, 'wxt:locationchange', () => {
-      applySettings(lastSettings);
+    // Resolve against the event's newUrl, NOT window.location: WXT dispatches this from the
+    // Navigation API's `navigate` event, which fires before the navigation commits, so
+    // window.location still points at the old URL at that moment.
+    ctx.addEventListener(window, 'wxt:locationchange', (event) => {
+      applySettings(lastSettings, event.newUrl);
     });
   },
 });
