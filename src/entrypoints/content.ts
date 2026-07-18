@@ -37,7 +37,8 @@ export default defineContentScript({
       return ownColor;
     };
 
-    const applyProjectSettings = (paletteEnabled: boolean, palette: PaletteEntry[], project: ProjectSettings) => {
+    const applyProjectSettings = (project: ProjectSettings) => {
+      const { paletteEnabled, palette } = project;
       if (project.topBarEnabled) {
         bar.style.display = '';
         bar.style.height = `${clampTopBarHeight(project.topBarHeight)}px`;
@@ -79,7 +80,7 @@ export default defineContentScript({
       lastSettings = settings;
       const projectId = new URLSearchParams(location.search).get('project');
       const project = resolveProjectSettings(settings, projectId);
-      applyProjectSettings(settings.paletteEnabled, settings.palette, project);
+      applyProjectSettings(project);
     };
 
     applySettings(DEFAULT_SETTINGS);

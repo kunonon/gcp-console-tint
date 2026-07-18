@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { loadSettings, resolveProjectSettings, DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS } from './settings';
+import {
+  loadSettings,
+  resolveProjectSettings,
+  cloneProjectSettings,
+  DEFAULT_SETTINGS,
+  DEFAULT_PROJECT_SETTINGS,
+} from './settings';
 
 const CURRENT_VERSION = '0.1.0';
 
@@ -55,8 +61,6 @@ describe('loadSettings', () => {
   it('reads data at exactly SCHEMA_MIN_VERSION, merging defaultProject with defaults', () => {
     const stored = {
       schemaVersion: '0.1.0',
-      paletteEnabled: true,
-      palette: [{ id: 'default', name: 'Primary', color: '#ff6d00' }],
       defaultProject: { topBarColor: '#654321' },
       projectRules: [],
     };
@@ -71,8 +75,6 @@ describe('loadSettings', () => {
   it('reads data with a schemaVersion newer than SCHEMA_MIN_VERSION as-is', () => {
     const stored = {
       schemaVersion: '9.9.9',
-      paletteEnabled: true,
-      palette: [{ id: 'default', name: 'Primary', color: '#ff6d00' }],
       defaultProject: { topBarColor: '#00ff00' },
       projectRules: [],
     };
@@ -81,6 +83,28 @@ describe('loadSettings', () => {
 
     expect(loaded.schemaVersion).toBe('9.9.9');
     expect(loaded.defaultProject.topBarColor).toBe('#00ff00');
+  });
+
+  // Schema change: paletteEnabled/palette moved from TintSettings (top-level) into each
+  // ProjectSettings. loadSettings() no longer reads any top-level palette fields, so v0 data
+  // still carrying them (even at a valid schemaVersion) has them silently dropped — every
+  // project (defaultProject and each rule) falls back to its own default palette. This is
+  // the intended breaking change, not a migration.
+  it('ignores a legacy top-level palette/paletteEnabled (pre-move schema); every project gets the default palette', () => {
+    const stored = {
+      schemaVersion: '0.1.0',
+      paletteEnabled: false,
+      palette: [{ id: 'custom', name: 'Custom', color: '#abcdef' }],
+      defaultProject: {},
+      projectRules: [{ id: '1', pattern: 'x', settings: {} }],
+    };
+
+    const loaded = loadSettings(stored, CURRENT_VERSION);
+
+    expect(loaded.defaultProject.paletteEnabled).toBe(true);
+    expect(loaded.defaultProject.palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+    expect(loaded.projectRules[0].settings.paletteEnabled).toBe(true);
+    expect(loaded.projectRules[0].settings.palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
   });
 
   // Schema change: the old `projects: Record<projectId, ProjectSettings>` map has been
@@ -136,9 +160,8 @@ describe('loadSettings', () => {
   });
 
   it('defaults to an empty projectRules array and default defaultProject when both are absent from otherwise-valid data', () => {
-    const loaded = loadSettings({ schemaVersion: '0.1.0', paletteEnabled: false }, CURRENT_VERSION);
+    const loaded = loadSettings({ schemaVersion: '0.1.0' }, CURRENT_VERSION);
 
-    expect(loaded.paletteEnabled).toBe(false);
     expect(loaded.defaultProject).toEqual(DEFAULT_PROJECT_SETTINGS);
     expect(loaded.projectRules).toEqual([]);
   });
@@ -181,6 +204,50 @@ describe('loadSettings', () => {
     expect(loaded.projectRules).toHaveLength(1);
     expect(typeof loaded.projectRules[0].id).toBe('string');
     expect(loaded.projectRules[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it('supplies the default palette when a projectRule settings.palette is missing or not an array', () => {
+    const loaded = loadSettings(
+      {
+        schemaVersion: '0.1.0',
+        defaultProject: {},
+        projectRules: [
+          { id: 'no-palette', pattern: 'a', settings: {} },
+          { id: 'non-array-palette', pattern: 'b', settings: { palette: 'not-an-array' } },
+        ],
+      },
+      CURRENT_VERSION,
+    );
+
+    expect(loaded.projectRules[0].settings.palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+    expect(loaded.projectRules[1].settings.palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+  });
+
+  it('keeps a valid palette array on a projectRule settings as-is', () => {
+    const customPalette = [{ id: 'custom', name: 'Custom', color: '#123123' }];
+    const loaded = loadSettings(
+      {
+        schemaVersion: '0.1.0',
+        defaultProject: {},
+        projectRules: [{ id: '1', pattern: 'a', settings: { palette: customPalette } }],
+      },
+      CURRENT_VERSION,
+    );
+
+    expect(loaded.projectRules[0].settings.palette).toEqual(customPalette);
+  });
+});
+
+describe('cloneProjectSettings', () => {
+  it('deep-copies the palette array so mutating the clone does not affect the original', () => {
+    const original = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
+    const clone = cloneProjectSettings(original);
+
+    clone.palette.push({ id: 'extra', name: 'Extra', color: '#000000' });
+    clone.palette[0].color = '#ffffff';
+
+    expect(original.palette).toHaveLength(1);
+    expect(original.palette[0].color).toBe(DEFAULT_PROJECT_SETTINGS.palette[0].color);
   });
 });
 

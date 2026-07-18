@@ -9,6 +9,8 @@ interface PaletteEntry {
 }
 
 interface ProjectSettings {
+  paletteEnabled: boolean;
+  palette: PaletteEntry[];
   topBarEnabled: boolean;
   topBarColor: string;
   topBarPaletteId: string | null;
@@ -32,8 +34,6 @@ interface ProjectRule {
 
 interface TintSettings {
   schemaVersion: string;
-  paletteEnabled: boolean;
-  palette: PaletteEntry[];
   defaultProject: ProjectSettings;
   projectRules: ProjectRule[];
 }
@@ -93,8 +93,6 @@ function triggerLocationChange() {
 // override for tests that specifically probe the discard/keep boundary.
 function tintSettings(partial: {
   schemaVersion?: string;
-  paletteEnabled?: boolean;
-  palette?: PaletteEntry[];
   defaultProject?: Partial<ProjectSettings>;
   projectRules?: { id?: string; pattern: string; settings?: Partial<ProjectSettings> }[];
 }) {
@@ -214,8 +212,8 @@ describe('content script', () => {
   it('follows the resolved palette color for stripe tinting on both Top bar and Platform Bar', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
-        palette: [{ id: 'default', name: 'Primary', color: '#ffff00' }],
         defaultProject: {
+          palette: [{ id: 'default', name: 'Primary', color: '#ffff00' }],
           topBarPaletteId: 'default',
           topBarStripes: true,
           platformBarPaletteId: 'default',
@@ -236,8 +234,8 @@ describe('content script', () => {
   it('applies settings already stored before load, including palette reference resolution', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
-        palette: [{ id: 'default', name: 'Primary', color: '#123456' }],
         defaultProject: {
+          palette: [{ id: 'default', name: 'Primary', color: '#123456' }],
           topBarPaletteId: 'default',
           platformBarColor: '#000000',
           platformBarPaletteId: null,
@@ -261,8 +259,11 @@ describe('content script', () => {
   it('resolves to the palette entry color when paletteId references an existing entry', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
-        palette: [{ id: 'default', name: 'Primary', color: '#111111' }],
-        defaultProject: { topBarPaletteId: 'default', topBarColor: '#999999' },
+        defaultProject: {
+          palette: [{ id: 'default', name: 'Primary', color: '#111111' }],
+          topBarPaletteId: 'default',
+          topBarColor: '#999999',
+        },
       }),
     );
 
@@ -276,8 +277,7 @@ describe('content script', () => {
   it('falls back to the item own color when paletteId does not match any palette entry', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
-        palette: [],
-        defaultProject: { topBarPaletteId: 'missing-id', topBarColor: '#222222' },
+        defaultProject: { palette: [], topBarPaletteId: 'missing-id', topBarColor: '#222222' },
       }),
     );
 
@@ -291,9 +291,12 @@ describe('content script', () => {
   it('falls back to the item own color when paletteEnabled is false, even with a valid reference', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
-        paletteEnabled: false,
-        palette: [{ id: 'default', name: 'Primary', color: '#111111' }],
-        defaultProject: { topBarPaletteId: 'default', topBarColor: '#333333' },
+        defaultProject: {
+          paletteEnabled: false,
+          palette: [{ id: 'default', name: 'Primary', color: '#111111' }],
+          topBarPaletteId: 'default',
+          topBarColor: '#333333',
+        },
       }),
     );
 
@@ -354,8 +357,11 @@ describe('content script', () => {
 
     await fakeBrowser.storage.local.set(
       tintSettings({
-        palette: [{ id: 'default', name: 'Primary', color: '#ff6d00' }],
-        defaultProject: { topBarPaletteId: null, topBarColor: '#00ff00' },
+        defaultProject: {
+          palette: [{ id: 'default', name: 'Primary', color: '#ff6d00' }],
+          topBarPaletteId: null,
+          topBarColor: '#00ff00',
+        },
       }),
     );
     await flush();
@@ -395,8 +401,11 @@ describe('content script', () => {
   it('auto text color follows the Platform Bar background resolved via a palette reference', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
-        palette: [{ id: 'default', name: 'Primary', color: '#000080' }],
-        defaultProject: { platformBarPaletteId: 'default', platformBarTextAuto: true },
+        defaultProject: {
+          palette: [{ id: 'default', name: 'Primary', color: '#000080' }],
+          platformBarPaletteId: 'default',
+          platformBarTextAuto: true,
+        },
       }),
     );
 
@@ -609,5 +618,46 @@ describe('content script', () => {
     triggerLocationChange();
 
     expect(hexOrRgb('#222222')).toContain(getElements().bar.style.backgroundColor);
+  });
+
+  it('resolves colors from each rule\'s own palette independently when the "project" param switches between rules', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
+        projectRules: [
+          {
+            id: 'rule-a',
+            pattern: '^project-a$',
+            settings: {
+              palette: [{ id: 'p', name: 'A Palette', color: '#aaaaaa' }],
+              topBarPaletteId: 'p',
+              topBarColor: '#cccccc',
+            },
+          },
+          {
+            id: 'rule-b',
+            pattern: '^project-b$',
+            settings: {
+              palette: [{ id: 'p', name: 'B Palette', color: '#bbbbbb' }],
+              topBarPaletteId: 'p',
+              topBarColor: '#dddddd',
+            },
+          },
+        ],
+      }),
+    );
+    setLocation('/?project=project-a');
+
+    runContentScript();
+    await flush();
+
+    // rule-a's own palette entry "p" resolves to its own color, not rule-b's.
+    expect(hexOrRgb('#aaaaaa')).toContain(getElements().bar.style.backgroundColor);
+
+    setLocation('/?project=project-b');
+    triggerLocationChange();
+
+    // Switching to rule-b resolves "p" against rule-b's own palette instead.
+    expect(hexOrRgb('#bbbbbb')).toContain(getElements().bar.style.backgroundColor);
   });
 });

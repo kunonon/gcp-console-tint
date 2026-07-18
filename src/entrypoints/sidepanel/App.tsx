@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Card, Input, Switch } from '@heroui/react';
 import type { PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
-import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings } from '../../utils/settings';
+import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings, cloneProjectSettings } from '../../utils/settings';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
 import ColorSwatchField from '../../components/ColorSwatchField';
 
@@ -183,7 +183,7 @@ function App() {
   const handleAddRule = () => {
     const pattern = newRulePattern.trim();
     if (!pattern) return;
-    const rule: ProjectRule = { id: crypto.randomUUID(), pattern, settings: { ...settings.defaultProject } };
+    const rule: ProjectRule = { id: crypto.randomUUID(), pattern, settings: cloneProjectSettings(settings.defaultProject) };
     save({ ...settings, projectRules: [...settings.projectRules, rule] });
     setNewRulePattern('');
   };
@@ -205,7 +205,7 @@ function App() {
     const copy: ProjectRule = {
       id: crypto.randomUUID(),
       pattern: original.pattern,
-      settings: { ...original.settings },
+      settings: cloneProjectSettings(original.settings),
     };
     const next = [...settings.projectRules];
     next.splice(index + 1, 0, copy);
@@ -257,40 +257,36 @@ function App() {
   };
 
   const handlePaletteEnabledChange = (isSelected: boolean) => {
-    save({ ...settings, paletteEnabled: isSelected });
+    updateCurrentSettings({ paletteEnabled: isSelected });
   };
 
   const handleAddColor = () => {
     const entry: PaletteEntry = {
       id: crypto.randomUUID(),
-      name: `Color ${settings.palette.length + 1}`,
+      name: `Color ${currentSettings.palette.length + 1}`,
       color: DEFAULT_PROJECT_SETTINGS.topBarColor,
     };
-    save({ ...settings, palette: [...settings.palette, entry] });
+    updateCurrentSettings({ palette: [...currentSettings.palette, entry] });
   };
 
   const handlePaletteNameChange = (id: string, name: string) => {
-    save({ ...settings, palette: settings.palette.map((e) => (e.id === id ? { ...e, name } : e)) });
+    updateCurrentSettings({ palette: currentSettings.palette.map((e) => (e.id === id ? { ...e, name } : e)) });
   };
 
   const handlePaletteColorChange = (id: string, color: string) => {
-    save({ ...settings, palette: settings.palette.map((e) => (e.id === id ? { ...e, color } : e)) });
+    updateCurrentSettings({ palette: currentSettings.palette.map((e) => (e.id === id ? { ...e, color } : e)) });
   };
 
+  // Palette entries and their references are scoped to the currently-edited project only;
+  // removing an entry here does not touch any other rule's or Default's palette/references.
   const handleRemoveColor = (id: string) => {
-    const clearReference = (project: ProjectSettings): ProjectSettings => ({
-      ...project,
-      topBarPaletteId: project.topBarPaletteId === id ? null : project.topBarPaletteId,
-      platformBarPaletteId: project.platformBarPaletteId === id ? null : project.platformBarPaletteId,
+    updateCurrentSettings({
+      palette: currentSettings.palette.filter((e) => e.id !== id),
+      topBarPaletteId: currentSettings.topBarPaletteId === id ? null : currentSettings.topBarPaletteId,
+      platformBarPaletteId:
+        currentSettings.platformBarPaletteId === id ? null : currentSettings.platformBarPaletteId,
       platformBarTextPaletteId:
-        project.platformBarTextPaletteId === id ? null : project.platformBarTextPaletteId,
-    });
-
-    save({
-      ...settings,
-      palette: settings.palette.filter((e) => e.id !== id),
-      defaultProject: clearReference(settings.defaultProject),
-      projectRules: settings.projectRules.map((r) => ({ ...r, settings: clearReference(r.settings) })),
+        currentSettings.platformBarTextPaletteId === id ? null : currentSettings.platformBarTextPaletteId,
     });
   };
 
@@ -355,22 +351,22 @@ function App() {
   const currentSettings: ProjectSettings = currentRule ? currentRule.settings : settings.defaultProject;
 
   const topBarEffectiveColor = resolveColor(
-    settings.paletteEnabled,
-    settings.palette,
+    currentSettings.paletteEnabled,
+    currentSettings.palette,
     currentSettings.topBarPaletteId,
     currentSettings.topBarColor,
   );
   const platformBarEffectiveColor = resolveColor(
-    settings.paletteEnabled,
-    settings.palette,
+    currentSettings.paletteEnabled,
+    currentSettings.palette,
     currentSettings.platformBarPaletteId,
     currentSettings.platformBarColor,
   );
   const platformBarTextEffectiveColor = currentSettings.platformBarTextAuto
     ? contrastTextColor(platformBarEffectiveColor)
     : resolveColor(
-        settings.paletteEnabled,
-        settings.palette,
+        currentSettings.paletteEnabled,
+        currentSettings.palette,
         currentSettings.platformBarTextPaletteId,
         currentSettings.platformBarTextColor,
       );
@@ -417,6 +413,57 @@ function App() {
           <Card.Content className="flex flex-col gap-2">
             <Switch
               className="w-full"
+              isSelected={currentSettings.paletteEnabled}
+              onChange={handlePaletteEnabledChange}
+            >
+              <Switch.Content className="flex w-full items-center justify-between">
+                Color palette
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Content>
+            </Switch>
+            {currentSettings.paletteEnabled && (
+              <div className="flex flex-col gap-2 border-t border-border pt-2">
+                {currentSettings.palette.map((entry) => (
+                  <div key={entry.id} className="@container flex items-center justify-between gap-2">
+                    <Input
+                      aria-label="Color name"
+                      placeholder="Name"
+                      value={entry.name}
+                      onChange={(e) => handlePaletteNameChange(entry.id, e.target.value)}
+                      className={nameInputClassName}
+                    />
+                    <ColorSwatchField
+                      ariaLabel={`${entry.name || '(unnamed)'} color`}
+                      value={entry.color}
+                      onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
+                      hexHidableOnNarrow
+                    />
+                    <Button
+                      isIconOnly
+                      variant="outline"
+                      size="sm"
+                      aria-label="Remove color"
+                      className="shrink-0"
+                      onPress={() => handleRemoveColor(entry.id)}
+                    >
+                      <TrashIcon />
+                    </Button>
+                  </div>
+                ))}
+                <Button isIconOnly variant="outline" aria-label="Add color" onPress={handleAddColor}>
+                  <PlusIcon />
+                </Button>
+              </div>
+            )}
+          </Card.Content>
+        </Card>
+
+        <Card>
+          <Card.Content className="flex flex-col gap-2">
+            <Switch
+              className="w-full"
               isSelected={currentSettings.topBarEnabled}
               onChange={handleTopBarEnabledChange}
             >
@@ -433,8 +480,8 @@ function App() {
                   <span className="text-sm">Color</span>
                   <PaletteColorPicker
                     ariaLabel="Top bar color"
-                    paletteEnabled={settings.paletteEnabled}
-                    palette={settings.palette}
+                    paletteEnabled={currentSettings.paletteEnabled}
+                    palette={currentSettings.palette}
                     paletteId={currentSettings.topBarPaletteId}
                     customColor={currentSettings.topBarColor}
                     effectiveColor={topBarEffectiveColor}
@@ -494,8 +541,8 @@ function App() {
                   <span className="text-sm">Color</span>
                   <PaletteColorPicker
                     ariaLabel="Platform Bar color"
-                    paletteEnabled={settings.paletteEnabled}
-                    palette={settings.palette}
+                    paletteEnabled={currentSettings.paletteEnabled}
+                    palette={currentSettings.palette}
                     paletteId={currentSettings.platformBarPaletteId}
                     customColor={currentSettings.platformBarColor}
                     effectiveColor={platformBarEffectiveColor}
@@ -540,8 +587,8 @@ function App() {
                   <span className="text-sm">Color</span>
                   <PaletteColorPicker
                     ariaLabel="Platform Bar text color"
-                    paletteEnabled={settings.paletteEnabled}
-                    palette={settings.palette}
+                    paletteEnabled={currentSettings.paletteEnabled}
+                    palette={currentSettings.palette}
                     paletteId={currentSettings.platformBarTextPaletteId}
                     customColor={currentSettings.platformBarTextColor}
                     effectiveColor={platformBarTextEffectiveColor}
@@ -645,53 +692,6 @@ function App() {
               <PlusIcon />
             </Button>
           </div>
-        </Card.Content>
-      </Card>
-
-      <Card>
-        <Card.Content className="flex flex-col gap-2">
-          <Switch className="w-full" isSelected={settings.paletteEnabled} onChange={handlePaletteEnabledChange}>
-            <Switch.Content className="flex w-full items-center justify-between">
-              Color palette
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-            </Switch.Content>
-          </Switch>
-          {settings.paletteEnabled && (
-            <div className="flex flex-col gap-2 border-t border-border pt-2">
-              {settings.palette.map((entry) => (
-                <div key={entry.id} className="@container flex items-center justify-between gap-2">
-                  <Input
-                    aria-label="Color name"
-                    placeholder="Name"
-                    value={entry.name}
-                    onChange={(e) => handlePaletteNameChange(entry.id, e.target.value)}
-                    className={nameInputClassName}
-                  />
-                  <ColorSwatchField
-                    ariaLabel={`${entry.name || '(unnamed)'} color`}
-                    value={entry.color}
-                    onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
-                    hexHidableOnNarrow
-                  />
-                  <Button
-                    isIconOnly
-                    variant="outline"
-                    size="sm"
-                    aria-label="Remove color"
-                    className="shrink-0"
-                    onPress={() => handleRemoveColor(entry.id)}
-                  >
-                    <TrashIcon />
-                  </Button>
-                </div>
-              ))}
-              <Button isIconOnly variant="outline" aria-label="Add color" onPress={handleAddColor}>
-                <PlusIcon />
-              </Button>
-            </div>
-          )}
         </Card.Content>
       </Card>
     </div>

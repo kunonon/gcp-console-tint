@@ -11,6 +11,8 @@ export const DEFAULT_TOP_BAR_HEIGHT = 4;
 export const SCHEMA_MIN_VERSION = '0.1.0';
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
+  paletteEnabled: true,
+  palette: [{ id: 'default', name: 'Primary', color: DEFAULT_COLOR }],
   topBarEnabled: true,
   topBarColor: DEFAULT_COLOR,
   topBarPaletteId: 'default',
@@ -26,16 +28,34 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   platformBarTextAuto: false,
 };
 
+// ProjectSettings contains an array (palette); a spread copy would share it by reference,
+// so rule add/duplicate must go through this instead.
+export function cloneProjectSettings(settings: ProjectSettings): ProjectSettings {
+  return { ...settings, palette: settings.palette.map((entry) => ({ ...entry })) };
+}
+
 export const DEFAULT_SETTINGS: TintSettings = {
   schemaVersion: SCHEMA_MIN_VERSION,
-  paletteEnabled: true,
-  palette: [{ id: 'default', name: 'Primary', color: DEFAULT_COLOR }],
-  defaultProject: { ...DEFAULT_PROJECT_SETTINGS },
+  defaultProject: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS),
   projectRules: [],
 };
 
 function mergeProjectSettings(stored: Partial<ProjectSettings> | null | undefined): ProjectSettings {
-  return { ...DEFAULT_PROJECT_SETTINGS, ...(stored ?? {}) };
+  const base = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
+  if (stored == null || typeof stored !== 'object') return base;
+  const merged: ProjectSettings = { ...base, ...stored };
+  merged.palette = Array.isArray(stored.palette)
+    ? stored.palette.map((entry) => ({ ...entry }))
+    : base.palette;
+  return merged;
+}
+
+function freshDefaults(currentVersion: string): TintSettings {
+  return {
+    schemaVersion: currentVersion,
+    defaultProject: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS),
+    projectRules: [],
+  };
 }
 
 // Reads whatever is in storage and either returns it (merged with defaults for forward
@@ -47,12 +67,12 @@ function mergeProjectSettings(stored: Partial<ProjectSettings> | null | undefine
 // currently-running extension version.
 export function loadSettings(stored: unknown, currentVersion: string): TintSettings {
   if (stored == null || typeof stored !== 'object') {
-    return { ...DEFAULT_SETTINGS, schemaVersion: currentVersion };
+    return freshDefaults(currentVersion);
   }
   const raw = stored as Record<string, unknown>;
   const schemaVersion = raw.schemaVersion;
   if (typeof schemaVersion !== 'string' || compareVersions(schemaVersion, SCHEMA_MIN_VERSION) < 0) {
-    return { ...DEFAULT_SETTINGS, schemaVersion: currentVersion };
+    return freshDefaults(currentVersion);
   }
 
   const projectRules: ProjectRule[] = [];
@@ -71,8 +91,6 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
 
   return {
     schemaVersion,
-    paletteEnabled: (raw.paletteEnabled as boolean) ?? DEFAULT_SETTINGS.paletteEnabled,
-    palette: (raw.palette as TintSettings['palette']) ?? DEFAULT_SETTINGS.palette,
     defaultProject: mergeProjectSettings(raw.defaultProject as Partial<ProjectSettings>),
     projectRules,
   };

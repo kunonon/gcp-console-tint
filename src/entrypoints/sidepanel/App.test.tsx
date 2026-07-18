@@ -11,6 +11,8 @@ interface PaletteEntry {
 }
 
 interface ProjectSettings {
+  paletteEnabled: boolean;
+  palette: PaletteEntry[];
   topBarEnabled: boolean;
   topBarColor: string;
   topBarPaletteId: string | null;
@@ -34,8 +36,6 @@ interface ProjectRule {
 
 interface StoredTintSettings {
   schemaVersion: string;
-  paletteEnabled: boolean;
-  palette: PaletteEntry[];
   defaultProject: ProjectSettings;
   projectRules: ProjectRule[];
 }
@@ -199,11 +199,17 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  it('shows default state: palette entry, and Top bar/Platform Bar triggers show the referenced palette name while the text color trigger shows the Custom hex', async () => {
+  it('shows default state: on the list page just the Default row and Add row; the Default detail page shows the palette entry and Top bar/Platform Bar triggers referencing it', async () => {
     const user = userEvent.setup();
     render(<App />);
+    await screen.findByLabelText('New rule pattern');
 
-    const paletteSwitch = (await screen.findByRole('switch', { name: 'Color palette' })) as HTMLInputElement;
+    expect(getAllRuleRows()).toHaveLength(0);
+    expect(getDefaultRow()).toBeTruthy();
+
+    await openDefaultDetail(user);
+
+    const paletteSwitch = screen.getByRole('switch', { name: 'Color palette' }) as HTMLInputElement;
     expect(paletteSwitch.checked).toBe(true);
 
     const paletteCard = getCard('Color palette');
@@ -211,7 +217,6 @@ describe('App', () => {
     expect(nameInputs).toHaveLength(1);
     expect(nameInputs[0].value).toBe('Primary');
 
-    await openDefaultDetail(user);
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
     expect(screen.getByRole('button', { name: 'Platform Bar color' }).textContent).toContain('Primary');
     expect(screen.getByRole('button', { name: 'Platform Bar text color' }).textContent).toContain('#ffffff');
@@ -219,7 +224,7 @@ describe('App', () => {
 
   it('shows an empty rule list with just the Default row and the Add row by default', async () => {
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
 
     expect(getAllRuleRows()).toHaveLength(0);
     expect(getDefaultRow()).toBeTruthy();
@@ -231,7 +236,7 @@ describe('App', () => {
   it('opens the Top bar picker showing the referenced palette entry active and Custom inactive', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -247,22 +252,22 @@ describe('App', () => {
   it('Top bar: selecting a different palette swatch saves the reference and shows its name on the trigger', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).palette).toHaveLength(2);
+      expect((await getStoredSettings()).defaultProject.palette).toHaveLength(2);
     });
 
     const colorInputs = paletteCard.querySelectorAll('input[type="color"]');
     fireEvent.change(colorInputs[1], { target: { value: '#00ff00' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).palette[1].color).toBe('#00ff00');
+      expect((await getStoredSettings()).defaultProject.palette[1].color).toBe('#00ff00');
     });
-    const secondEntry = (await getStoredSettings()).palette[1];
+    const secondEntry = (await getStoredSettings()).defaultProject.palette[1];
 
-    await openDefaultDetail(user);
     const dialog = await openPicker(user, 'Top bar color');
     fireEvent.click(getPaletteSwatch(dialog, secondEntry.name));
 
@@ -278,7 +283,7 @@ describe('App', () => {
   it('Top bar: changing the Custom color in the picker clears the palette reference and shows the hex on the trigger', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -297,7 +302,7 @@ describe('App', () => {
   it('Platform Bar: changing the Custom color in the picker clears the palette reference', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const dialog = await openPicker(user, 'Platform Bar color');
@@ -313,7 +318,7 @@ describe('App', () => {
   it('Platform Bar text color: selecting a palette entry via the picker saves the reference and shows its name on the trigger', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const dialog = await openPicker(user, 'Platform Bar text color');
@@ -327,18 +332,15 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Platform Bar text color' }).textContent).toContain('Primary');
   });
 
-  it('a palette entry color change is reflected in the effective color of any rule that references it (not a one-shot copy)', async () => {
+  it('a palette entry color change is reflected in the effective color of the same project (not a one-shot copy)', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const paletteColorInput = getColorInput(getCard('Color palette'));
     fireEvent.change(paletteColorInput, { target: { value: '#123456' } });
-    await waitFor(async () => {
-      expect((await getStoredSettings()).palette[0].color).toBe('#123456');
-    });
 
-    await openDefaultDetail(user);
     await waitFor(() => {
       expect(hexOrRgb('#123456')).toContain(getTriggerSwatch('Top bar color').style.backgroundColor);
     });
@@ -347,24 +349,24 @@ describe('App', () => {
 
     const stored = await getStoredSettings();
     expect(stored.defaultProject.topBarColor).toBe('#ff6d00');
-    expect(stored.palette[0].color).toBe('#123456');
+    expect(stored.defaultProject.palette[0].color).toBe('#123456');
   });
 
   it('adds a new palette entry via the "Add color" icon button and exposes it in the picker', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.palette).toHaveLength(2);
-      expect(stored.palette[1].name).toBe('Color 2');
+      expect(stored.defaultProject.palette).toHaveLength(2);
+      expect(stored.defaultProject.palette[1].name).toBe('Color 2');
     });
 
-    await openDefaultDetail(user);
     const dialog = await openPicker(user, 'Top bar color');
     expect(getPaletteSwatch(dialog, 'Color 2')).toBeTruthy();
   });
@@ -372,7 +374,8 @@ describe('App', () => {
   it('adds multiple palette entries with sequential default names', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const addButton = within(getCard('Color palette')).getByRole('button', { name: 'Add color' });
     await user.click(addButton);
@@ -380,44 +383,49 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.palette.map((e) => e.name)).toEqual(['Primary', 'Color 2', 'Color 3']);
+      expect(stored.defaultProject.palette.map((e) => e.name)).toEqual(['Primary', 'Color 2', 'Color 3']);
     });
   });
 
   it("saves a palette entry's name edit to storage", async () => {
+    const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const nameInput = within(getCard('Color palette')).getByLabelText('Color name') as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: 'Brand' } });
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.palette[0].name).toBe('Brand');
+      expect(stored.defaultProject.palette[0].name).toBe('Brand');
     });
   });
 
   it("saves a palette entry's color edit to storage", async () => {
+    const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     fireEvent.change(getColorInput(getCard('Color palette')), { target: { value: '#a1b2c3' } });
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.palette[0].color).toBe('#a1b2c3');
+      expect(stored.defaultProject.palette[0].color).toBe('#a1b2c3');
     });
   });
 
   it('removing a non-referenced palette entry (icon button) does not affect other entries or references', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).palette).toHaveLength(2);
+      expect((await getStoredSettings()).defaultProject.palette).toHaveLength(2);
     });
 
     // "default" (Primary) is referenced by Top bar and Platform Bar; remove the second, unreferenced entry.
@@ -426,63 +434,71 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.palette).toHaveLength(1);
-      expect(stored.palette[0].id).toBe('default');
+      expect(stored.defaultProject.palette).toHaveLength(1);
+      expect(stored.defaultProject.palette[0].id).toBe('default');
       expect(stored.defaultProject.topBarPaletteId).toBe('default');
       expect(stored.defaultProject.platformBarPaletteId).toBe('default');
     });
   });
 
-  it('removing a palette entry clears its reference from defaultProject and every project rule', async () => {
+  it('removing a palette entry clears its reference within the same project only, leaving other rules and Default unaffected', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
 
-    // The new rule is initialized as a copy of defaultProject, so it starts out referencing "default" too.
+    // "my-project" is cloned from defaultProject (via cloneProjectSettings), so it starts out
+    // with its own independent copy of the palette, still referencing "default".
     await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Remove color' }));
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.palette).toHaveLength(0);
-      expect(stored.defaultProject.topBarPaletteId).toBeNull();
-      expect(stored.defaultProject.platformBarPaletteId).toBeNull();
-      expect(stored.projectRules[0].settings.topBarPaletteId).toBeNull();
-      expect(stored.projectRules[0].settings.platformBarPaletteId).toBeNull();
+      const rule = stored.projectRules.find((r) => r.pattern === 'my-project')!;
+      expect(rule.settings.palette).toHaveLength(0);
+      expect(rule.settings.topBarPaletteId).toBeNull();
+      expect(rule.settings.platformBarPaletteId).toBeNull();
+      // Default's own palette entry and references are untouched.
+      expect(stored.defaultProject.palette).toHaveLength(1);
+      expect(stored.defaultProject.topBarPaletteId).toBe('default');
+      expect(stored.defaultProject.platformBarPaletteId).toBe('default');
     });
   });
 
-  it('palette entries added on the list page are visible in color pickers for any rule being edited', async () => {
+  it("a rule's palette is independent: adding a palette entry to one rule does not affect another rule's or Default's palette", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
 
+    await addRule(user, 'alpha');
+    await addRule(user, 'beta');
+
+    await openRuleDetail(user, 'alpha');
     await user.click(within(getCard('Color palette')).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).palette).toHaveLength(2);
+      const rules = (await getStoredSettings()).projectRules;
+      expect(rules.find((r) => r.pattern === 'alpha')!.settings.palette).toHaveLength(2);
     });
 
-    await addRule(user, 'my-project');
-    await openRuleDetail(user, 'my-project');
-
-    const dialog = await openPicker(user, 'Top bar color');
-    expect(getPaletteSwatch(dialog, 'Color 2')).toBeTruthy();
+    const stored = await getStoredSettings();
+    expect(stored.projectRules.find((r) => r.pattern === 'beta')!.settings.palette).toHaveLength(1);
+    expect(stored.defaultProject.palette).toHaveLength(1);
   });
 
   it('shows "(unnamed)" as the swatch label in the picker for a palette entry with an empty name', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const nameInput = within(getCard('Color palette')).getByLabelText('Color name') as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: '' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).palette[0].name).toBe('');
+      expect((await getStoredSettings()).defaultProject.palette[0].name).toBe('');
     });
 
-    await openDefaultDetail(user);
     const dialog = await openPicker(user, 'Top bar color');
     expect(getPaletteSwatch(dialog, '(unnamed)')).toBeTruthy();
   });
@@ -490,15 +506,15 @@ describe('App', () => {
   it('hides the Palette section and shows the own hex on the trigger when Color palette is turned off', async () => {
     const user = userEvent.setup();
     render(<App />);
-    const paletteSwitch = await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
+    const paletteSwitch = screen.getByRole('switch', { name: 'Color palette' });
     await user.click(paletteSwitch);
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).paletteEnabled).toBe(false);
+      expect((await getStoredSettings()).defaultProject.paletteEnabled).toBe(false);
     });
-
-    await openDefaultDetail(user);
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#ff6d00');
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -509,29 +525,30 @@ describe('App', () => {
   it('keeps palette data and references in storage when turned off, and restores the trigger name when turned back on', async () => {
     const user = userEvent.setup();
     render(<App />);
-    const paletteSwitch = await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
+    const paletteSwitch = screen.getByRole('switch', { name: 'Color palette' });
     await user.click(paletteSwitch);
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.paletteEnabled).toBe(false);
-      expect(stored.palette).toHaveLength(1);
+      expect(stored.defaultProject.paletteEnabled).toBe(false);
+      expect(stored.defaultProject.palette).toHaveLength(1);
       expect(stored.defaultProject.topBarPaletteId).toBe('default');
     });
 
     await user.click(screen.getByRole('switch', { name: 'Color palette' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).paletteEnabled).toBe(true);
+      expect((await getStoredSettings()).defaultProject.paletteEnabled).toBe(true);
     });
-
-    await openDefaultDetail(user);
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
   });
 
   it('falls back a referencing item to Custom when its referenced palette entry is removed', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
+    await openDefaultDetail(user);
 
     const paletteCard = getCard('Color palette');
     const removeButton = within(paletteCard).getByRole('button', { name: 'Remove color' });
@@ -541,10 +558,9 @@ describe('App', () => {
       const stored = await getStoredSettings();
       expect(stored.defaultProject.topBarPaletteId).toBeNull();
       expect(stored.defaultProject.platformBarPaletteId).toBeNull();
-      expect(stored.palette).toHaveLength(0);
+      expect(stored.defaultProject.palette).toHaveLength(0);
     });
 
-    await openDefaultDetail(user);
     const dialog = await openPicker(user, 'Top bar color');
     // No palette entries left, so only the Custom section is shown.
     expect(within(dialog).queryByText('Palette')).toBeNull();
@@ -559,7 +575,7 @@ describe('App', () => {
   it('Platform Bar text color: the picker shows an Auto option, inactive, with Custom active by default', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const dialog = await openPicker(user, 'Platform Bar text color');
@@ -574,7 +590,7 @@ describe('App', () => {
   it('Platform Bar text color: selecting Auto saves platformBarTextAuto and the trigger shows "Auto"', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const dialog = await openPicker(user, 'Platform Bar text color');
@@ -591,7 +607,7 @@ describe('App', () => {
   it('Platform Bar text color: the auto-computed swatch color follows the Platform Bar background (not one-shot)', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     let dialog = await openPicker(user, 'Platform Bar text color');
@@ -627,7 +643,7 @@ describe('App', () => {
   it('Platform Bar text color: selecting a palette entry clears Auto', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     let dialog = await openPicker(user, 'Platform Bar text color');
@@ -650,7 +666,7 @@ describe('App', () => {
   it('Platform Bar text color: changing the Custom color clears Auto', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     let dialog = await openPicker(user, 'Platform Bar text color');
@@ -674,7 +690,7 @@ describe('App', () => {
   it('Top bar: Height input shows the default value and saves changes to storage', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const heightInput = within(getCard('Top bar')).getByLabelText('Top bar height') as HTMLInputElement;
@@ -690,7 +706,7 @@ describe('App', () => {
   it('Top bar: the Stripes switch toggles topBarStripes in storage', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const stripesSwitch = within(getCard('Top bar')).getByRole('switch', { name: 'Stripes' }) as HTMLInputElement;
@@ -706,7 +722,7 @@ describe('App', () => {
   it('Platform Bar: the Stripes switch toggles platformBarStripes independently of Top bar Stripes', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
     await openDefaultDetail(user);
 
     const stripesSwitch = within(getCard('Platform Bar')).getByRole('switch', {
@@ -725,7 +741,7 @@ describe('App', () => {
 
   it('does not render a "Reset to defaults" button', async () => {
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
 
     expect(screen.queryByRole('button', { name: 'Reset to defaults' })).toBeNull();
   });
@@ -824,9 +840,9 @@ describe('App', () => {
   it('stamps the current version as schemaVersion whenever settings are saved', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('switch', { name: 'Color palette' });
+    await screen.findByLabelText('New rule pattern');
 
-    await user.click(screen.getByRole('switch', { name: 'Color palette' }));
+    await addRule(user, 'my-project');
 
     await waitFor(async () => {
       expect((await getStoredSettings()).schemaVersion).toBe(CURRENT_VERSION);
@@ -834,10 +850,10 @@ describe('App', () => {
   });
 
   describe('Rules', () => {
-    it('Add rule appends a new rule initialized as a copy of defaultProject, at the end of the list, and stays on the list page', async () => {
+    it('Add rule appends a new rule initialized as a deep copy of defaultProject, at the end of the list, and stays on the list page', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       // Diverge defaultProject from the built-in defaults first, to prove the copy is a snapshot.
       await openDefaultDetail(user);
@@ -862,17 +878,19 @@ describe('App', () => {
     it('ignores adding an empty or whitespace-only pattern', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       const input = screen.getByLabelText('New rule pattern') as HTMLInputElement;
       fireEvent.change(input, { target: { value: '   ' } });
       await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
       // Perform an unrelated save first so getStoredSettings() has something to read.
-      await user.click(screen.getByRole('switch', { name: 'Color palette' }));
+      await openDefaultDetail(user);
+      await user.click(within(getCard('Top bar')).getByRole('switch', { name: 'Stripes' }));
       await waitFor(async () => {
-        expect((await getStoredSettings()).paletteEnabled).toBe(false);
+        expect((await getStoredSettings()).defaultProject.topBarStripes).toBe(true);
       });
+      await goBack(user);
 
       expect((await getStoredSettings()).projectRules).toEqual([]);
       expect(getAllRuleRows()).toHaveLength(0);
@@ -881,7 +899,7 @@ describe('App', () => {
     it('allows adding multiple rules with the same pattern text, each with its own id (regex duplicates may be intentional)', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'same-pattern');
       await addRule(user, 'same-pattern');
@@ -894,7 +912,7 @@ describe('App', () => {
     it('Edit navigates to a rule detail page with a Pattern field; editing it saves and flags an invalid regex', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'my-project');
       await openRuleDetail(user, 'my-project');
@@ -918,7 +936,7 @@ describe('App', () => {
     it("Default row's Edit navigates to its detail page without a Pattern field, and edits save to defaultProject", async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await openDefaultDetail(user);
 
@@ -934,7 +952,7 @@ describe('App', () => {
     it('Duplicate inserts a copy directly below the original with a new id, editable independently', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -958,10 +976,34 @@ describe('App', () => {
       expect((await getStoredSettings()).projectRules[0].settings.topBarHeight).toBe(4);
     });
 
+    it("Duplicate deep-copies the palette array (cloneProjectSettings): editing the duplicate's palette does not affect the original's", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'alpha');
+      await user.click(within(getRuleRowAt(0)).getByRole('button', { name: 'Duplicate' }));
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules).toHaveLength(2);
+      });
+
+      // Edit the duplicate's (index 1) palette entry color.
+      await openRuleDetailAt(user, 1);
+      fireEvent.change(getColorInput(getCard('Color palette')), { target: { value: '#00ff00' } });
+      await waitFor(async () => {
+        const rules = (await getStoredSettings()).projectRules;
+        expect(rules[1].settings.palette[0].color).toBe('#00ff00');
+      });
+
+      // The original (index 0) keeps its own, unaffected palette entry.
+      const rules = (await getStoredSettings()).projectRules;
+      expect(rules[0].settings.palette[0].color).toBe('#ff6d00');
+    });
+
     it('Delete removes the rule from the list and storage', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -977,7 +1019,7 @@ describe('App', () => {
     it('reorders rules via drag-and-drop from the grip handle, and persists the new order to storage', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1002,7 +1044,7 @@ describe('App', () => {
     it('does not start a drag when the gesture does not originate on the grip handle', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1022,7 +1064,7 @@ describe('App', () => {
     it("editing a rule's settings in detail saves to that rule only, without affecting other rules or Default", async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1051,7 +1093,7 @@ describe('App', () => {
     it("a Top bar Custom color change while editing a rule saves to that rule's settings, not defaultProject", async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByRole('switch', { name: 'Color palette' });
+      await screen.findByLabelText('New rule pattern');
 
       await addRule(user, 'my-project');
       await openRuleDetail(user, 'my-project');

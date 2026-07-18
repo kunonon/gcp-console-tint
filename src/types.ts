@@ -5,6 +5,8 @@ export interface PaletteEntry {
 }
 
 export interface ProjectSettings {
+  paletteEnabled: boolean;
+  palette: PaletteEntry[];
   topBarEnabled: boolean;
   topBarColor: string;
   topBarPaletteId: string | null;
@@ -29,8 +31,6 @@ export interface ProjectRule {
 
 export interface TintSettings {
   schemaVersion: string;
-  paletteEnabled: boolean;
-  palette: PaletteEntry[];
   defaultProject: ProjectSettings;
   // Ordered: earlier rules take priority; first matching rule wins.
   projectRules: ProjectRule[];
