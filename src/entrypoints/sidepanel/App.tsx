@@ -43,7 +43,7 @@ const DEFAULT_SETTINGS: TintSettings = {
   platformBarTextAuto: false,
 };
 
-const nameInputClassName = 'h-8 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
+const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
 const resolveColor = (settings: TintSettings, paletteId: string | null, ownColor: string): string => {
   if (settings.paletteEnabled && paletteId) {
@@ -224,7 +224,7 @@ function App() {
           {settings.paletteEnabled && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               {settings.palette.map((entry) => (
-                <div key={entry.id} className="flex items-center justify-between gap-2">
+                <div key={entry.id} className="@container flex items-center justify-between gap-2">
                   <Input
                     aria-label="Color name"
                     placeholder="Name"
@@ -236,12 +236,14 @@ function App() {
                     ariaLabel={`${entry.name || '(unnamed)'} color`}
                     value={entry.color}
                     onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
+                    hexHidableOnNarrow
                   />
                   <Button
                     isIconOnly
                     variant="outline"
                     size="sm"
                     aria-label="Remove color"
+                    className="shrink-0"
                     onPress={() => handleRemoveColor(entry.id)}
                   >
                     <TrashIcon />
@@ -302,7 +304,7 @@ function App() {
                 onChange={handleTopBarStripesChange}
               >
                 <Switch.Content className="flex w-full items-center justify-between">
-                  Stripes
+                  <span className="text-sm font-normal">Stripes</span>
                   <Switch.Control>
                     <Switch.Thumb />
                   </Switch.Control>
@@ -348,7 +350,7 @@ function App() {
                 onChange={handlePlatformBarStripesChange}
               >
                 <Switch.Content className="flex w-full items-center justify-between">
-                  Stripes
+                  <span className="text-sm font-normal">Stripes</span>
                   <Switch.Control>
                     <Switch.Thumb />
                   </Switch.Control>
