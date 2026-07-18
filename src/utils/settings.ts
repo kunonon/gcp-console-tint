@@ -41,7 +41,8 @@ export const DEFAULT_SETTINGS: TintSettings = {
 
 function mergeProjectSettings(stored: Partial<ProjectSettings> | null | undefined): ProjectSettings {
   const base = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
-  if (stored == null || typeof stored !== 'object') return base;
+  // Arrays pass a bare typeof check and would spread their indices as extraneous keys.
+  if (stored == null || typeof stored !== 'object' || Array.isArray(stored)) return base;
   const merged: ProjectSettings = { ...base, ...stored };
   merged.palette = Array.isArray(stored.palette)
     ? stored.palette.map((entry) => ({ ...entry }))

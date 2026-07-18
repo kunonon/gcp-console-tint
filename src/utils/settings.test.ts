@@ -226,6 +226,47 @@ describe('loadSettings', () => {
 
     expect(loaded.projectRules[0].settings.palette).toEqual(customPalette);
   });
+
+  it('falls back to the default ProjectSettings when rule.settings is a string', () => {
+    const loaded = loadSettings(
+      { schemaVersion: '0.1.0', projectRules: [{ id: '1', pattern: 'a', settings: 'not-an-object' }] },
+      CURRENT_VERSION,
+    );
+
+    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+  });
+
+  it('falls back to the default ProjectSettings when rule.settings is null', () => {
+    const loaded = loadSettings(
+      { schemaVersion: '0.1.0', projectRules: [{ id: '1', pattern: 'a', settings: null }] },
+      CURRENT_VERSION,
+    );
+
+    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+  });
+
+  // Arrays pass a bare `typeof value === 'object'` check; mergeProjectSettings() explicitly
+  // rejects them (Array.isArray guard) so their numeric indices never spread onto the merged
+  // ProjectSettings as extraneous keys.
+  it('treats an empty array for rule.settings as invalid, falling back to defaults', () => {
+    const loaded = loadSettings(
+      { schemaVersion: '0.1.0', projectRules: [{ id: '1', pattern: 'a', settings: [] }] },
+      CURRENT_VERSION,
+    );
+
+    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+  });
+
+  it('treats a non-empty array for rule.settings as invalid, falling back to defaults without extraneous keys', () => {
+    const loaded = loadSettings(
+      { schemaVersion: '0.1.0', projectRules: [{ id: '1', pattern: 'a', settings: ['x', 'y'] }] },
+      CURRENT_VERSION,
+    );
+
+    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0].settings).not.toHaveProperty('0');
+    expect(loaded.projectRules[0].settings).not.toHaveProperty('1');
+  });
 });
 
 describe('cloneProjectSettings', () => {
@@ -309,5 +350,28 @@ describe('resolveProjectSettings', () => {
 
   it('returns null when there are no rules at all', () => {
     expect(resolveProjectSettings(DEFAULT_SETTINGS, 'anything')).toBeNull();
+  });
+
+  // `new RegExp('')` matches any string (`.test()` on an empty pattern is always true), so a
+  // rule with an empty pattern acts as a catch-all. Documented as intentionally allowed: it's
+  // the natural state of a rule while its pattern is still being typed in the UI, so it isn't
+  // rejected/skipped like a syntactically invalid regex is.
+  it('treats an empty pattern as a catch-all (matches any projectId), by RegExp#test semantics', () => {
+    const catchAll = {
+      ...settings,
+      projectRules: [{ id: 'catch-all', pattern: '', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#any' } }],
+    };
+
+    expect(resolveProjectSettings(catchAll, 'literally-anything')?.topBarColor).toBe('#any');
+    expect(resolveProjectSettings(catchAll, 'my-app')?.topBarColor).toBe('#any');
+  });
+
+  it('returns null for an empty-string projectId (falsy, treated the same as no project id)', () => {
+    const catchAll = {
+      ...settings,
+      projectRules: [{ id: 'catch-all', pattern: '', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#any' } }],
+    };
+
+    expect(resolveProjectSettings(catchAll, '')).toBeNull();
   });
 });

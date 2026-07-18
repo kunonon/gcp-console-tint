@@ -45,4 +45,16 @@ describe('compareVersions', () => {
   it('returns -1 when both sides are invalid', () => {
     expect(compareVersions('abc', 'xyz')).toBe(-1);
   });
+
+  it('treats a negative segment as invalid (resolves to -1), regardless of which side it is on', () => {
+    expect(compareVersions('1.-1.0', '0.1.0')).toBe(-1);
+    expect(compareVersions('0.1.0', '1.-1.0')).toBe(-1);
+    expect(compareVersions('-1.0.0', '0.0.0')).toBe(-1);
+  });
+
+  it('compares segments beyond the third, treating a missing trailing segment as 0', () => {
+    expect(compareVersions('1.2.3.4', '1.2.3')).toBe(1);
+    expect(compareVersions('1.2.3', '1.2.3.4')).toBe(-1);
+    expect(compareVersions('1.2.3.0', '1.2.3')).toBe(0);
+  });
 });

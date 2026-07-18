@@ -733,4 +733,91 @@ describe('content script', () => {
     // Switching to rule-b resolves "p" against rule-b's own palette instead.
     expect(hexOrRgb('#bbbbbb')).toContain(getElements().bar.style.backgroundColor);
   });
+
+  it('applies topBarHeight at the clamp boundaries (1 and 40) without adjustment', async () => {
+    for (const boundary of [1, 40]) {
+      document.documentElement.innerHTML = '<head></head><body></body>';
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarHeight: boundary }));
+      setTestProjectLocation();
+
+      runContentScript();
+      await flush();
+
+      const { bar } = getElements();
+      expect(bar.style.height).toBe(`${boundary}px`);
+    }
+  });
+
+  it('treats an empty "project" param the same as no param at all (nothing applied)', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        projectRules: [
+          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+        ],
+      }),
+    );
+    setLocation('/?project=');
+
+    runContentScript();
+    await flush();
+
+    const { bar, styleEl } = getElements();
+    expect(bar.style.display).toBe('none');
+    expect(styleEl.textContent).toBe('');
+  });
+
+  it('registers the content script only for the GCP Console origin (regression guard against a mis-edited matches array)', () => {
+    expect(contentScript.matches).toEqual(['https://console.cloud.google.com/*']);
+  });
+
+  describe('storage.onChanged defensive branches', () => {
+    it('ignores changes reported for a storage area other than "local"', async () => {
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#111111' }));
+      setTestProjectLocation();
+
+      runContentScript();
+      await flush();
+
+      expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+
+      // A change in `sync` storage must not trigger a re-apply of `local`'s tintSettings.
+      await fakeBrowser.storage.sync.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#999999' }));
+      await flush();
+
+      expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+    });
+
+    it('ignores changes to unrelated keys in local storage', async () => {
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#111111' }));
+      setTestProjectLocation();
+
+      runContentScript();
+      await flush();
+
+      expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+
+      await fakeBrowser.storage.local.set({ someUnrelatedKey: 'value' });
+      await flush();
+
+      expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+    });
+
+    it('does not reapply (keeps the last applied state) when the tintSettings key is removed from storage', async () => {
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBarPaletteId: null, topBarColor: '#111111' }));
+      setTestProjectLocation();
+
+      runContentScript();
+      await flush();
+
+      expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+
+      // On removal, changes.tintSettings.newValue is undefined; content.ts's `if (newValue)`
+      // guard skips re-applying, so the bar keeps showing the last applied color rather than
+      // resetting to "nothing".
+      await fakeBrowser.storage.local.remove('tintSettings');
+      await flush();
+
+      expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+    });
+  });
 });
