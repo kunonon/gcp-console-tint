@@ -43,7 +43,7 @@ export default function PaletteColorPicker({
         <button
           type="button"
           aria-label={ariaLabel}
-          className="flex cursor-pointer items-center gap-2 rounded-md border border-border bg-transparent px-2 py-1"
+          className="flex h-8 cursor-pointer items-center gap-2 rounded-md border border-border bg-transparent px-2"
         >
           <span
             aria-hidden="true"

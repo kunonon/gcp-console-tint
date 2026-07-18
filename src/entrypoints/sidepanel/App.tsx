@@ -299,7 +299,7 @@ function App() {
                 </div>
               </div>
               <Switch
-                className="w-full"
+                className="min-h-8 w-full"
                 isSelected={settings.topBarStripes}
                 onChange={handleTopBarStripesChange}
               >
@@ -345,7 +345,7 @@ function App() {
                 />
               </div>
               <Switch
-                className="w-full"
+                className="min-h-8 w-full"
                 isSelected={settings.platformBarStripes}
                 onChange={handlePlatformBarStripesChange}
               >
