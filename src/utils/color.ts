@@ -19,5 +19,5 @@ export function contrastTextColor(bgHex: string): '#000000' | '#ffffff' {
 export function stripeGradient(bgHex: string): string {
   const color = contrastTextColor(bgHex);
   const rgba = color === '#000000' ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.3)';
-  return `repeating-linear-gradient(45deg, ${rgba} 0 8px, transparent 8px 16px)`;
+  return `repeating-linear-gradient(-45deg, ${rgba} 0 8px, transparent 8px 16px)`;
 }
