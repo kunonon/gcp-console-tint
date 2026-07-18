@@ -1164,7 +1164,64 @@ describe('App', () => {
       expect(rules[0].settings.palette[0].color).toBe('#ff6d00');
     });
 
-    it('Delete removes the rule from the list and storage', async () => {
+    it('Delete opens a confirmation dialog naming the rule pattern, without deleting yet', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'my-project');
+      const before = await getStoredSettings();
+
+      await user.click(within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      expect(within(dialog).getByText('Delete rule?')).toBeTruthy();
+      expect(dialog.textContent).toContain('"my-project" will be permanently removed.');
+      // No deletion has happened yet: only the dialog opened.
+      expect(await getStoredSettings()).toEqual(before);
+      expect(getRuleRow('my-project')).toBeTruthy();
+    });
+
+    it('Cancel in the delete confirmation dialog leaves the rule and storage unchanged and closes the dialog', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'my-project');
+      const before = await getStoredSettings();
+
+      await user.click(within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
+      const dialog = await screen.findByRole('alertdialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+      expect(await getStoredSettings()).toEqual(before);
+      expect(getRuleRow('my-project')).toBeTruthy();
+    });
+
+    it('pressing Escape in the delete confirmation dialog closes it without deleting', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'my-project');
+      const before = await getStoredSettings();
+
+      await user.click(within(getRuleRow('my-project')).getByRole('button', { name: 'Delete' }));
+      await screen.findByRole('alertdialog');
+
+      await user.keyboard('{Escape}');
+
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+      expect(await getStoredSettings()).toEqual(before);
+      expect(getRuleRow('my-project')).toBeTruthy();
+    });
+
+    it('confirming Delete in the dialog removes the rule from the list and storage, and closes the dialog', async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
@@ -1173,11 +1230,14 @@ describe('App', () => {
       await addRule(user, 'beta');
 
       await user.click(within(getRuleRow('alpha')).getByRole('button', { name: 'Delete' }));
+      const dialog = await screen.findByRole('alertdialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
       await waitFor(async () => {
         expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['beta']);
       });
       expect(screen.queryByText('alpha')).toBeNull();
+      expect(screen.queryByRole('alertdialog')).toBeNull();
     });
 
     it('reorders rules via drag-and-drop from the grip handle, and persists the new order to storage', async () => {
