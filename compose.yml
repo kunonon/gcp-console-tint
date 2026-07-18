@@ -1,0 +1,12 @@
+services:
+  dev:
+    image: node:24-bookworm-slim
+    working_dir: /app
+    stdin_open: true
+    command: sh -c "corepack enable && pnpm install && pnpm dev"
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+    environment:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
