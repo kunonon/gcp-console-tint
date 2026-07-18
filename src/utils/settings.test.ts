@@ -5,7 +5,9 @@ import {
   cloneProjectSettings,
   DEFAULT_SETTINGS,
   DEFAULT_PROJECT_SETTINGS,
+  MATCH_TYPES,
 } from './settings';
+import type { MatchType, ProjectRule, TintSettings } from '../types';
 
 const CURRENT_VERSION = '0.1.0';
 
@@ -85,7 +87,7 @@ describe('loadSettings', () => {
 
     expect(loaded).not.toHaveProperty('defaultProject');
     expect(loaded.projectRules).toEqual([
-      { id: '1', pattern: 'x', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#00ff00' } },
+      { id: '1', matchType: 'regex', pattern: 'x', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#00ff00' } },
     ]);
   });
 
@@ -137,8 +139,18 @@ describe('loadSettings', () => {
     const loaded = loadSettings(stored, CURRENT_VERSION);
 
     expect(loaded.projectRules).toEqual([
-      { id: 'rule-1', pattern: 'my-app', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#00ff00' } },
-      { id: 'rule-2', pattern: 'other-app', settings: { ...DEFAULT_PROJECT_SETTINGS, platformBarStripes: true } },
+      {
+        id: 'rule-1',
+        matchType: 'regex',
+        pattern: 'my-app',
+        settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#00ff00' },
+      },
+      {
+        id: 'rule-2',
+        matchType: 'regex',
+        pattern: 'other-app',
+        settings: { ...DEFAULT_PROJECT_SETTINGS, platformBarStripes: true },
+      },
     ]);
   });
 
@@ -184,7 +196,9 @@ describe('loadSettings', () => {
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules).toEqual([{ id: 'valid', pattern: 'ok', settings: { ...DEFAULT_PROJECT_SETTINGS } }]);
+    expect(loaded.projectRules).toEqual([
+      { id: 'valid', matchType: 'regex', pattern: 'ok', settings: { ...DEFAULT_PROJECT_SETTINGS } },
+    ]);
   });
 
   it('generates a UUID for a rule id when missing from storage', () => {
@@ -267,6 +281,50 @@ describe('loadSettings', () => {
     expect(loaded.projectRules[0].settings).not.toHaveProperty('0');
     expect(loaded.projectRules[0].settings).not.toHaveProperty('1');
   });
+
+  describe('matchType', () => {
+    it('defaults matchType to "regex" when missing from a stored rule (pre-matchType 0.1.0 data)', () => {
+      const loaded = loadSettings(
+        { schemaVersion: '0.1.0', projectRules: [{ id: '1', pattern: 'x', settings: {} }] },
+        CURRENT_VERSION,
+      );
+
+      expect(loaded.projectRules[0].matchType).toBe('regex');
+    });
+
+    it('defaults matchType to "regex" when a stored rule has an invalid matchType value', () => {
+      const loaded = loadSettings(
+        {
+          schemaVersion: '0.1.0',
+          projectRules: [
+            { id: 'a', pattern: 'x', matchType: 'contains', settings: {} },
+            { id: 'b', pattern: 'y', matchType: 42, settings: {} },
+          ],
+        },
+        CURRENT_VERSION,
+      );
+
+      expect(loaded.projectRules[0].matchType).toBe('regex');
+      expect(loaded.projectRules[1].matchType).toBe('regex');
+    });
+
+    it('preserves each valid matchType value from storage', () => {
+      const loaded = loadSettings(
+        {
+          schemaVersion: '0.1.0',
+          projectRules: MATCH_TYPES.map((matchType, index) => ({
+            id: `${index}`,
+            pattern: 'x',
+            matchType,
+            settings: {},
+          })),
+        },
+        CURRENT_VERSION,
+      );
+
+      expect(loaded.projectRules.map((rule) => rule.matchType)).toEqual(MATCH_TYPES);
+    });
+  });
 });
 
 describe('cloneProjectSettings', () => {
@@ -283,68 +341,25 @@ describe('cloneProjectSettings', () => {
 });
 
 describe('resolveProjectSettings', () => {
-  const settings = {
-    ...DEFAULT_SETTINGS,
-    projectRules: [{ id: '1', pattern: 'my-app', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#known' } }],
-  };
-
-  it('matches a pattern as a substring within the projectId (RegExp#test semantics)', () => {
-    expect(resolveProjectSettings(settings, 'my-app-prod')?.topBarColor).toBe('#known');
+  // Explicit `ProjectRule`/`TintSettings` return types on these two builders are load-bearing:
+  // without them, the `matchType` string literals below would widen to `string` and no longer
+  // satisfy the `MatchType` union when passed into resolveProjectSettings().
+  const rule = (id: string, matchType: MatchType, pattern: string, color: string): ProjectRule => ({
+    id,
+    matchType,
+    pattern,
+    settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: color },
   });
 
-  it('requires a full match when the pattern is anchored with ^...$', () => {
-    const anchored = {
-      ...settings,
-      projectRules: [
-        { id: '1', pattern: '^my-app$', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#exact' } },
-      ],
-    };
-
-    expect(resolveProjectSettings(anchored, 'my-app')?.topBarColor).toBe('#exact');
-    expect(resolveProjectSettings(anchored, 'my-app-prod')).toBeNull();
-  });
-
-  it('gives priority to the earlier rule when multiple rules match the same projectId', () => {
-    const prioritized = {
-      ...settings,
-      projectRules: [
-        { id: 'first', pattern: 'my-app', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#first' } },
-        { id: 'second', pattern: 'app', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#second' } },
-      ],
-    };
-
-    expect(resolveProjectSettings(prioritized, 'my-app')?.topBarColor).toBe('#first');
-  });
-
-  it('skips a rule with an invalid regex pattern and evaluates the next rule', () => {
-    const withInvalid = {
-      ...settings,
-      projectRules: [
-        { id: 'invalid', pattern: '(', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#invalid' } },
-        { id: 'valid', pattern: 'my-app', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#valid' } },
-      ],
-    };
-
-    expect(resolveProjectSettings(withInvalid, 'my-app')?.topBarColor).toBe('#valid');
-  });
-
-  it('returns null when every rule has an invalid regex pattern (no fallback project)', () => {
-    const onlyInvalid = {
-      ...settings,
-      projectRules: [
-        { id: 'invalid-1', pattern: '(', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#invalid1' } },
-        { id: 'invalid-2', pattern: '[', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#invalid2' } },
-      ],
-    };
-
-    expect(resolveProjectSettings(onlyInvalid, 'my-app')).toBeNull();
-  });
+  const withRules = (...rules: ProjectRule[]): TintSettings => ({ ...DEFAULT_SETTINGS, projectRules: rules });
 
   it('returns null when projectId is null', () => {
+    const settings = withRules(rule('1', 'exact', 'my-app', '#known'));
     expect(resolveProjectSettings(settings, null)).toBeNull();
   });
 
   it('returns null when projectId does not match any rule', () => {
+    const settings = withRules(rule('1', 'exact', 'my-app', '#known'));
     expect(resolveProjectSettings(settings, 'unrelated-project')).toBeNull();
   });
 
@@ -352,26 +367,137 @@ describe('resolveProjectSettings', () => {
     expect(resolveProjectSettings(DEFAULT_SETTINGS, 'anything')).toBeNull();
   });
 
-  // `new RegExp('')` matches any string (`.test()` on an empty pattern is always true), so a
-  // rule with an empty pattern acts as a catch-all. Documented as intentionally allowed: it's
-  // the natural state of a rule while its pattern is still being typed in the UI, so it isn't
-  // rejected/skipped like a syntactically invalid regex is.
-  it('treats an empty pattern as a catch-all (matches any projectId), by RegExp#test semantics', () => {
-    const catchAll = {
-      ...settings,
-      projectRules: [{ id: 'catch-all', pattern: '', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#any' } }],
-    };
-
-    expect(resolveProjectSettings(catchAll, 'literally-anything')?.topBarColor).toBe('#any');
-    expect(resolveProjectSettings(catchAll, 'my-app')?.topBarColor).toBe('#any');
+  it('returns null for an empty-string projectId (falsy, treated the same as no project id)', () => {
+    const settings = withRules(rule('catch-all', 'prefix', '', '#any'));
+    expect(resolveProjectSettings(settings, '')).toBeNull();
   });
 
-  it('returns null for an empty-string projectId (falsy, treated the same as no project id)', () => {
-    const catchAll = {
-      ...settings,
-      projectRules: [{ id: 'catch-all', pattern: '', settings: { ...DEFAULT_PROJECT_SETTINGS, topBarColor: '#any' } }],
-    };
+  it('gives priority to the earlier rule when multiple rules of different matchTypes match the same projectId', () => {
+    const settings = withRules(
+      rule('first', 'exact', 'my-app', '#first'),
+      rule('second', 'prefix', 'my', '#second'),
+    );
 
-    expect(resolveProjectSettings(catchAll, '')).toBeNull();
+    expect(resolveProjectSettings(settings, 'my-app')?.topBarColor).toBe('#first');
+  });
+
+  describe('matchType "prefix"', () => {
+    it('matches when the projectId starts with the pattern', () => {
+      const settings = withRules(rule('1', 'prefix', 'my-app', '#p'));
+      expect(resolveProjectSettings(settings, 'my-app-prod')?.topBarColor).toBe('#p');
+    });
+
+    it('does not match when the projectId does not start with the pattern', () => {
+      const settings = withRules(rule('1', 'prefix', 'my-app', '#p'));
+      expect(resolveProjectSettings(settings, 'other-my-app')).toBeNull();
+    });
+
+    it('treats a pattern containing regex metacharacters as a literal string', () => {
+      const openParen = withRules(rule('1', 'prefix', '(', '#p'));
+      expect(resolveProjectSettings(openParen, '(abc')?.topBarColor).toBe('#p');
+
+      const dot = withRules(rule('1', 'prefix', 'a.c', '#p'));
+      expect(resolveProjectSettings(dot, 'abc')).toBeNull();
+    });
+
+    it('treats an empty pattern as matching any projectId', () => {
+      const settings = withRules(rule('1', 'prefix', '', '#p'));
+      expect(resolveProjectSettings(settings, 'literally-anything')?.topBarColor).toBe('#p');
+    });
+  });
+
+  describe('matchType "suffix"', () => {
+    it('matches when the projectId ends with the pattern', () => {
+      const settings = withRules(rule('1', 'suffix', '-prod', '#s'));
+      expect(resolveProjectSettings(settings, 'my-app-prod')?.topBarColor).toBe('#s');
+    });
+
+    it('does not match when the projectId does not end with the pattern', () => {
+      const settings = withRules(rule('1', 'suffix', '-prod', '#s'));
+      expect(resolveProjectSettings(settings, 'my-app-prod-2')).toBeNull();
+    });
+
+    it('treats a pattern containing regex metacharacters as a literal string', () => {
+      const closeParen = withRules(rule('1', 'suffix', ')', '#s'));
+      expect(resolveProjectSettings(closeParen, 'abc)')?.topBarColor).toBe('#s');
+
+      const dot = withRules(rule('1', 'suffix', 'a.c', '#s'));
+      expect(resolveProjectSettings(dot, 'abc')).toBeNull();
+    });
+
+    it('treats an empty pattern as matching any projectId', () => {
+      const settings = withRules(rule('1', 'suffix', '', '#s'));
+      expect(resolveProjectSettings(settings, 'literally-anything')?.topBarColor).toBe('#s');
+    });
+  });
+
+  describe('matchType "exact"', () => {
+    it('matches only when the projectId equals the pattern exactly', () => {
+      const settings = withRules(rule('1', 'exact', 'my-app', '#e'));
+      expect(resolveProjectSettings(settings, 'my-app')?.topBarColor).toBe('#e');
+    });
+
+    it('does not match a projectId that merely contains the pattern as a substring', () => {
+      const settings = withRules(rule('1', 'exact', 'my-app', '#e'));
+      expect(resolveProjectSettings(settings, 'my-app-prod')).toBeNull();
+      expect(resolveProjectSettings(settings, 'not-my-app')).toBeNull();
+    });
+
+    it('an empty pattern matches nothing, since no real projectId is an empty string', () => {
+      const settings = withRules(rule('1', 'exact', '', '#e'));
+      expect(resolveProjectSettings(settings, 'my-app')).toBeNull();
+    });
+  });
+
+  describe('matchType "regex"', () => {
+    it('requires a full match: an unanchored pattern no longer matches as a substring', () => {
+      const settings = withRules(rule('1', 'regex', 'test', '#r'));
+      expect(resolveProjectSettings(settings, 'test-project')).toBeNull();
+    });
+
+    it('matches when the pattern itself covers the entire projectId (e.g. via a trailing .*)', () => {
+      const settings = withRules(rule('1', 'regex', '^test-project.*', '#r'));
+      expect(resolveProjectSettings(settings, 'test-project-123')?.topBarColor).toBe('#r');
+    });
+
+    it('continues to work for patterns already anchored with ^...$', () => {
+      const settings = withRules(rule('1', 'regex', '^abc$', '#r'));
+      expect(resolveProjectSettings(settings, 'abc')?.topBarColor).toBe('#r');
+      expect(resolveProjectSettings(settings, 'abcd')).toBeNull();
+    });
+
+    // The `^(?:...)$` wrapper wraps a non-capturing group around the whole pattern before
+    // anchoring, so a top-level `|` stays scoped inside it instead of splitting the anchors
+    // themselves (which would let e.g. "bbb" alone escape the leading `^`).
+    it('keeps top-level alternation scoped inside the full-match wrapper', () => {
+      const settings = withRules(rule('1', 'regex', 'aaa|bbb', '#r'));
+      expect(resolveProjectSettings(settings, 'aaa')?.topBarColor).toBe('#r');
+      expect(resolveProjectSettings(settings, 'bbb')?.topBarColor).toBe('#r');
+      expect(resolveProjectSettings(settings, 'xaaa')).toBeNull();
+    });
+
+    it('skips a rule with an invalid regex pattern and evaluates the next rule', () => {
+      const settings = withRules(
+        rule('invalid', 'regex', '(', '#invalid'),
+        rule('valid', 'regex', 'my-app', '#valid'),
+      );
+
+      expect(resolveProjectSettings(settings, 'my-app')?.topBarColor).toBe('#valid');
+    });
+
+    it('returns null when every rule has an invalid regex pattern (no fallback project)', () => {
+      const settings = withRules(
+        rule('invalid-1', 'regex', '(', '#invalid1'),
+        rule('invalid-2', 'regex', '[', '#invalid2'),
+      );
+
+      expect(resolveProjectSettings(settings, 'my-app')).toBeNull();
+    });
+
+    it('an empty pattern only matches an empty projectId, so it never matches a real projectId', () => {
+      const settings = withRules(rule('1', 'regex', '', '#r'));
+      expect(resolveProjectSettings(settings, 'literally-anything')).toBeNull();
+      expect(resolveProjectSettings(settings, 'my-app')).toBeNull();
+    });
   });
 });

@@ -26,8 +26,11 @@ interface ProjectSettings {
   platformBarTextAuto: boolean;
 }
 
+type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
+
 interface ProjectRule {
   id: string;
+  matchType: MatchType;
   pattern: string;
   settings: ProjectSettings;
 }
@@ -96,7 +99,7 @@ function triggerLocationChange(newUrl: string = location.href) {
 // override for tests that specifically probe the discard/keep boundary.
 function tintSettings(partial: {
   schemaVersion?: string;
-  projectRules?: { id?: string; pattern: string; settings?: Partial<ProjectSettings> }[];
+  projectRules?: { id?: string; matchType: MatchType; pattern: string; settings?: Partial<ProjectSettings> }[];
 }) {
   return { tintSettings: { schemaVersion: CURRENT_VERSION, ...partial } as unknown as TintSettings };
 }
@@ -105,14 +108,22 @@ function tintSettings(partial: {
 // project's settings only ever come from a matching rule. Most content.ts behavior tests
 // don't care about rule matching/priority itself, so this helper seeds a single rule that
 // matches TEST_PROJECT_PATTERN and pairs with setTestProjectLocation() below.
+// Kept as matchType: 'regex' (rather than switching to e.g. 'prefix') so the pattern string
+// itself didn't need to change; full-match regex semantics still resolve it to exactly
+// "test-project", identical to the old (partial-match) behavior for this already-anchored
+// pattern.
 const TEST_PROJECT_PATTERN = '^test-project$';
 
 function setTestProjectLocation() {
   setLocation('/?project=test-project');
 }
 
-function tintSettingsWithRule(settings: Partial<ProjectSettings>, pattern: string = TEST_PROJECT_PATTERN) {
-  return tintSettings({ projectRules: [{ id: 'r', pattern, settings }] });
+function tintSettingsWithRule(
+  settings: Partial<ProjectSettings>,
+  pattern: string = TEST_PROJECT_PATTERN,
+  matchType: MatchType = 'regex',
+) {
+  return tintSettings({ projectRules: [{ id: 'r', matchType, pattern, settings }] });
 }
 
 beforeEach(() => {
@@ -480,7 +491,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
         projectRules: [
-          { id: '1', pattern: TEST_PROJECT_PATTERN, settings: { topBarPaletteId: null, topBarColor: '#334455' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: TEST_PROJECT_PATTERN,
+            settings: { topBarPaletteId: null, topBarColor: '#334455' },
+          },
         ],
       },
     });
@@ -501,7 +517,12 @@ describe('content script', () => {
       tintSettings({
         schemaVersion: '0.1.0',
         projectRules: [
-          { id: '1', pattern: TEST_PROJECT_PATTERN, settings: { topBarPaletteId: null, topBarColor: '#334455' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: TEST_PROJECT_PATTERN,
+            settings: { topBarPaletteId: null, topBarColor: '#334455' },
+          },
         ],
       }),
     );
@@ -519,7 +540,12 @@ describe('content script', () => {
       tintSettings({
         schemaVersion: '9.9.9',
         projectRules: [
-          { id: '1', pattern: TEST_PROJECT_PATTERN, settings: { topBarPaletteId: null, topBarColor: '#334455' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: TEST_PROJECT_PATTERN,
+            settings: { topBarPaletteId: null, topBarColor: '#334455' },
+          },
         ],
       }),
     );
@@ -533,7 +559,12 @@ describe('content script', () => {
   });
 
   it('discards stored data whose schemaVersion is missing, non-string, or below SCHEMA_MIN_VERSION; nothing is applied', async () => {
-    const rule = { id: '1', pattern: TEST_PROJECT_PATTERN, settings: { topBarPaletteId: null, topBarColor: '#334455' } };
+    const rule = {
+      id: '1',
+      matchType: 'regex' as const,
+      pattern: TEST_PROJECT_PATTERN,
+      settings: { topBarPaletteId: null, topBarColor: '#334455' },
+    };
     const invalidCases = [
       { schemaVersion: '0.0.9', projectRules: [rule] },
       { schemaVersion: 123, projectRules: [rule] },
@@ -558,7 +589,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
         ],
       }),
     );
@@ -575,8 +611,18 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
-          { id: '2', pattern: 'project', settings: { topBarPaletteId: null, topBarColor: '#333333' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
+          {
+            id: '2',
+            matchType: 'regex',
+            pattern: 'project',
+            settings: { topBarPaletteId: null, topBarColor: '#333333' },
+          },
         ],
       }),
     );
@@ -594,7 +640,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
         ],
       }),
     );
@@ -612,7 +663,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
         ],
       }),
     );
@@ -630,7 +686,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
         ],
       }),
     );
@@ -653,7 +714,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
         ],
       }),
     );
@@ -676,7 +742,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
         ],
       }),
     );
@@ -702,6 +773,7 @@ describe('content script', () => {
         projectRules: [
           {
             id: 'rule-a',
+            matchType: 'regex',
             pattern: '^project-a$',
             settings: {
               palette: [{ id: 'p', name: 'A Palette', color: '#aaaaaa' }],
@@ -711,6 +783,7 @@ describe('content script', () => {
           },
           {
             id: 'rule-b',
+            matchType: 'regex',
             pattern: '^project-b$',
             settings: {
               palette: [{ id: 'p', name: 'B Palette', color: '#bbbbbb' }],
@@ -736,6 +809,50 @@ describe('content script', () => {
     expect(hexOrRgb('#bbbbbb')).toContain(getElements().bar.style.backgroundColor);
   });
 
+  it('applies rule settings end-to-end for a non-regex matchType ("exact") when the project id equals the pattern', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        projectRules: [
+          {
+            id: '1',
+            matchType: 'exact',
+            pattern: 'test-project',
+            settings: { topBarPaletteId: null, topBarColor: '#654321' },
+          },
+        ],
+      }),
+    );
+    setLocation('/?project=test-project');
+
+    runContentScript();
+    await flush();
+
+    expect(hexOrRgb('#654321')).toContain(getElements().bar.style.backgroundColor);
+  });
+
+  it('does not apply an "exact" matchType rule when the project id is only a superstring of the pattern', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        projectRules: [
+          {
+            id: '1',
+            matchType: 'exact',
+            pattern: 'test-project',
+            settings: { topBarPaletteId: null, topBarColor: '#654321' },
+          },
+        ],
+      }),
+    );
+    setLocation('/?project=test-project-123');
+
+    runContentScript();
+    await flush();
+
+    const { bar, styleEl } = getElements();
+    expect(bar.style.display).toBe('none');
+    expect(styleEl.textContent).toBe('');
+  });
+
   it('applies topBarHeight at the clamp boundaries (1 and 40) without adjustment', async () => {
     for (const boundary of [1, 40]) {
       document.documentElement.innerHTML = '<head></head><body></body>';
@@ -754,7 +871,12 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         projectRules: [
-          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: 'my-project',
+            settings: { topBarPaletteId: null, topBarColor: '#222222' },
+          },
         ],
       }),
     );

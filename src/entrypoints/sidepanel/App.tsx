@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
-import type { PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
+import { Button, Card, Input, ListBox, Select, Switch, Tooltip } from '@heroui/react';
+import type { MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
-import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings, cloneProjectSettings } from '../../utils/settings';
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_PROJECT_SETTINGS,
+  loadSettings,
+  cloneProjectSettings,
+  MATCH_TYPES,
+} from '../../utils/settings';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
 import ColorSwatchField from '../../components/ColorSwatchField';
 import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
+import AddRuleModal, { MATCH_TYPE_LABELS } from '../../components/AddRuleModal';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -163,7 +170,6 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
 function App() {
   const [settings, setSettings] = useState<TintSettings>(DEFAULT_SETTINGS);
   const [view, setView] = useState<View>({ type: 'list' });
-  const [newRulePattern, setNewRulePattern] = useState('');
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // Native HTML5 drag-and-drop only lets an element itself be `draggable`; to restrict drag
@@ -205,12 +211,14 @@ function App() {
     });
   };
 
-  const handleAddRule = () => {
-    const pattern = newRulePattern.trim();
-    if (!pattern) return;
-    const rule: ProjectRule = { id: crypto.randomUUID(), pattern, settings: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS) };
+  const handleAddRule = (matchType: MatchType, pattern: string) => {
+    const rule: ProjectRule = {
+      id: crypto.randomUUID(),
+      matchType,
+      pattern,
+      settings: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS),
+    };
     save({ ...settings, projectRules: [...settings.projectRules, rule] });
-    setNewRulePattern('');
   };
 
   const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -223,12 +231,22 @@ function App() {
     });
   };
 
+  const handleMatchTypeChange = (matchType: MatchType) => {
+    if (view.type !== 'detail') return;
+    const ruleId = view.ruleId;
+    save({
+      ...settings,
+      projectRules: settings.projectRules.map((r) => (r.id === ruleId ? { ...r, matchType } : r)),
+    });
+  };
+
   const handleDuplicateRule = (id: string) => {
     const index = settings.projectRules.findIndex((r) => r.id === id);
     if (index === -1) return;
     const original = settings.projectRules[index];
     const copy: ProjectRule = {
       id: crypto.randomUUID(),
+      matchType: original.matchType,
       pattern: original.pattern,
       settings: cloneProjectSettings(original.settings),
     };
@@ -437,15 +455,39 @@ function App() {
           <Card>
             <Card.Content className="flex flex-col gap-1">
               <div className="flex min-h-8 items-center justify-between gap-2">
-                <span className="text-sm">Pattern</span>
+                <span className="text-sm">Match type</span>
+                <Select
+                  aria-label="Match type"
+                  value={currentRule.matchType}
+                  onChange={(key) => {
+                    if (key != null) handleMatchTypeChange(key as MatchType);
+                  }}
+                >
+                  <Select.Trigger className="h-8 min-w-0 rounded-md border border-border bg-transparent px-2 text-sm">
+                    <Select.Value />
+                    <Select.Indicator />
+                  </Select.Trigger>
+                  <Select.Popover>
+                    <ListBox>
+                      {MATCH_TYPES.map((type) => (
+                        <ListBox.Item key={type} id={type} textValue={MATCH_TYPE_LABELS[type]}>
+                          {MATCH_TYPE_LABELS[type]}
+                        </ListBox.Item>
+                      ))}
+                    </ListBox>
+                  </Select.Popover>
+                </Select>
+              </div>
+              <div className="flex min-h-8 items-center justify-between gap-2">
+                <span className="text-sm">{currentRule.matchType === 'regex' ? 'Pattern' : 'Project ID'}</span>
                 <Input
-                  aria-label="Pattern"
+                  aria-label={currentRule.matchType === 'regex' ? 'Pattern' : 'Project ID'}
                   value={currentRule.pattern}
                   onChange={handlePatternChange}
                   className={nameInputClassName}
                 />
               </div>
-              {!isValidPattern(currentRule.pattern) && (
+              {currentRule.matchType === 'regex' && !isValidPattern(currentRule.pattern) && (
                 <span className="text-sm text-danger">Invalid regular expression</span>
               )}
             </Card.Content>
@@ -665,21 +707,13 @@ function App() {
 
       <Card>
         <Card.Content className="flex flex-col gap-2">
-          <div className="text-sm font-medium">Projects</div>
-
-          <div className="flex items-center gap-2">
-            <Input
-              aria-label="New rule pattern"
-              placeholder="project id or regex"
-              value={newRulePattern}
-              onChange={(e) => setNewRulePattern(e.target.value)}
-              className={nameInputClassName}
-            />
-            <IconButtonTooltip label="Add rule">
-              <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0" onPress={handleAddRule}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-medium">Projects</div>
+            <AddRuleModal onAdd={handleAddRule}>
+              <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
                 <PlusIcon />
               </Button>
-            </IconButtonTooltip>
+            </AddRuleModal>
           </div>
 
           {settings.projectRules.length > 0 && (
@@ -703,6 +737,7 @@ function App() {
                     <GripIcon />
                   </span>
                   <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
+                  <span className="shrink-0 text-xs text-muted">{rule.matchType}</span>
                   <IconButtonTooltip label="Edit">
                     <Button
                       isIconOnly

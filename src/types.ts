@@ -22,9 +22,14 @@ export interface ProjectSettings {
   platformBarTextAuto: boolean;
 }
 
+// How a ProjectRule's pattern is compared against the console URL's ?project= param.
+export type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
+
 export interface ProjectRule {
   id: string;
-  // Regular expression source matched against the console URL's ?project= param.
+  matchType: MatchType;
+  // For 'prefix' | 'suffix' | 'exact': a literal string compared against the project id.
+  // For 'regex': a regular expression source that must match the ENTIRE project id.
   pattern: string;
   settings: ProjectSettings;
 }

@@ -3,6 +3,18 @@ import { render, screen, waitFor, fireEvent, cleanup, within, act } from '@testi
 import userEvent from '@testing-library/user-event';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import App from './App';
+import { MATCH_TYPE_LABELS } from '../../components/AddRuleModal';
+
+// jsdom (unlike real browsers) doesn't implement CSS.escape, which react-aria's selection
+// utilities call to scroll a newly-selected collection item into view — a path only the new
+// Match type Select (a ListBox-backed collection) exercises in this file. The escaping itself
+// is irrelevant here since every key this suite selects (matchType strings, crypto.randomUUID()
+// ids) is already a valid, unescaped CSS identifier.
+if (typeof globalThis.CSS === 'undefined') {
+  (globalThis as { CSS?: Pick<typeof CSS, 'escape'> }).CSS = { escape: (value: string) => value };
+}
+
+type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 
 interface PaletteEntry {
   id: string;
@@ -30,6 +42,7 @@ interface ProjectSettings {
 
 interface ProjectRule {
   id: string;
+  matchType: MatchType;
   pattern: string;
   settings: ProjectSettings;
 }
@@ -162,12 +175,43 @@ function getGrip(row: HTMLElement): HTMLElement {
   return grip as HTMLElement;
 }
 
-async function addRule(user: ReturnType<typeof userEvent.setup>, pattern: string) {
-  const input = screen.getByLabelText('New rule pattern') as HTMLInputElement;
-  fireEvent.change(input, { target: { value: pattern } });
+// Opens the Add rule modal via its trigger button (the [+] icon in the Projects card header)
+// and returns the opened dialog.
+async function openAddRuleModal(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Add rule' }));
+  return screen.findByRole('dialog');
+}
+
+// Adds a rule through the modal using its default match type (exact). Most tests only care that
+// a rule with this pattern ends up in the list/storage; tests that need a specific match type use
+// addRuleWithMatchType instead.
+async function addRule(user: ReturnType<typeof userEvent.setup>, pattern: string) {
+  const dialog = await openAddRuleModal(user);
+  fireEvent.change(within(dialog).getByLabelText('Project ID'), { target: { value: pattern } });
+  await user.click(within(dialog).getByRole('button', { name: 'Add' }));
   await waitFor(async () => {
     expect((await getStoredSettings()).projectRules.some((r) => r.pattern === pattern)).toBe(true);
+  });
+}
+
+// Adds a rule through the modal with an explicit match type, selecting the corresponding radio
+// when it isn't the modal's default ('exact'). The value input's accessible label follows
+// AddRuleModal's own convention: "Pattern" for regex, "Project ID" for the others.
+async function addRuleWithMatchType(
+  user: ReturnType<typeof userEvent.setup>,
+  matchType: MatchType,
+  pattern: string,
+) {
+  const dialog = await openAddRuleModal(user);
+  if (matchType !== 'exact') {
+    await user.click(within(dialog).getByRole('radio', { name: MATCH_TYPE_LABELS[matchType] }));
+  }
+  const label = matchType === 'regex' ? 'Pattern' : 'Project ID';
+  fireEvent.change(within(dialog).getByLabelText(label), { target: { value: pattern } });
+  await user.click(within(dialog).getByRole('button', { name: 'Add' }));
+  await waitFor(async () => {
+    const rule = (await getStoredSettings()).projectRules.find((r) => r.pattern === pattern);
+    expect(rule?.matchType).toBe(matchType);
   });
 }
 
@@ -220,40 +264,39 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  it('shows an empty rule list with just the Add row by default (no Default row)', async () => {
+  it('shows an empty rule list with just the Projects header (Add rule button) by default (no Default row)', async () => {
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     expect(getAllRuleRows()).toHaveLength(0);
     expect(screen.queryByText('Default')).toBeNull();
     expect(screen.queryAllByRole('button', { name: 'Edit' })).toHaveLength(0);
-    expect(screen.getByLabelText('New rule pattern')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
   });
 
-  it('places the Add row before the rule list, with a divider between them that is hidden while the list is empty and appears once a rule exists', async () => {
+  it('places the Projects header row before the rule list, with a divider between them that is hidden while the list is empty and appears once a rule exists', async () => {
     const user = userEvent.setup();
     render(<App />);
-    const addInput = await screen.findByLabelText('New rule pattern');
+    const addButton = await screen.findByRole('button', { name: 'Add rule' });
 
     // With zero rules there is nothing to separate, so no divider (border-t) container is
-    // rendered below the Add row.
-    const projectsCard = addInput.closest('.card') as HTMLElement;
+    // rendered below the header row.
+    const projectsCard = addButton.closest('.card') as HTMLElement;
     expect(projectsCard.querySelector('.border-t')).toBeNull();
 
     await addRule(user, 'my-project');
 
-    // Document order: the Add row's Input precedes the rule row once one exists.
-    const position = addInput.compareDocumentPosition(getRuleRow('my-project'));
+    // Document order: the header row's Add button precedes the rule row once one exists.
+    const position = addButton.compareDocumentPosition(getRuleRow('my-project'));
     expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The divider now separates the Add row from the rule list below it.
+    // The divider now separates the header row from the rule list below it.
     expect(projectsCard.querySelector('.border-t')).toBeTruthy();
   });
 
   it('a freshly-added rule shows the palette entry and Top bar/Platform Bar triggers referencing it by default', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -274,7 +317,7 @@ describe('App', () => {
   it("Add rule initializes the new rule's settings from the built-in DEFAULT_PROJECT_SETTINGS", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
 
@@ -291,7 +334,7 @@ describe('App', () => {
   it('opens the Top bar picker showing the referenced palette entry active and Custom inactive', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -308,7 +351,7 @@ describe('App', () => {
   it('Top bar: selecting a different palette swatch saves the reference and shows its name on the trigger', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -340,7 +383,7 @@ describe('App', () => {
   it('Top bar: changing the Custom color in the picker clears the palette reference and shows the hex on the trigger', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -360,7 +403,7 @@ describe('App', () => {
   it('Platform Bar: changing the Custom color in the picker clears the palette reference', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -377,7 +420,7 @@ describe('App', () => {
   it('Platform Bar text color: selecting a palette entry via the picker saves the reference and shows its name on the trigger', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -395,7 +438,7 @@ describe('App', () => {
   it('a palette entry color change is reflected in the effective color of the same rule (not a one-shot copy)', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -416,7 +459,7 @@ describe('App', () => {
   it('adds a new palette entry via the "Add color" icon button and exposes it in the picker', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -436,7 +479,7 @@ describe('App', () => {
   it('adds multiple palette entries with sequential default names', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -453,7 +496,7 @@ describe('App', () => {
   it('names new entries as "Color ${length+1}" based on the current array length; this is current, not-a-bug-fix-target behavior, and it can produce a duplicate name after a middle entry is removed and a new one added', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -493,7 +536,7 @@ describe('App', () => {
   it("saves a palette entry's name edit to storage", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -509,7 +552,7 @@ describe('App', () => {
   it("saves a palette entry's color edit to storage", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -524,7 +567,7 @@ describe('App', () => {
   it('removing a non-referenced palette entry (icon button) does not affect other entries or references', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -551,7 +594,7 @@ describe('App', () => {
   it('Remove color opens a confirmation popover naming the entry, without deleting yet (falls back to "(unnamed)")', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -568,7 +611,7 @@ describe('App', () => {
   it('Remove color popover falls back to "(unnamed)" in its target line when the entry has an empty name', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -587,7 +630,7 @@ describe('App', () => {
   it('clicking outside the Remove color confirmation popover leaves the entry and storage unchanged and closes it', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -610,7 +653,7 @@ describe('App', () => {
   it('confirming Remove color deletes the palette entry and closes the popover', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -626,7 +669,7 @@ describe('App', () => {
   it('removing a palette entry clears its reference within the same rule only, leaving other rules unaffected', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'alpha');
     await addRule(user, 'beta');
@@ -652,7 +695,7 @@ describe('App', () => {
   it('removing a palette entry also clears its reference from platformBarTextPaletteId (the third referencing field, alongside topBarPaletteId and platformBarPaletteId)', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -678,7 +721,7 @@ describe('App', () => {
   it("a rule's palette is independent: adding a palette entry to one rule does not affect another rule's palette", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'alpha');
     await addRule(user, 'beta');
@@ -697,7 +740,7 @@ describe('App', () => {
   it('shows "(unnamed)" as the swatch label in the picker for a palette entry with an empty name', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -714,7 +757,7 @@ describe('App', () => {
   it('hides the Palette section and shows the own hex on the trigger when Color palette is turned off', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -734,7 +777,7 @@ describe('App', () => {
   it('keeps palette data and references in storage when turned off, and restores the trigger name when turned back on', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -757,7 +800,7 @@ describe('App', () => {
   it('falls back a referencing item to Custom when its referenced palette entry is removed', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -786,7 +829,7 @@ describe('App', () => {
   it('Platform Bar text color: the picker shows an Auto option, inactive, with Custom active by default', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -802,7 +845,7 @@ describe('App', () => {
   it('Platform Bar text color: selecting Auto saves platformBarTextAuto and the trigger shows "Auto"', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -820,7 +863,7 @@ describe('App', () => {
   it('Platform Bar text color: the auto-computed swatch color follows the Platform Bar background (not one-shot)', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -857,7 +900,7 @@ describe('App', () => {
   it('Platform Bar text color: selecting a palette entry clears Auto', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -881,7 +924,7 @@ describe('App', () => {
   it('Platform Bar text color: changing the Custom color clears Auto', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -906,7 +949,7 @@ describe('App', () => {
   it('Top bar: Height input shows the default value and saves changes to storage', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -923,7 +966,7 @@ describe('App', () => {
   it('emptying the Top bar Height input is ignored: the previous valid value is kept in storage (valueAsNumber is NaN for an empty number input, which fails the Number.isFinite guard)', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -942,7 +985,7 @@ describe('App', () => {
   it('Top bar: the Stripes switch toggles topBarStripes in storage', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -959,7 +1002,7 @@ describe('App', () => {
   it('Platform Bar: the Stripes switch toggles platformBarStripes independently of Top bar Stripes', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -980,7 +1023,7 @@ describe('App', () => {
   it('wraps every icon-only button (Edit/Duplicate/Delete/Add rule/Back/Remove color/Add color) in a HeroUI Tooltip.Trigger with a single Tab stop (the button itself, not the trigger wrapper)', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
 
@@ -1013,7 +1056,7 @@ describe('App', () => {
 
   it('does not render a "Reset to defaults" button', async () => {
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     expect(screen.queryByRole('button', { name: 'Reset to defaults' })).toBeNull();
   });
@@ -1108,7 +1151,7 @@ describe('App', () => {
   it('stamps the current version as schemaVersion whenever settings are saved', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
 
@@ -1119,7 +1162,7 @@ describe('App', () => {
 
   it('loads settings once on mount; external storage changes made afterward are not reflected in the UI (no live storage.onChanged listener, unlike content.ts)', async () => {
     render(<App />);
-    await screen.findByLabelText('New rule pattern');
+    await screen.findByRole('button', { name: 'Add rule' });
 
     // Simulate another tab/window (or content.ts's own writes) changing storage after this
     // sidepanel instance has already completed its one-time load.
@@ -1138,16 +1181,21 @@ describe('App', () => {
   });
 
   describe('Rules', () => {
-    it('ignores adding an empty or whitespace-only pattern', async () => {
+    it('ignores adding an empty or whitespace-only pattern: the Add button stays disabled', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'existing-rule');
 
-      const input = screen.getByLabelText('New rule pattern') as HTMLInputElement;
-      fireEvent.change(input, { target: { value: '   ' } });
-      await user.click(screen.getByRole('button', { name: 'Add rule' }));
+      const dialog = await openAddRuleModal(user);
+      fireEvent.change(within(dialog).getByLabelText('Project ID'), { target: { value: '   ' } });
+      expect((within(dialog).getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true);
+
+      await user.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
 
       expect((await getStoredSettings()).projectRules).toHaveLength(1);
       expect(getAllRuleRows()).toHaveLength(1);
@@ -1156,7 +1204,7 @@ describe('App', () => {
     it('allows adding multiple rules with the same pattern text, each with its own id (regex duplicates may be intentional)', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'same-pattern');
       await addRule(user, 'same-pattern');
@@ -1166,12 +1214,23 @@ describe('App', () => {
       expect(stored.projectRules[0].id).not.toBe(stored.projectRules[1].id);
     });
 
+    it("shows each rule's match type as a text hint next to its pattern in the list", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRuleWithMatchType(user, 'prefix', 'my-project');
+
+      const row = getRuleRow('my-project');
+      expect(within(row).getByText('prefix')).toBeTruthy();
+    });
+
     it('Edit navigates to a rule detail page with a Pattern field; editing it saves and flags an invalid regex', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
-      await addRule(user, 'my-project');
+      await addRuleWithMatchType(user, 'regex', 'my-project');
       await openRuleDetail(user, 'my-project');
 
       expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('my-project');
@@ -1193,9 +1252,9 @@ describe('App', () => {
     it('the Pattern field can be edited down to an empty string and saves it as-is, unlike Add rule which guards against empty (current behavior: no guard on edits, so an in-progress clear-and-retype is never blocked)', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
-      await addRule(user, 'my-project');
+      await addRuleWithMatchType(user, 'regex', 'my-project');
       await openRuleDetail(user, 'my-project');
 
       const patternInput = screen.getByLabelText('Pattern') as HTMLInputElement;
@@ -1209,10 +1268,62 @@ describe('App', () => {
       expect(screen.queryByText('Invalid regular expression')).toBeNull();
     });
 
+    it('Detail page: the Match type Select changes matchType and adapts the value field label between Project ID and Pattern', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'my-project'); // default match type is 'exact'
+      await openRuleDetail(user, 'my-project');
+
+      expect(screen.getByLabelText('Project ID')).toBeTruthy();
+      expect(screen.queryByLabelText('Pattern')).toBeNull();
+
+      // The Select trigger's accessible name concatenates its aria-labelledby refs (the
+      // currently-selected value's text, then the field's own "Match type" aria-label), e.g.
+      // "Starts with Match type", so match by substring rather than an exact string.
+      await user.click(screen.getByRole('button', { name: /Match type/ }));
+      await user.click(await screen.findByRole('option', { name: 'Regex' }));
+
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules[0].matchType).toBe('regex');
+      });
+      expect(screen.getByLabelText('Pattern')).toBeTruthy();
+      expect(screen.queryByLabelText('Project ID')).toBeNull();
+    });
+
+    it('Detail page: the Invalid regular expression warning only appears when Match type is Regex', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRuleWithMatchType(user, 'prefix', 'my-project');
+      await openRuleDetail(user, 'my-project');
+
+      const valueInput = screen.getByLabelText('Project ID') as HTMLInputElement;
+      fireEvent.change(valueInput, { target: { value: 'proj-[' } });
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules[0].pattern).toBe('proj-[');
+      });
+      // The same text would be an invalid regex, but matchType isn't 'regex' here, so no warning.
+      expect(screen.queryByText('Invalid regular expression')).toBeNull();
+
+      // The Select trigger's accessible name concatenates its aria-labelledby refs (the
+      // currently-selected value's text, then the field's own "Match type" aria-label), e.g.
+      // "Starts with Match type", so match by substring rather than an exact string.
+      await user.click(screen.getByRole('button', { name: /Match type/ }));
+      await user.click(await screen.findByRole('option', { name: 'Regex' }));
+
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules[0].matchType).toBe('regex');
+      });
+      expect(screen.getByText('Invalid regular expression')).toBeTruthy();
+    });
+
     it('Duplicate inserts a copy directly below the original with a new id, editable independently', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1225,6 +1336,7 @@ describe('App', () => {
 
       const [original, duplicate] = (await getStoredSettings()).projectRules;
       expect(duplicate.id).not.toBe(original.id);
+      expect(duplicate.matchType).toBe(original.matchType);
       expect(duplicate.settings).toEqual(original.settings);
 
       // Editing the duplicate (index 1, the second "alpha" row) must not affect the original (index 0).
@@ -1236,10 +1348,25 @@ describe('App', () => {
       expect((await getStoredSettings()).projectRules[0].settings.topBarHeight).toBe(4);
     });
 
+    it("Duplicate copies a non-default matchType ('suffix') to the copy, shown in both rows' hints", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRuleWithMatchType(user, 'suffix', 'alpha');
+      await user.click(within(getRuleRowAt(0)).getByRole('button', { name: 'Duplicate' }));
+
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules.map((r) => r.matchType)).toEqual(['suffix', 'suffix']);
+      });
+      const hints = screen.getAllByText('suffix');
+      expect(hints).toHaveLength(2);
+    });
+
     it("Duplicate deep-copies the palette array (cloneProjectSettings): editing the duplicate's palette does not affect the original's", async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await user.click(within(getRuleRowAt(0)).getByRole('button', { name: 'Duplicate' }));
@@ -1263,7 +1390,7 @@ describe('App', () => {
     it('Delete opens a confirmation popover naming the rule pattern, without deleting yet', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'my-project');
       const before = await getStoredSettings();
@@ -1287,7 +1414,7 @@ describe('App', () => {
     it('clicking outside the delete confirmation popover leaves the rule and storage unchanged and closes it (no Cancel button; dismissal is cancel)', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'my-project');
       const before = await getStoredSettings();
@@ -1309,7 +1436,7 @@ describe('App', () => {
     it('pressing Escape in the delete confirmation popover closes it without deleting', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'my-project');
       const before = await getStoredSettings();
@@ -1327,7 +1454,7 @@ describe('App', () => {
     it('confirming Delete in the popover removes the rule from the list and storage, and closes the popover', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1344,7 +1471,7 @@ describe('App', () => {
     it('reorders rules via drag-and-drop from the grip handle, and persists the new order to storage', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1369,7 +1496,7 @@ describe('App', () => {
     it('does not start a drag when the gesture does not originate on the grip handle', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1389,7 +1516,7 @@ describe('App', () => {
     it('dropping a row onto itself is a no-op: order and storage stay unchanged, and no drop indicator is shown', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1414,7 +1541,7 @@ describe('App', () => {
     it('shows a bottom-edge drop indicator on the target row when dragging downward (dragOverIndex > draggingIndex)', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1437,7 +1564,7 @@ describe('App', () => {
     it('shows a top-edge drop indicator on the target row when dragging upward (dragOverIndex < draggingIndex)', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1459,7 +1586,7 @@ describe('App', () => {
     it('clears the drop indicator once the drop is handled', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1486,7 +1613,7 @@ describe('App', () => {
     it('clears the drop indicator on dragEnd even when the drag ends outside any row (e.g. dropped outside the list)', async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1513,7 +1640,7 @@ describe('App', () => {
     it("editing a rule's settings in detail saves to that rule only, without affecting other rules", async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
@@ -1541,7 +1668,7 @@ describe('App', () => {
     it("a Top bar Custom color change while editing a rule saves to that rule's settings only", async () => {
       const user = userEvent.setup();
       render(<App />);
-      await screen.findByLabelText('New rule pattern');
+      await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');

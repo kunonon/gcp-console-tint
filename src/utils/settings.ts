@@ -1,5 +1,7 @@
-import type { ProjectRule, ProjectSettings, TintSettings } from '../types';
+import type { MatchType, ProjectRule, ProjectSettings, TintSettings } from '../types';
 import { compareVersions } from './version';
+
+export const MATCH_TYPES: readonly MatchType[] = ['prefix', 'suffix', 'exact', 'regex'];
 
 export const DEFAULT_COLOR = '#ff6d00';
 export const DEFAULT_TEXT_COLOR = '#ffffff';
@@ -8,6 +10,9 @@ export const DEFAULT_TOP_BAR_HEIGHT = 4;
 // The lowest schemaVersion that can be read as-is with the current TintSettings shape.
 // Bump this on a release that changes the schema shape; from that release onward, branch
 // here (or add a migration step) for any stored data still below the new floor.
+// Pre-release note: matchType and regex full-match semantics were added without bumping
+// this floor — 0.1.0 data is read destructively (missing matchType becomes 'regex', and
+// 'regex' now matches the ENTIRE project id instead of a substring).
 export const SCHEMA_MIN_VERSION = '0.1.0';
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -82,6 +87,9 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
       if (typeof rule.pattern !== 'string') continue;
       projectRules.push({
         id: typeof rule.id === 'string' ? rule.id : crypto.randomUUID(),
+        // Missing (pre-matchType 0.1.0 data) or unknown values fall back to 'regex' — the
+        // shape every pre-existing pattern was written as.
+        matchType: MATCH_TYPES.includes(rule.matchType as MatchType) ? (rule.matchType as MatchType) : 'regex',
         pattern: rule.pattern,
         settings: mergeProjectSettings(rule.settings as Partial<ProjectSettings>),
       });
@@ -94,17 +102,33 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
   };
 }
 
-// Rules are ordered by priority (top of the list first). The first rule whose regex
-// pattern matches the project id wins; rules with invalid regexes are skipped.
+function ruleMatches(rule: ProjectRule, projectId: string): boolean {
+  switch (rule.matchType) {
+    case 'prefix':
+      return projectId.startsWith(rule.pattern);
+    case 'suffix':
+      return projectId.endsWith(rule.pattern);
+    case 'exact':
+      return projectId === rule.pattern;
+    case 'regex':
+      try {
+        // Full match: the pattern must cover the entire project id. The non-capturing
+        // group keeps top-level alternation (a|b) from escaping the anchors.
+        return new RegExp(`^(?:${rule.pattern})$`).test(projectId);
+      } catch {
+        // invalid regex: the rule never matches
+        return false;
+      }
+  }
+}
+
+// Rules are ordered by priority (top of the list first). The first rule that matches the
+// project id (per its matchType) wins; 'regex' rules with invalid patterns are skipped.
 // Returns null when the URL has no project id or no rule matches — nothing is applied.
 export function resolveProjectSettings(settings: TintSettings, projectId: string | null): ProjectSettings | null {
   if (projectId) {
     for (const rule of settings.projectRules) {
-      try {
-        if (new RegExp(rule.pattern).test(projectId)) return rule.settings;
-      } catch {
-        // invalid regex: skip this rule
-      }
+      if (ruleMatches(rule, projectId)) return rule.settings;
     }
   }
   return null;
