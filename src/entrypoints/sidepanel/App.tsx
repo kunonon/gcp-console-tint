@@ -271,7 +271,7 @@ function App() {
           {settings.topBarEnabled && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               <div className="flex min-h-8 items-center justify-between">
-                <span>Color</span>
+                <span className="text-sm">Color</span>
                 <PaletteColorPicker
                   ariaLabel="Top bar color"
                   paletteEnabled={settings.paletteEnabled}
@@ -284,7 +284,7 @@ function App() {
                 />
               </div>
               <div className="flex min-h-8 items-center justify-between">
-                <span>Height</span>
+                <span className="text-sm">Height</span>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
@@ -332,7 +332,7 @@ function App() {
           {settings.platformBarEnabled && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               <div className="flex min-h-8 items-center justify-between">
-                <span>Color</span>
+                <span className="text-sm">Color</span>
                 <PaletteColorPicker
                   ariaLabel="Platform Bar color"
                   paletteEnabled={settings.paletteEnabled}
@@ -378,7 +378,7 @@ function App() {
           {settings.platformBarTextEnabled && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               <div className="flex min-h-8 items-center justify-between">
-                <span>Color</span>
+                <span className="text-sm">Color</span>
                 <PaletteColorPicker
                   ariaLabel="Platform Bar text color"
                   paletteEnabled={settings.paletteEnabled}
