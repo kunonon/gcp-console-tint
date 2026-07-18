@@ -1,53 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, Input, Switch } from '@heroui/react';
-import type { PaletteEntry } from '../../types';
+import type { PaletteEntry, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
+import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings } from '../../utils/settings';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
 import ColorSwatchField from '../../components/ColorSwatchField';
 
-interface TintSettings {
-  paletteEnabled: boolean;
-  palette: PaletteEntry[];
-  topBarEnabled: boolean;
-  topBarColor: string;
-  topBarPaletteId: string | null;
-  topBarHeight: number;
-  topBarStripes: boolean;
-  platformBarEnabled: boolean;
-  platformBarColor: string;
-  platformBarPaletteId: string | null;
-  platformBarStripes: boolean;
-  platformBarTextEnabled: boolean;
-  platformBarTextColor: string;
-  platformBarTextPaletteId: string | null;
-  platformBarTextAuto: boolean;
-}
-
-const DEFAULT_COLOR = '#ff6d00';
-const DEFAULT_TEXT_COLOR = '#ffffff';
-const DEFAULT_SETTINGS: TintSettings = {
-  paletteEnabled: true,
-  palette: [{ id: 'default', name: 'Primary', color: DEFAULT_COLOR }],
-  topBarEnabled: true,
-  topBarColor: DEFAULT_COLOR,
-  topBarPaletteId: 'default',
-  topBarHeight: 4,
-  topBarStripes: false,
-  platformBarEnabled: true,
-  platformBarColor: DEFAULT_COLOR,
-  platformBarPaletteId: 'default',
-  platformBarStripes: false,
-  platformBarTextEnabled: true,
-  platformBarTextColor: DEFAULT_TEXT_COLOR,
-  platformBarTextPaletteId: null,
-  platformBarTextAuto: false,
-};
-
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
-const resolveColor = (settings: TintSettings, paletteId: string | null, ownColor: string): string => {
-  if (settings.paletteEnabled && paletteId) {
-    const entry = settings.palette.find((e) => e.id === paletteId);
+const resolveColor = (
+  paletteEnabled: boolean,
+  palette: PaletteEntry[],
+  paletteId: string | null,
+  ownColor: string,
+): string => {
+  if (paletteEnabled && paletteId) {
+    const entry = palette.find((e) => e.id === paletteId);
     if (entry) return entry.color;
   }
   return ownColor;
@@ -94,25 +62,55 @@ function TrashIcon() {
 
 function App() {
   const [settings, setSettings] = useState<TintSettings>(DEFAULT_SETTINGS);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [newProjectId, setNewProjectId] = useState('');
 
   useEffect(() => {
-    browser.storage.local.get(['tintSettings', 'tintColor']).then((result) => {
-      if (result.tintSettings) {
-        setSettings({ ...DEFAULT_SETTINGS, ...(result.tintSettings as Partial<TintSettings>) });
-      } else if (typeof result.tintColor === 'string') {
-        setSettings({
-          ...DEFAULT_SETTINGS,
-          palette: [{ id: 'default', name: 'Primary', color: result.tintColor }],
-          topBarColor: result.tintColor,
-          platformBarColor: result.tintColor,
-        });
-      }
+    const currentVersion = browser.runtime.getManifest().version;
+    browser.storage.local.get('tintSettings').then((result) => {
+      setSettings(loadSettings(result.tintSettings, currentVersion));
     });
   }, []);
 
   const save = (next: TintSettings) => {
-    setSettings(next);
-    browser.storage.local.set({ tintSettings: next });
+    const stamped: TintSettings = { ...next, schemaVersion: browser.runtime.getManifest().version };
+    setSettings(stamped);
+    browser.storage.local.set({ tintSettings: stamped });
+  };
+
+  const updateCurrentProject = (patch: Partial<ProjectSettings>) => {
+    if (selectedProjectId === null) {
+      save({ ...settings, defaultProject: { ...settings.defaultProject, ...patch } });
+    } else {
+      const base = settings.projects[selectedProjectId] ?? DEFAULT_PROJECT_SETTINGS;
+      save({
+        ...settings,
+        projects: { ...settings.projects, [selectedProjectId]: { ...base, ...patch } },
+      });
+    }
+  };
+
+  const handleSelectProject = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedProjectId(e.target.value === '' ? null : e.target.value);
+  };
+
+  const handleAddProject = () => {
+    const id = newProjectId.trim();
+    if (!id || settings.projects[id]) return;
+    save({
+      ...settings,
+      projects: { ...settings.projects, [id]: { ...settings.defaultProject } },
+    });
+    setSelectedProjectId(id);
+    setNewProjectId('');
+  };
+
+  const handleRemoveProject = () => {
+    if (selectedProjectId === null) return;
+    const rest = { ...settings.projects };
+    delete rest[selectedProjectId];
+    save({ ...settings, projects: rest });
+    setSelectedProjectId(null);
   };
 
   const handlePaletteEnabledChange = (isSelected: boolean) => {
@@ -123,7 +121,7 @@ function App() {
     const entry: PaletteEntry = {
       id: crypto.randomUUID(),
       name: `Color ${settings.palette.length + 1}`,
-      color: DEFAULT_COLOR,
+      color: DEFAULT_PROJECT_SETTINGS.topBarColor,
     };
     save({ ...settings, palette: [...settings.palette, entry] });
   };
@@ -137,79 +135,161 @@ function App() {
   };
 
   const handleRemoveColor = (id: string) => {
+    const clearReference = (project: ProjectSettings): ProjectSettings => ({
+      ...project,
+      topBarPaletteId: project.topBarPaletteId === id ? null : project.topBarPaletteId,
+      platformBarPaletteId: project.platformBarPaletteId === id ? null : project.platformBarPaletteId,
+      platformBarTextPaletteId:
+        project.platformBarTextPaletteId === id ? null : project.platformBarTextPaletteId,
+    });
+
     save({
       ...settings,
       palette: settings.palette.filter((e) => e.id !== id),
-      topBarPaletteId: settings.topBarPaletteId === id ? null : settings.topBarPaletteId,
-      platformBarPaletteId: settings.platformBarPaletteId === id ? null : settings.platformBarPaletteId,
-      platformBarTextPaletteId:
-        settings.platformBarTextPaletteId === id ? null : settings.platformBarTextPaletteId,
+      defaultProject: clearReference(settings.defaultProject),
+      projects: Object.fromEntries(
+        Object.entries(settings.projects).map(([projectId, project]) => [projectId, clearReference(project)]),
+      ),
     });
   };
 
   const handleTopBarEnabledChange = (isSelected: boolean) => {
-    save({ ...settings, topBarEnabled: isSelected });
+    updateCurrentProject({ topBarEnabled: isSelected });
   };
 
   const handlePlatformBarEnabledChange = (isSelected: boolean) => {
-    save({ ...settings, platformBarEnabled: isSelected });
+    updateCurrentProject({ platformBarEnabled: isSelected });
   };
 
   const handleTopBarHeightChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.valueAsNumber;
     if (!Number.isFinite(value)) return;
-    save({ ...settings, topBarHeight: value });
+    updateCurrentProject({ topBarHeight: value });
   };
 
   const handleTopBarStripesChange = (isSelected: boolean) => {
-    save({ ...settings, topBarStripes: isSelected });
+    updateCurrentProject({ topBarStripes: isSelected });
   };
 
   const handlePlatformBarStripesChange = (isSelected: boolean) => {
-    save({ ...settings, platformBarStripes: isSelected });
+    updateCurrentProject({ platformBarStripes: isSelected });
   };
 
   const handlePlatformBarTextEnabledChange = (isSelected: boolean) => {
-    save({ ...settings, platformBarTextEnabled: isSelected });
+    updateCurrentProject({ platformBarTextEnabled: isSelected });
   };
 
   const handleTopBarPaletteSelect = (id: string) => {
-    save({ ...settings, topBarPaletteId: id });
+    updateCurrentProject({ topBarPaletteId: id });
   };
 
   const handleTopBarCustomColorChange = (color: string) => {
-    save({ ...settings, topBarPaletteId: null, topBarColor: color });
+    updateCurrentProject({ topBarPaletteId: null, topBarColor: color });
   };
 
   const handlePlatformBarPaletteSelect = (id: string) => {
-    save({ ...settings, platformBarPaletteId: id });
+    updateCurrentProject({ platformBarPaletteId: id });
   };
 
   const handlePlatformBarCustomColorChange = (color: string) => {
-    save({ ...settings, platformBarPaletteId: null, platformBarColor: color });
+    updateCurrentProject({ platformBarPaletteId: null, platformBarColor: color });
   };
 
   const handlePlatformBarTextPaletteSelect = (id: string) => {
-    save({ ...settings, platformBarTextPaletteId: id, platformBarTextAuto: false });
+    updateCurrentProject({ platformBarTextPaletteId: id, platformBarTextAuto: false });
   };
 
   const handlePlatformBarTextCustomColorChange = (color: string) => {
-    save({ ...settings, platformBarTextPaletteId: null, platformBarTextColor: color, platformBarTextAuto: false });
+    updateCurrentProject({ platformBarTextPaletteId: null, platformBarTextColor: color, platformBarTextAuto: false });
   };
 
   const handlePlatformBarTextAutoSelect = () => {
-    save({ ...settings, platformBarTextAuto: true });
+    updateCurrentProject({ platformBarTextAuto: true });
   };
 
-  const topBarEffectiveColor = resolveColor(settings, settings.topBarPaletteId, settings.topBarColor);
-  const platformBarEffectiveColor = resolveColor(settings, settings.platformBarPaletteId, settings.platformBarColor);
-  const platformBarTextEffectiveColor = settings.platformBarTextAuto
+  const projectIds = Object.keys(settings.projects);
+  const currentProject: ProjectSettings =
+    selectedProjectId !== null
+      ? (settings.projects[selectedProjectId] ?? DEFAULT_PROJECT_SETTINGS)
+      : settings.defaultProject;
+
+  const topBarEffectiveColor = resolveColor(
+    settings.paletteEnabled,
+    settings.palette,
+    currentProject.topBarPaletteId,
+    currentProject.topBarColor,
+  );
+  const platformBarEffectiveColor = resolveColor(
+    settings.paletteEnabled,
+    settings.palette,
+    currentProject.platformBarPaletteId,
+    currentProject.platformBarColor,
+  );
+  const platformBarTextEffectiveColor = currentProject.platformBarTextAuto
     ? contrastTextColor(platformBarEffectiveColor)
-    : resolveColor(settings, settings.platformBarTextPaletteId, settings.platformBarTextColor);
+    : resolveColor(
+        settings.paletteEnabled,
+        settings.palette,
+        currentProject.platformBarTextPaletteId,
+        currentProject.platformBarTextColor,
+      );
 
   return (
     <div className="flex flex-col gap-3">
       <h1 className="text-base font-semibold">GCP Console Tint</h1>
+
+      <Card>
+        <Card.Content className="flex flex-col gap-2">
+          <div className="flex min-h-8 items-center justify-between">
+            <span className="text-sm">Project</span>
+            <select
+              aria-label="Project"
+              value={selectedProjectId ?? ''}
+              onChange={handleSelectProject}
+              className="h-8 rounded-md border border-border bg-transparent px-2 text-sm"
+            >
+              <option value="">Default</option>
+              {projectIds.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label="New project ID"
+              placeholder="my-project-123"
+              value={newProjectId}
+              onChange={(e) => setNewProjectId(e.target.value)}
+              className={nameInputClassName}
+            />
+            <Button
+              isIconOnly
+              variant="outline"
+              aria-label="Add project"
+              className="shrink-0"
+              onPress={handleAddProject}
+            >
+              <PlusIcon />
+            </Button>
+          </div>
+          {selectedProjectId !== null && (
+            <div className="flex min-h-8 items-center justify-between">
+              <span className="text-sm">Remove project</span>
+              <Button
+                isIconOnly
+                variant="outline"
+                aria-label="Remove project"
+                className="shrink-0"
+                onPress={handleRemoveProject}
+              >
+                <TrashIcon />
+              </Button>
+            </div>
+          )}
+        </Card.Content>
+      </Card>
 
       <Card>
         <Card.Content className="flex flex-col gap-2">
@@ -260,7 +340,7 @@ function App() {
 
       <Card>
         <Card.Content className="flex flex-col gap-2">
-          <Switch className="w-full" isSelected={settings.topBarEnabled} onChange={handleTopBarEnabledChange}>
+          <Switch className="w-full" isSelected={currentProject.topBarEnabled} onChange={handleTopBarEnabledChange}>
             <Switch.Content className="flex w-full items-center justify-between">
               Top bar
               <Switch.Control>
@@ -268,7 +348,7 @@ function App() {
               </Switch.Control>
             </Switch.Content>
           </Switch>
-          {settings.topBarEnabled && (
+          {currentProject.topBarEnabled && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               <div className="flex min-h-8 items-center justify-between">
                 <span className="text-sm">Color</span>
@@ -276,8 +356,8 @@ function App() {
                   ariaLabel="Top bar color"
                   paletteEnabled={settings.paletteEnabled}
                   palette={settings.palette}
-                  paletteId={settings.topBarPaletteId}
-                  customColor={settings.topBarColor}
+                  paletteId={currentProject.topBarPaletteId}
+                  customColor={currentProject.topBarColor}
                   effectiveColor={topBarEffectiveColor}
                   onSelectPaletteEntry={handleTopBarPaletteSelect}
                   onSelectCustomColor={handleTopBarCustomColorChange}
@@ -291,7 +371,7 @@ function App() {
                     aria-label="Top bar height"
                     min={1}
                     max={40}
-                    value={settings.topBarHeight}
+                    value={currentProject.topBarHeight}
                     onChange={handleTopBarHeightChange}
                     className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                   />
@@ -300,7 +380,7 @@ function App() {
               </div>
               <Switch
                 className="min-h-8 w-full"
-                isSelected={settings.topBarStripes}
+                isSelected={currentProject.topBarStripes}
                 onChange={handleTopBarStripesChange}
               >
                 <Switch.Content className="flex w-full items-center justify-between">
@@ -319,7 +399,7 @@ function App() {
         <Card.Content className="flex flex-col gap-2">
           <Switch
             className="w-full"
-            isSelected={settings.platformBarEnabled}
+            isSelected={currentProject.platformBarEnabled}
             onChange={handlePlatformBarEnabledChange}
           >
             <Switch.Content className="flex w-full items-center justify-between">
@@ -329,7 +409,7 @@ function App() {
               </Switch.Control>
             </Switch.Content>
           </Switch>
-          {settings.platformBarEnabled && (
+          {currentProject.platformBarEnabled && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               <div className="flex min-h-8 items-center justify-between">
                 <span className="text-sm">Color</span>
@@ -337,8 +417,8 @@ function App() {
                   ariaLabel="Platform Bar color"
                   paletteEnabled={settings.paletteEnabled}
                   palette={settings.palette}
-                  paletteId={settings.platformBarPaletteId}
-                  customColor={settings.platformBarColor}
+                  paletteId={currentProject.platformBarPaletteId}
+                  customColor={currentProject.platformBarColor}
                   effectiveColor={platformBarEffectiveColor}
                   onSelectPaletteEntry={handlePlatformBarPaletteSelect}
                   onSelectCustomColor={handlePlatformBarCustomColorChange}
@@ -346,7 +426,7 @@ function App() {
               </div>
               <Switch
                 className="min-h-8 w-full"
-                isSelected={settings.platformBarStripes}
+                isSelected={currentProject.platformBarStripes}
                 onChange={handlePlatformBarStripesChange}
               >
                 <Switch.Content className="flex w-full items-center justify-between">
@@ -365,7 +445,7 @@ function App() {
         <Card.Content className="flex flex-col gap-2">
           <Switch
             className="w-full"
-            isSelected={settings.platformBarTextEnabled}
+            isSelected={currentProject.platformBarTextEnabled}
             onChange={handlePlatformBarTextEnabledChange}
           >
             <Switch.Content className="flex w-full items-center justify-between">
@@ -375,7 +455,7 @@ function App() {
               </Switch.Control>
             </Switch.Content>
           </Switch>
-          {settings.platformBarTextEnabled && (
+          {currentProject.platformBarTextEnabled && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               <div className="flex min-h-8 items-center justify-between">
                 <span className="text-sm">Color</span>
@@ -383,13 +463,13 @@ function App() {
                   ariaLabel="Platform Bar text color"
                   paletteEnabled={settings.paletteEnabled}
                   palette={settings.palette}
-                  paletteId={settings.platformBarTextPaletteId}
-                  customColor={settings.platformBarTextColor}
+                  paletteId={currentProject.platformBarTextPaletteId}
+                  customColor={currentProject.platformBarTextColor}
                   effectiveColor={platformBarTextEffectiveColor}
                   onSelectPaletteEntry={handlePlatformBarTextPaletteSelect}
                   onSelectCustomColor={handlePlatformBarTextCustomColorChange}
                   supportsAuto
-                  autoSelected={settings.platformBarTextAuto}
+                  autoSelected={currentProject.platformBarTextAuto}
                   onSelectAuto={handlePlatformBarTextAutoSelect}
                 />
               </div>

@@ -10,23 +10,31 @@ interface PaletteEntry {
   color: string;
 }
 
-interface StoredTintSettings {
-  paletteEnabled: boolean;
-  palette: PaletteEntry[];
+interface ProjectSettings {
   topBarEnabled: boolean;
   topBarColor: string;
   topBarPaletteId: string | null;
+  topBarHeight: number;
+  topBarStripes: boolean;
   platformBarEnabled: boolean;
   platformBarColor: string;
   platformBarPaletteId: string | null;
+  platformBarStripes: boolean;
   platformBarTextEnabled: boolean;
   platformBarTextColor: string;
   platformBarTextPaletteId: string | null;
   platformBarTextAuto: boolean;
-  topBarHeight: number;
-  topBarStripes: boolean;
-  platformBarStripes: boolean;
 }
+
+interface StoredTintSettings {
+  schemaVersion: string;
+  paletteEnabled: boolean;
+  palette: PaletteEntry[];
+  defaultProject: ProjectSettings;
+  projects: Record<string, ProjectSettings>;
+}
+
+const CURRENT_VERSION = '0.1.0';
 
 async function getStoredSettings(): Promise<StoredTintSettings> {
   const result = await fakeBrowser.storage.local.get('tintSettings');
@@ -37,6 +45,13 @@ function getCard(switchName: string): HTMLElement {
   const el = screen.getByRole('switch', { name: switchName });
   const card = el.closest('.card');
   if (!card) throw new Error(`card not found for switch "${switchName}"`);
+  return card as HTMLElement;
+}
+
+function getProjectCard(): HTMLElement {
+  const select = screen.getByLabelText('Project');
+  const card = select.closest('.card');
+  if (!card) throw new Error('Project card not found');
   return card as HTMLElement;
 }
 
@@ -91,8 +106,23 @@ function hexOrRgb(hex: string): (string | undefined)[] {
   return [hex, `rgb(${r}, ${g}, ${b})`];
 }
 
+async function addProject(user: ReturnType<typeof userEvent.setup>, id: string) {
+  const input = screen.getByLabelText('New project ID') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: id } });
+  await user.click(screen.getByRole('button', { name: 'Add project' }));
+  await waitFor(async () => {
+    expect((await getStoredSettings()).projects).toHaveProperty(id);
+  });
+}
+
 beforeEach(() => {
   fakeBrowser.reset();
+  // @webext-core/fake-browser leaves runtime.getManifest() as an unimplemented stub that
+  // throws; App.tsx calls it unconditionally (on load, to compare schemaVersion, and on
+  // every save, to stamp it), so tests shim it here to return a fixed current version.
+  (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({
+    version: CURRENT_VERSION,
+  });
 });
 
 afterEach(() => {
@@ -154,7 +184,7 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.topBarPaletteId).toBe(secondEntry.id);
+      expect(stored.defaultProject.topBarPaletteId).toBe(secondEntry.id);
     });
 
     await closePicker(user);
@@ -171,8 +201,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.topBarPaletteId).toBeNull();
-      expect(stored.topBarColor).toBe('#654321');
+      expect(stored.defaultProject.topBarPaletteId).toBeNull();
+      expect(stored.defaultProject.topBarColor).toBe('#654321');
     });
 
     await closePicker(user);
@@ -189,8 +219,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.platformBarPaletteId).toBeNull();
-      expect(stored.platformBarColor).toBe('#101010');
+      expect(stored.defaultProject.platformBarPaletteId).toBeNull();
+      expect(stored.defaultProject.platformBarColor).toBe('#101010');
     });
   });
 
@@ -203,7 +233,7 @@ describe('App', () => {
     fireEvent.click(getPaletteSwatch(dialog, 'Primary'));
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).platformBarTextPaletteId).toBe('default');
+      expect((await getStoredSettings()).defaultProject.platformBarTextPaletteId).toBe('default');
     });
 
     await closePicker(user);
@@ -224,7 +254,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
 
     const stored = await getStoredSettings();
-    expect(stored.topBarColor).toBe('#ff6d00');
+    expect(stored.defaultProject.topBarColor).toBe('#ff6d00');
     expect(stored.palette[0].color).toBe('#123456');
   });
 
@@ -305,8 +335,8 @@ describe('App', () => {
       const stored = await getStoredSettings();
       expect(stored.palette).toHaveLength(1);
       expect(stored.palette[0].id).toBe('default');
-      expect(stored.topBarPaletteId).toBe('default');
-      expect(stored.platformBarPaletteId).toBe('default');
+      expect(stored.defaultProject.topBarPaletteId).toBe('default');
+      expect(stored.defaultProject.platformBarPaletteId).toBe('default');
     });
   });
 
@@ -352,7 +382,7 @@ describe('App', () => {
       const stored = await getStoredSettings();
       expect(stored.paletteEnabled).toBe(false);
       expect(stored.palette).toHaveLength(1);
-      expect(stored.topBarPaletteId).toBe('default');
+      expect(stored.defaultProject.topBarPaletteId).toBe('default');
     });
 
     await user.click(screen.getByRole('switch', { name: 'Color palette' }));
@@ -373,8 +403,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.topBarPaletteId).toBeNull();
-      expect(stored.platformBarPaletteId).toBeNull();
+      expect(stored.defaultProject.topBarPaletteId).toBeNull();
+      expect(stored.defaultProject.platformBarPaletteId).toBeNull();
       expect(stored.palette).toHaveLength(0);
     });
 
@@ -385,7 +415,7 @@ describe('App', () => {
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#777777' } });
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.topBarColor).toBe('#777777');
+      expect(stored.defaultProject.topBarColor).toBe('#777777');
     });
   });
 
@@ -412,7 +442,7 @@ describe('App', () => {
     fireEvent.click(getAutoButton(dialog));
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
     });
 
     await closePicker(user);
@@ -427,14 +457,14 @@ describe('App', () => {
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
     });
     await closePicker(user);
 
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#000080' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).platformBarColor).toBe('#000080');
+      expect((await getStoredSettings()).defaultProject.platformBarColor).toBe('#000080');
     });
     await closePicker(user);
 
@@ -445,7 +475,7 @@ describe('App', () => {
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#ffff00' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).platformBarColor).toBe('#ffff00');
+      expect((await getStoredSettings()).defaultProject.platformBarColor).toBe('#ffff00');
     });
     await closePicker(user);
 
@@ -462,7 +492,7 @@ describe('App', () => {
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
     });
     await closePicker(user);
 
@@ -471,8 +501,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.platformBarTextAuto).toBe(false);
-      expect(stored.platformBarTextPaletteId).toBe('default');
+      expect(stored.defaultProject.platformBarTextAuto).toBe(false);
+      expect(stored.defaultProject.platformBarTextPaletteId).toBe('default');
     });
   });
 
@@ -484,7 +514,7 @@ describe('App', () => {
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
     });
     await closePicker(user);
 
@@ -493,9 +523,9 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.platformBarTextAuto).toBe(false);
-      expect(stored.platformBarTextColor).toBe('#333333');
-      expect(stored.platformBarTextPaletteId).toBeNull();
+      expect(stored.defaultProject.platformBarTextAuto).toBe(false);
+      expect(stored.defaultProject.platformBarTextColor).toBe('#333333');
+      expect(stored.defaultProject.platformBarTextPaletteId).toBeNull();
     });
   });
 
@@ -509,7 +539,7 @@ describe('App', () => {
     fireEvent.change(heightInput, { target: { value: '10' } });
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).topBarHeight).toBe(10);
+      expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(10);
     });
   });
 
@@ -524,7 +554,7 @@ describe('App', () => {
     await user.click(stripesSwitch);
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).topBarStripes).toBe(true);
+      expect((await getStoredSettings()).defaultProject.topBarStripes).toBe(true);
     });
   });
 
@@ -542,8 +572,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.platformBarStripes).toBe(true);
-      expect(stored.topBarStripes).toBe(false);
+      expect(stored.defaultProject.platformBarStripes).toBe(true);
+      expect(stored.defaultProject.topBarStripes).toBe(false);
     });
   });
 
@@ -554,23 +584,14 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Reset to defaults' })).toBeNull();
   });
 
-  it('falls back to a single-entry palette and topBar/platformBar colors from the legacy tintColor string on mount', async () => {
-    await fakeBrowser.storage.local.set({ tintColor: '#556677' });
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
-    });
-    expect(screen.getByRole('button', { name: 'Platform Bar color' }).textContent).toContain('Primary');
-    expect(getColorInput(getCard('Color palette')).value).toBe('#556677');
-  });
-
   it('reflects a partial stored settings object merged with defaults', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
-        topBarColor: '#123123',
-        topBarPaletteId: null,
+        schemaVersion: '0.1.0',
+        defaultProject: {
+          topBarColor: '#123123',
+          topBarPaletteId: null,
+        },
       },
     });
 
@@ -582,5 +603,239 @@ describe('App', () => {
 
     // Fields not present in the stored partial object fall back to defaults (still referencing "Primary").
     expect(screen.getByRole('button', { name: 'Platform Bar color' }).textContent).toContain('Primary');
+  });
+
+  it('discards stored data with no schemaVersion (old flat v1 shape) and applies defaults on mount', async () => {
+    await fakeBrowser.storage.local.set({
+      tintSettings: {
+        topBarEnabled: true,
+        topBarPaletteId: null,
+        topBarColor: '#334455',
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
+    });
+    expect(getColorInput(getCard('Color palette')).value).toBe('#ff6d00');
+  });
+
+  it('reads stored data whose schemaVersion equals SCHEMA_MIN_VERSION on mount', async () => {
+    await fakeBrowser.storage.local.set({
+      tintSettings: {
+        schemaVersion: '0.1.0',
+        defaultProject: { topBarColor: '#334455', topBarPaletteId: null },
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
+    });
+  });
+
+  it('reads stored data whose schemaVersion is newer than the current version as-is on mount', async () => {
+    await fakeBrowser.storage.local.set({
+      tintSettings: {
+        schemaVersion: '9.9.9',
+        defaultProject: { topBarColor: '#334455', topBarPaletteId: null },
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
+    });
+  });
+
+  it('discards stored data whose schemaVersion is missing, non-string, or below SCHEMA_MIN_VERSION on mount', async () => {
+    await fakeBrowser.storage.local.set({
+      tintSettings: {
+        schemaVersion: '0.0.9',
+        defaultProject: { topBarColor: '#334455', topBarPaletteId: null },
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
+    });
+    expect(getColorInput(getCard('Color palette')).value).toBe('#ff6d00');
+  });
+
+  it('stamps the current version as schemaVersion whenever settings are saved', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('switch', { name: 'Color palette' });
+
+    await user.click(screen.getByRole('switch', { name: 'Color palette' }));
+
+    await waitFor(async () => {
+      expect((await getStoredSettings()).schemaVersion).toBe(CURRENT_VERSION);
+    });
+  });
+
+  describe('Project card', () => {
+    it('shows only "Default" in the Project selector by default', async () => {
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      const select = screen.getByLabelText('Project') as HTMLSelectElement;
+      expect(select.value).toBe('');
+      const options = within(select)
+        .getAllByRole('option')
+        .map((o) => o.textContent);
+      expect(options).toEqual(['Default']);
+      expect(screen.queryByRole('button', { name: 'Remove project' })).toBeNull();
+    });
+
+    it('adding a project initializes it as a copy of defaultProject and selects it', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      // Diverge defaultProject from the built-in defaults first, to prove the copy is a snapshot.
+      fireEvent.change(within(getCard('Top bar')).getByLabelText('Top bar height'), { target: { value: '20' } });
+      await waitFor(async () => {
+        expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(20);
+      });
+
+      await addProject(user, 'my-project');
+
+      const stored = await getStoredSettings();
+      expect(stored.projects['my-project']).toEqual(stored.defaultProject);
+
+      const select = screen.getByLabelText('Project') as HTMLSelectElement;
+      expect(select.value).toBe('my-project');
+      expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Default', 'my-project']);
+    });
+
+    it('ignores adding an empty or whitespace-only project ID', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      // Perform an unrelated save first so getStoredSettings() has something to read.
+      await user.click(screen.getByRole('switch', { name: 'Color palette' }));
+      await waitFor(async () => {
+        expect((await getStoredSettings()).paletteEnabled).toBe(false);
+      });
+
+      const input = screen.getByLabelText('New project ID') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '   ' } });
+      await user.click(screen.getByRole('button', { name: 'Add project' }));
+
+      const stored = await getStoredSettings();
+      expect(stored.projects).toEqual({});
+      expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('');
+    });
+
+    it('ignores adding a duplicate project ID', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      await addProject(user, 'my-project');
+
+      // Switch back to Default before attempting to add the same id again.
+      fireEvent.change(screen.getByLabelText('Project'), { target: { value: '' } });
+
+      const input = screen.getByLabelText('New project ID') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'my-project' } });
+      await user.click(screen.getByRole('button', { name: 'Add project' }));
+
+      const stored = await getStoredSettings();
+      expect(Object.keys(stored.projects)).toEqual(['my-project']);
+    });
+
+    it('removing the selected project reverts selection to Default', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      await addProject(user, 'my-project');
+
+      await user.click(screen.getByRole('button', { name: 'Remove project' }));
+
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projects).toEqual({});
+      });
+      expect((screen.getByLabelText('Project') as HTMLSelectElement).value).toBe('');
+      expect(screen.queryByRole('button', { name: 'Remove project' })).toBeNull();
+    });
+
+    it("switching the selected project updates displayed values, and edits save to the correct key without cross-contamination", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      await addProject(user, 'my-project');
+
+      // "my-project" is now selected; edit its height.
+      fireEvent.change(within(getCard('Top bar')).getByLabelText('Top bar height'), { target: { value: '15' } });
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projects['my-project'].topBarHeight).toBe(15);
+      });
+      expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(4);
+
+      // Switch to Default: the displayed height must revert to Default's own value (4), not 15.
+      fireEvent.change(screen.getByLabelText('Project'), { target: { value: '' } });
+      await waitFor(() => {
+        const heightInput = within(getCard('Top bar')).getByLabelText('Top bar height') as HTMLInputElement;
+        expect(heightInput.value).toBe('4');
+      });
+
+      // Editing Default now must not affect "my-project"'s already-saved value.
+      fireEvent.change(within(getCard('Top bar')).getByLabelText('Top bar height'), { target: { value: '30' } });
+      await waitFor(async () => {
+        expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(30);
+      });
+      expect((await getStoredSettings()).projects['my-project'].topBarHeight).toBe(15);
+    });
+
+    it("a Top bar Custom color change while a project is selected saves to that project's key, not defaultProject", async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      await addProject(user, 'my-project');
+
+      const dialog = await openPicker(user, 'Top bar color');
+      fireEvent.change(getCustomColorInput(dialog), { target: { value: '#654321' } });
+
+      await waitFor(async () => {
+        const stored = await getStoredSettings();
+        expect(stored.projects['my-project'].topBarPaletteId).toBeNull();
+        expect(stored.projects['my-project'].topBarColor).toBe('#654321');
+        // defaultProject keeps its copied-from reference untouched.
+        expect(stored.defaultProject.topBarPaletteId).toBe('default');
+      });
+    });
+
+    it('the palette is shared across projects: entries added while a project is selected are also visible for Default', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole('switch', { name: 'Color palette' });
+
+      await addProject(user, 'my-project');
+
+      // "my-project" is selected; add a palette color while it's active.
+      await user.click(within(getCard('Color palette')).getByRole('button', { name: 'Add color' }));
+      await waitFor(async () => {
+        expect((await getStoredSettings()).palette).toHaveLength(2);
+      });
+
+      // Switch to Default: the shared palette must still show both entries.
+      fireEvent.change(screen.getByLabelText('Project'), { target: { value: '' } });
+      await waitFor(() => {
+        const nameInputs = within(getCard('Color palette')).getAllByLabelText('Color name');
+        expect(nameInputs).toHaveLength(2);
+      });
+    });
   });
 });

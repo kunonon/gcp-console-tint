@@ -8,9 +8,7 @@ interface PaletteEntry {
   color: string;
 }
 
-interface TintSettings {
-  paletteEnabled: boolean;
-  palette: PaletteEntry[];
+interface ProjectSettings {
   topBarEnabled: boolean;
   topBarColor: string;
   topBarPaletteId: string | null;
@@ -26,10 +24,31 @@ interface TintSettings {
   platformBarTextAuto: boolean;
 }
 
+interface TintSettings {
+  schemaVersion: string;
+  paletteEnabled: boolean;
+  palette: PaletteEntry[];
+  defaultProject: ProjectSettings;
+  projects: Record<string, ProjectSettings>;
+}
+
+const CURRENT_VERSION = '0.1.0';
+
+// Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
+// The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
+// when importing content.ts directly in tests), so we provide a minimal fake here: it simply
+// forwards to the target's native addEventListener, which is all our code relies on.
+function createFakeCtx() {
+  return {
+    addEventListener(target: EventTarget, type: string, listener: EventListenerOrEventListenerObject) {
+      target.addEventListener(type, listener as EventListener);
+    },
+  };
+}
+
 function runContentScript() {
-  // Our main() never reads its `ctx` argument, so it's safe to invoke without one.
-  // content.ts cannot be changed to relax the type for tests, so cast locally here.
-  (contentScript.main as () => void)();
+  const ctx = createFakeCtx();
+  (contentScript.main as (ctx: unknown) => void)(ctx);
 }
 
 function getElements() {
@@ -54,9 +73,38 @@ function hexOrRgb(hex: string): (string | undefined)[] {
   return [hex, `rgb(${r}, ${g}, ${b})`];
 }
 
+function setLocation(url: string) {
+  window.history.pushState({}, '', url);
+}
+
+function triggerLocationChange() {
+  window.dispatchEvent(new Event('wxt:locationchange'));
+}
+
+// Defaults schemaVersion to a valid/current value so existing tests that seed storage
+// without thinking about schemaVersion keep exercising the "data accepted" path rather
+// than accidentally being discarded by loadSettings(). Pass schemaVersion explicitly to
+// override for tests that specifically probe the discard/keep boundary.
+function tintSettings(partial: {
+  schemaVersion?: string;
+  paletteEnabled?: boolean;
+  palette?: PaletteEntry[];
+  defaultProject?: Partial<ProjectSettings>;
+  projects?: Record<string, Partial<ProjectSettings>>;
+}) {
+  return { tintSettings: { schemaVersion: CURRENT_VERSION, ...partial } as unknown as TintSettings };
+}
+
 beforeEach(() => {
   fakeBrowser.reset();
+  // @webext-core/fake-browser leaves runtime.getManifest() as an unimplemented stub that
+  // throws; content.ts calls it unconditionally to stamp/compare schemaVersion, so tests
+  // shim it here to return a fixed current version.
+  (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({
+    version: CURRENT_VERSION,
+  });
   document.documentElement.innerHTML = '<head></head><body></body>';
+  window.history.pushState({}, '', '/');
 });
 
 describe('content script', () => {
@@ -76,7 +124,7 @@ describe('content script', () => {
   });
 
   it('applies a stored topBarHeight value', async () => {
-    await fakeBrowser.storage.local.set({ tintSettings: { topBarHeight: 12 } });
+    await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { topBarHeight: 12 } }));
 
     runContentScript();
     await flush();
@@ -88,7 +136,7 @@ describe('content script', () => {
   it('falls back to the default height for out-of-range or non-numeric values', async () => {
     for (const invalid of [0, 41, Number.NaN, -5]) {
       document.documentElement.innerHTML = '<head></head><body></body>';
-      await fakeBrowser.storage.local.set({ tintSettings: { topBarHeight: invalid } });
+      await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { topBarHeight: invalid } }));
 
       runContentScript();
       await flush();
@@ -99,7 +147,7 @@ describe('content script', () => {
   });
 
   it('rounds a fractional topBarHeight to the nearest integer', async () => {
-    await fakeBrowser.storage.local.set({ tintSettings: { topBarHeight: 7.6 } });
+    await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { topBarHeight: 7.6 } }));
 
     runContentScript();
     await flush();
@@ -109,9 +157,9 @@ describe('content script', () => {
   });
 
   it('applies the Top bar stripe gradient when topBarStripes is enabled', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: { topBarStripes: true, topBarPaletteId: null, topBarColor: '#ffff00' },
-    });
+    await fakeBrowser.storage.local.set(
+      tintSettings({ defaultProject: { topBarStripes: true, topBarPaletteId: null, topBarColor: '#ffff00' } }),
+    );
 
     runContentScript();
     await flush();
@@ -122,7 +170,7 @@ describe('content script', () => {
   });
 
   it('omits the Top bar background image when topBarStripes is disabled', async () => {
-    await fakeBrowser.storage.local.set({ tintSettings: { topBarStripes: false } });
+    await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { topBarStripes: false } }));
 
     runContentScript();
     await flush();
@@ -132,9 +180,11 @@ describe('content script', () => {
   });
 
   it('applies the Platform Bar stripe gradient to the CSS rule when platformBarStripes is enabled', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: { platformBarStripes: true, platformBarPaletteId: null, platformBarColor: '#000080' },
-    });
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { platformBarStripes: true, platformBarPaletteId: null, platformBarColor: '#000080' },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -146,7 +196,7 @@ describe('content script', () => {
   });
 
   it('omits the background-image declaration when platformBarStripes is disabled', async () => {
-    await fakeBrowser.storage.local.set({ tintSettings: { platformBarStripes: false } });
+    await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { platformBarStripes: false } }));
 
     runContentScript();
     await flush();
@@ -156,15 +206,17 @@ describe('content script', () => {
   });
 
   it('follows the resolved palette color for stripe tinting on both Top bar and Platform Bar', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
         palette: [{ id: 'default', name: 'Primary', color: '#ffff00' }],
-        topBarPaletteId: 'default',
-        topBarStripes: true,
-        platformBarPaletteId: 'default',
-        platformBarStripes: true,
-      },
-    });
+        defaultProject: {
+          topBarPaletteId: 'default',
+          topBarStripes: true,
+          platformBarPaletteId: 'default',
+          platformBarStripes: true,
+        },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -176,16 +228,18 @@ describe('content script', () => {
   });
 
   it('applies settings already stored before load, including palette reference resolution', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
         palette: [{ id: 'default', name: 'Primary', color: '#123456' }],
-        topBarPaletteId: 'default',
-        platformBarColor: '#000000',
-        platformBarPaletteId: null,
-        platformBarTextColor: '#abcdef',
-        platformBarTextPaletteId: null,
-      },
-    });
+        defaultProject: {
+          topBarPaletteId: 'default',
+          platformBarColor: '#000000',
+          platformBarPaletteId: null,
+          platformBarTextColor: '#abcdef',
+          platformBarTextPaletteId: null,
+        },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -199,13 +253,12 @@ describe('content script', () => {
   });
 
   it('resolves to the palette entry color when paletteId references an existing entry', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        topBarPaletteId: 'default',
-        topBarColor: '#999999',
+    await fakeBrowser.storage.local.set(
+      tintSettings({
         palette: [{ id: 'default', name: 'Primary', color: '#111111' }],
-      },
-    });
+        defaultProject: { topBarPaletteId: 'default', topBarColor: '#999999' },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -215,13 +268,12 @@ describe('content script', () => {
   });
 
   it('falls back to the item own color when paletteId does not match any palette entry', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        topBarPaletteId: 'missing-id',
-        topBarColor: '#222222',
+    await fakeBrowser.storage.local.set(
+      tintSettings({
         palette: [],
-      },
-    });
+        defaultProject: { topBarPaletteId: 'missing-id', topBarColor: '#222222' },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -231,14 +283,13 @@ describe('content script', () => {
   });
 
   it('falls back to the item own color when paletteEnabled is false, even with a valid reference', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
         paletteEnabled: false,
-        topBarPaletteId: 'default',
-        topBarColor: '#333333',
         palette: [{ id: 'default', name: 'Primary', color: '#111111' }],
-      },
-    });
+        defaultProject: { topBarPaletteId: 'default', topBarColor: '#333333' },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -248,7 +299,7 @@ describe('content script', () => {
   });
 
   it('hides the overlay bar when topBarEnabled is false', async () => {
-    await fakeBrowser.storage.local.set({ tintSettings: { topBarEnabled: false } });
+    await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { topBarEnabled: false } }));
 
     runContentScript();
     await flush();
@@ -258,7 +309,7 @@ describe('content script', () => {
   });
 
   it('omits only the background rule when platformBarEnabled is false', async () => {
-    await fakeBrowser.storage.local.set({ tintSettings: { platformBarEnabled: false } });
+    await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { platformBarEnabled: false } }));
 
     runContentScript();
     await flush();
@@ -269,7 +320,7 @@ describe('content script', () => {
   });
 
   it('omits only the text color rule when platformBarTextEnabled is false', async () => {
-    await fakeBrowser.storage.local.set({ tintSettings: { platformBarTextEnabled: false } });
+    await fakeBrowser.storage.local.set(tintSettings({ defaultProject: { platformBarTextEnabled: false } }));
 
     runContentScript();
     await flush();
@@ -280,9 +331,9 @@ describe('content script', () => {
   });
 
   it('produces an empty style tag when both platformBarEnabled and platformBarTextEnabled are false', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: { platformBarEnabled: false, platformBarTextEnabled: false },
-    });
+    await fakeBrowser.storage.local.set(
+      tintSettings({ defaultProject: { platformBarEnabled: false, platformBarTextEnabled: false } }),
+    );
 
     runContentScript();
     await flush();
@@ -295,13 +346,12 @@ describe('content script', () => {
     runContentScript();
     await flush();
 
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
         palette: [{ id: 'default', name: 'Primary', color: '#ff6d00' }],
-        topBarPaletteId: null,
-        topBarColor: '#00ff00',
-      },
-    });
+        defaultProject: { topBarPaletteId: null, topBarColor: '#00ff00' },
+      }),
+    );
     await flush();
 
     const { bar } = getElements();
@@ -309,13 +359,11 @@ describe('content script', () => {
   });
 
   it('computes an auto text color with sufficient contrast against a dark Platform Bar background', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        platformBarPaletteId: null,
-        platformBarColor: '#000080',
-        platformBarTextAuto: true,
-      },
-    });
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { platformBarPaletteId: null, platformBarColor: '#000080', platformBarTextAuto: true },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -325,13 +373,11 @@ describe('content script', () => {
   });
 
   it('computes an auto text color with sufficient contrast against a bright Platform Bar background', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        platformBarPaletteId: null,
-        platformBarColor: '#ffff00',
-        platformBarTextAuto: true,
-      },
-    });
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { platformBarPaletteId: null, platformBarColor: '#ffff00', platformBarTextAuto: true },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -341,13 +387,12 @@ describe('content script', () => {
   });
 
   it('auto text color follows the Platform Bar background resolved via a palette reference', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
         palette: [{ id: 'default', name: 'Primary', color: '#000080' }],
-        platformBarPaletteId: 'default',
-        platformBarTextAuto: true,
-      },
-    });
+        defaultProject: { platformBarPaletteId: 'default', platformBarTextAuto: true },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -357,14 +402,16 @@ describe('content script', () => {
   });
 
   it('auto text color takes priority over a stored platformBarTextColor/paletteId', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        platformBarColor: '#ffff00',
-        platformBarTextAuto: true,
-        platformBarTextColor: '#ff00ff',
-        platformBarTextPaletteId: null,
-      },
-    });
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: {
+          platformBarColor: '#ffff00',
+          platformBarTextAuto: true,
+          platformBarTextColor: '#ff00ff',
+          platformBarTextPaletteId: null,
+        },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -375,14 +422,16 @@ describe('content script', () => {
   });
 
   it('computes the auto text color from platformBarColor even when platformBarEnabled is false (documented residual behavior)', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        platformBarEnabled: false,
-        platformBarPaletteId: null,
-        platformBarColor: '#000080',
-        platformBarTextAuto: true,
-      },
-    });
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: {
+          platformBarEnabled: false,
+          platformBarPaletteId: null,
+          platformBarColor: '#000080',
+          platformBarTextAuto: true,
+        },
+      }),
+    );
 
     runContentScript();
     await flush();
@@ -394,15 +443,137 @@ describe('content script', () => {
     expect(styleEl.textContent).toContain('color: #ffffff !important;');
   });
 
-  it('falls back to a single-entry palette and topBar/platformBar colors from the legacy tintColor string', async () => {
-    await fakeBrowser.storage.local.set({ tintColor: '#334455' });
+  it('discards stored data with no schemaVersion (old flat v1 shape) and applies defaults', async () => {
+    await fakeBrowser.storage.local.set({
+      tintSettings: {
+        topBarEnabled: true,
+        topBarPaletteId: null,
+        topBarColor: '#334455',
+      },
+    });
 
     runContentScript();
     await flush();
 
-    const { bar, styleEl } = getElements();
-    // topBar keeps its default paletteId ("default"), which now points to the migrated entry.
+    const { bar } = getElements();
+    // No schemaVersion -> discarded entirely, falls back to the default color, not #334455.
+    expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
+  });
+
+  it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        schemaVersion: '0.1.0',
+        defaultProject: { topBarPaletteId: null, topBarColor: '#334455' },
+      }),
+    );
+
+    runContentScript();
+    await flush();
+
+    const { bar } = getElements();
     expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
-    expect(styleEl.textContent).toContain('#ocb-platform-bar { background-color: #334455 !important; }');
+  });
+
+  it('applies stored data whose schemaVersion is newer than the current version as-is', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        schemaVersion: '9.9.9',
+        defaultProject: { topBarPaletteId: null, topBarColor: '#334455' },
+      }),
+    );
+
+    runContentScript();
+    await flush();
+
+    const { bar } = getElements();
+    expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
+  });
+
+  it('discards stored data whose schemaVersion is missing, non-string, or below SCHEMA_MIN_VERSION', async () => {
+    const invalidCases = [
+      { schemaVersion: '0.0.9', defaultProject: { topBarPaletteId: null, topBarColor: '#334455' } },
+      { schemaVersion: 123, defaultProject: { topBarPaletteId: null, topBarColor: '#334455' } },
+      { defaultProject: { topBarPaletteId: null, topBarColor: '#334455' } },
+    ];
+
+    for (const invalid of invalidCases) {
+      document.documentElement.innerHTML = '<head></head><body></body>';
+      await fakeBrowser.storage.local.set({ tintSettings: invalid });
+
+      runContentScript();
+      await flush();
+
+      const { bar } = getElements();
+      expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
+    }
+  });
+
+  it('applies project-specific settings when the URL "project" param matches a known project', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
+        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+      }),
+    );
+    setLocation('/?project=my-project');
+
+    runContentScript();
+    await flush();
+
+    const { bar } = getElements();
+    expect(hexOrRgb('#222222')).toContain(bar.style.backgroundColor);
+  });
+
+  it('applies defaultProject settings when the URL "project" param does not match any known project', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
+        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+      }),
+    );
+    setLocation('/?project=unknown-project');
+
+    runContentScript();
+    await flush();
+
+    const { bar } = getElements();
+    expect(hexOrRgb('#111111')).toContain(bar.style.backgroundColor);
+  });
+
+  it('applies defaultProject settings when there is no "project" param in the URL', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
+        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+      }),
+    );
+    setLocation('/');
+
+    runContentScript();
+    await flush();
+
+    const { bar } = getElements();
+    expect(hexOrRgb('#111111')).toContain(bar.style.backgroundColor);
+  });
+
+  it('re-applies settings for the new project when the URL "project" param changes (wxt:locationchange)', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
+        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+      }),
+    );
+    setLocation('/');
+
+    runContentScript();
+    await flush();
+
+    expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+
+    setLocation('/?project=my-project');
+    triggerLocationChange();
+
+    expect(hexOrRgb('#222222')).toContain(getElements().bar.style.backgroundColor);
   });
 });
