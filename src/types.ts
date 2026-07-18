@@ -20,10 +20,18 @@ export interface ProjectSettings {
   platformBarTextAuto: boolean;
 }
 
+export interface ProjectRule {
+  id: string;
+  // Regular expression source matched against the console URL's ?project= param.
+  pattern: string;
+  settings: ProjectSettings;
+}
+
 export interface TintSettings {
   schemaVersion: string;
   paletteEnabled: boolean;
   palette: PaletteEntry[];
   defaultProject: ProjectSettings;
-  projects: Record<string, ProjectSettings>;
+  // Ordered: earlier rules take priority; first matching rule wins.
+  projectRules: ProjectRule[];
 }

@@ -1,4 +1,4 @@
-import type { ProjectSettings, TintSettings } from '../types';
+import type { ProjectRule, ProjectSettings, TintSettings } from '../types';
 import { compareVersions } from './version';
 
 export const DEFAULT_COLOR = '#ff6d00';
@@ -31,7 +31,7 @@ export const DEFAULT_SETTINGS: TintSettings = {
   paletteEnabled: true,
   palette: [{ id: 'default', name: 'Primary', color: DEFAULT_COLOR }],
   defaultProject: { ...DEFAULT_PROJECT_SETTINGS },
-  projects: {},
+  projectRules: [],
 };
 
 function mergeProjectSettings(stored: Partial<ProjectSettings> | null | undefined): ProjectSettings {
@@ -55,10 +55,17 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
     return { ...DEFAULT_SETTINGS, schemaVersion: currentVersion };
   }
 
-  const projects: Record<string, ProjectSettings> = {};
-  if (raw.projects && typeof raw.projects === 'object') {
-    for (const [id, value] of Object.entries(raw.projects as Record<string, unknown>)) {
-      projects[id] = mergeProjectSettings(value as Partial<ProjectSettings>);
+  const projectRules: ProjectRule[] = [];
+  if (Array.isArray(raw.projectRules)) {
+    for (const value of raw.projectRules) {
+      if (value == null || typeof value !== 'object') continue;
+      const rule = value as Record<string, unknown>;
+      if (typeof rule.pattern !== 'string') continue;
+      projectRules.push({
+        id: typeof rule.id === 'string' ? rule.id : crypto.randomUUID(),
+        pattern: rule.pattern,
+        settings: mergeProjectSettings(rule.settings as Partial<ProjectSettings>),
+      });
     }
   }
 
@@ -67,13 +74,21 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
     paletteEnabled: (raw.paletteEnabled as boolean) ?? DEFAULT_SETTINGS.paletteEnabled,
     palette: (raw.palette as TintSettings['palette']) ?? DEFAULT_SETTINGS.palette,
     defaultProject: mergeProjectSettings(raw.defaultProject as Partial<ProjectSettings>),
-    projects,
+    projectRules,
   };
 }
 
+// Rules are ordered by priority (top of the list first). The first rule whose regex
+// pattern matches the project id wins; rules with invalid regexes are skipped.
 export function resolveProjectSettings(settings: TintSettings, projectId: string | null): ProjectSettings {
-  if (projectId && settings.projects[projectId]) {
-    return settings.projects[projectId];
+  if (projectId) {
+    for (const rule of settings.projectRules) {
+      try {
+        if (new RegExp(rule.pattern).test(projectId)) return rule.settings;
+      } catch {
+        // invalid regex: skip this rule
+      }
+    }
   }
   return settings.defaultProject;
 }

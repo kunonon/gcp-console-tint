@@ -24,12 +24,18 @@ interface ProjectSettings {
   platformBarTextAuto: boolean;
 }
 
+interface ProjectRule {
+  id: string;
+  pattern: string;
+  settings: ProjectSettings;
+}
+
 interface TintSettings {
   schemaVersion: string;
   paletteEnabled: boolean;
   palette: PaletteEntry[];
   defaultProject: ProjectSettings;
-  projects: Record<string, ProjectSettings>;
+  projectRules: ProjectRule[];
 }
 
 const CURRENT_VERSION = '0.1.0';
@@ -90,7 +96,7 @@ function tintSettings(partial: {
   paletteEnabled?: boolean;
   palette?: PaletteEntry[];
   defaultProject?: Partial<ProjectSettings>;
-  projects?: Record<string, Partial<ProjectSettings>>;
+  projectRules?: { id?: string; pattern: string; settings?: Partial<ProjectSettings> }[];
 }) {
   return { tintSettings: { schemaVersion: CURRENT_VERSION, ...partial } as unknown as TintSettings };
 }
@@ -509,11 +515,13 @@ describe('content script', () => {
     }
   });
 
-  it('applies project-specific settings when the URL "project" param matches a known project', async () => {
+  it('applies project-specific settings when the URL "project" param matches a rule pattern', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
-        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+        projectRules: [
+          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+        ],
       }),
     );
     setLocation('/?project=my-project');
@@ -525,11 +533,33 @@ describe('content script', () => {
     expect(hexOrRgb('#222222')).toContain(bar.style.backgroundColor);
   });
 
-  it('applies defaultProject settings when the URL "project" param does not match any known project', async () => {
+  it('applies the first matching rule when multiple rules match the same "project" param (priority order)', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
-        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+        projectRules: [
+          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+          { id: '2', pattern: 'project', settings: { topBarPaletteId: null, topBarColor: '#333333' } },
+        ],
+      }),
+    );
+    setLocation('/?project=my-project');
+
+    runContentScript();
+    await flush();
+
+    const { bar } = getElements();
+    // Both rules match "my-project", but the earlier rule in the array wins.
+    expect(hexOrRgb('#222222')).toContain(bar.style.backgroundColor);
+  });
+
+  it('applies defaultProject settings when the URL "project" param does not match any rule', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
+        projectRules: [
+          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+        ],
       }),
     );
     setLocation('/?project=unknown-project');
@@ -545,7 +575,9 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
-        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+        projectRules: [
+          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+        ],
       }),
     );
     setLocation('/');
@@ -561,7 +593,9 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         defaultProject: { topBarPaletteId: null, topBarColor: '#111111' },
-        projects: { 'my-project': { topBarPaletteId: null, topBarColor: '#222222' } },
+        projectRules: [
+          { id: '1', pattern: 'my-project', settings: { topBarPaletteId: null, topBarColor: '#222222' } },
+        ],
       }),
     );
     setLocation('/');

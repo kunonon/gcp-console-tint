@@ -1,12 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Card, Input, Switch } from '@heroui/react';
-import type { PaletteEntry, ProjectSettings, TintSettings } from '../../types';
+import type { PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
 import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings } from '../../utils/settings';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
 import ColorSwatchField from '../../components/ColorSwatchField';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
+
+// The sidepanel is a single-page app with two views: the project rule list (the default
+// landing page) and a detail page for editing one rule's settings (or Default's, when
+// ruleId is null).
+type View = { type: 'list' } | { type: 'detail'; ruleId: string | null };
 
 const resolveColor = (
   paletteEnabled: boolean,
@@ -20,6 +25,15 @@ const resolveColor = (
   }
   return ownColor;
 };
+
+function isValidPattern(pattern: string): boolean {
+  try {
+    new RegExp(pattern);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function PlusIcon() {
   return (
@@ -60,10 +74,83 @@ function TrashIcon() {
   );
 }
 
+function GripIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <circle cx="9" cy="6" r="1.5" />
+      <circle cx="9" cy="12" r="1.5" />
+      <circle cx="9" cy="18" r="1.5" />
+      <circle cx="15" cy="6" r="1.5" />
+      <circle cx="15" cy="12" r="1.5" />
+      <circle cx="15" cy="18" r="1.5" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden="true"
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function DuplicateIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden="true"
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden="true"
+    >
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
+    </svg>
+  );
+}
+
 function App() {
   const [settings, setSettings] = useState<TintSettings>(DEFAULT_SETTINGS);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [newProjectId, setNewProjectId] = useState('');
+  const [view, setView] = useState<View>({ type: 'list' });
+  const [newRulePattern, setNewRulePattern] = useState('');
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  // Native HTML5 drag-and-drop only lets an element itself be `draggable`; to restrict drag
+  // initiation to the grip handle (rather than the whole row, e.g. its icon buttons or text)
+  // we track whether the most recent mousedown landed on the grip, and cancel dragstart
+  // otherwise.
+  const dragHandleActiveRef = useRef(false);
 
   useEffect(() => {
     const currentVersion = browser.runtime.getManifest().version;
@@ -78,39 +165,95 @@ function App() {
     browser.storage.local.set({ tintSettings: stamped });
   };
 
-  const updateCurrentProject = (patch: Partial<ProjectSettings>) => {
-    if (selectedProjectId === null) {
+  const updateCurrentSettings = (patch: Partial<ProjectSettings>) => {
+    if (view.type !== 'detail') return;
+    if (view.ruleId === null) {
       save({ ...settings, defaultProject: { ...settings.defaultProject, ...patch } });
     } else {
-      const base = settings.projects[selectedProjectId] ?? DEFAULT_PROJECT_SETTINGS;
+      const ruleId = view.ruleId;
       save({
         ...settings,
-        projects: { ...settings.projects, [selectedProjectId]: { ...base, ...patch } },
+        projectRules: settings.projectRules.map((r) =>
+          r.id === ruleId ? { ...r, settings: { ...r.settings, ...patch } } : r,
+        ),
       });
     }
   };
 
-  const handleSelectProject = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedProjectId(e.target.value === '' ? null : e.target.value);
+  const handleAddRule = () => {
+    const pattern = newRulePattern.trim();
+    if (!pattern) return;
+    const rule: ProjectRule = { id: crypto.randomUUID(), pattern, settings: { ...settings.defaultProject } };
+    save({ ...settings, projectRules: [...settings.projectRules, rule] });
+    setNewRulePattern('');
   };
 
-  const handleAddProject = () => {
-    const id = newProjectId.trim();
-    if (!id || settings.projects[id]) return;
+  const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (view.type !== 'detail' || view.ruleId === null) return;
+    const pattern = e.target.value;
+    const ruleId = view.ruleId;
     save({
       ...settings,
-      projects: { ...settings.projects, [id]: { ...settings.defaultProject } },
+      projectRules: settings.projectRules.map((r) => (r.id === ruleId ? { ...r, pattern } : r)),
     });
-    setSelectedProjectId(id);
-    setNewProjectId('');
   };
 
-  const handleRemoveProject = () => {
-    if (selectedProjectId === null) return;
-    const rest = { ...settings.projects };
-    delete rest[selectedProjectId];
-    save({ ...settings, projects: rest });
-    setSelectedProjectId(null);
+  const handleDuplicateRule = (id: string) => {
+    const index = settings.projectRules.findIndex((r) => r.id === id);
+    if (index === -1) return;
+    const original = settings.projectRules[index];
+    const copy: ProjectRule = {
+      id: crypto.randomUUID(),
+      pattern: original.pattern,
+      settings: { ...original.settings },
+    };
+    const next = [...settings.projectRules];
+    next.splice(index + 1, 0, copy);
+    save({ ...settings, projectRules: next });
+  };
+
+  const handleDeleteRule = (id: string) => {
+    save({ ...settings, projectRules: settings.projectRules.filter((r) => r.id !== id) });
+  };
+
+  const handleGripMouseDown = () => {
+    dragHandleActiveRef.current = true;
+  };
+
+  const handleGripMouseUp = () => {
+    dragHandleActiveRef.current = false;
+  };
+
+  const handleRowDragStart = (index: number) => (e: React.DragEvent) => {
+    if (!dragHandleActiveRef.current) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggingIndex(index);
+  };
+
+  const handleRowDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleRowDrop = (index: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    dragHandleActiveRef.current = false;
+    if (draggingIndex === null || draggingIndex === index) {
+      setDraggingIndex(null);
+      return;
+    }
+    const reordered = [...settings.projectRules];
+    const [moved] = reordered.splice(draggingIndex, 1);
+    reordered.splice(index, 0, moved);
+    save({ ...settings, projectRules: reordered });
+    setDraggingIndex(null);
+  };
+
+  const handleRowDragEnd = () => {
+    dragHandleActiveRef.current = false;
+    setDraggingIndex(null);
   };
 
   const handlePaletteEnabledChange = (isSelected: boolean) => {
@@ -147,92 +290,275 @@ function App() {
       ...settings,
       palette: settings.palette.filter((e) => e.id !== id),
       defaultProject: clearReference(settings.defaultProject),
-      projects: Object.fromEntries(
-        Object.entries(settings.projects).map(([projectId, project]) => [projectId, clearReference(project)]),
-      ),
+      projectRules: settings.projectRules.map((r) => ({ ...r, settings: clearReference(r.settings) })),
     });
   };
 
   const handleTopBarEnabledChange = (isSelected: boolean) => {
-    updateCurrentProject({ topBarEnabled: isSelected });
+    updateCurrentSettings({ topBarEnabled: isSelected });
   };
 
   const handlePlatformBarEnabledChange = (isSelected: boolean) => {
-    updateCurrentProject({ platformBarEnabled: isSelected });
+    updateCurrentSettings({ platformBarEnabled: isSelected });
   };
 
   const handleTopBarHeightChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.valueAsNumber;
     if (!Number.isFinite(value)) return;
-    updateCurrentProject({ topBarHeight: value });
+    updateCurrentSettings({ topBarHeight: value });
   };
 
   const handleTopBarStripesChange = (isSelected: boolean) => {
-    updateCurrentProject({ topBarStripes: isSelected });
+    updateCurrentSettings({ topBarStripes: isSelected });
   };
 
   const handlePlatformBarStripesChange = (isSelected: boolean) => {
-    updateCurrentProject({ platformBarStripes: isSelected });
+    updateCurrentSettings({ platformBarStripes: isSelected });
   };
 
   const handlePlatformBarTextEnabledChange = (isSelected: boolean) => {
-    updateCurrentProject({ platformBarTextEnabled: isSelected });
+    updateCurrentSettings({ platformBarTextEnabled: isSelected });
   };
 
   const handleTopBarPaletteSelect = (id: string) => {
-    updateCurrentProject({ topBarPaletteId: id });
+    updateCurrentSettings({ topBarPaletteId: id });
   };
 
   const handleTopBarCustomColorChange = (color: string) => {
-    updateCurrentProject({ topBarPaletteId: null, topBarColor: color });
+    updateCurrentSettings({ topBarPaletteId: null, topBarColor: color });
   };
 
   const handlePlatformBarPaletteSelect = (id: string) => {
-    updateCurrentProject({ platformBarPaletteId: id });
+    updateCurrentSettings({ platformBarPaletteId: id });
   };
 
   const handlePlatformBarCustomColorChange = (color: string) => {
-    updateCurrentProject({ platformBarPaletteId: null, platformBarColor: color });
+    updateCurrentSettings({ platformBarPaletteId: null, platformBarColor: color });
   };
 
   const handlePlatformBarTextPaletteSelect = (id: string) => {
-    updateCurrentProject({ platformBarTextPaletteId: id, platformBarTextAuto: false });
+    updateCurrentSettings({ platformBarTextPaletteId: id, platformBarTextAuto: false });
   };
 
   const handlePlatformBarTextCustomColorChange = (color: string) => {
-    updateCurrentProject({ platformBarTextPaletteId: null, platformBarTextColor: color, platformBarTextAuto: false });
+    updateCurrentSettings({ platformBarTextPaletteId: null, platformBarTextColor: color, platformBarTextAuto: false });
   };
 
   const handlePlatformBarTextAutoSelect = () => {
-    updateCurrentProject({ platformBarTextAuto: true });
+    updateCurrentSettings({ platformBarTextAuto: true });
   };
 
-  const projectIds = Object.keys(settings.projects);
-  const currentProject: ProjectSettings =
-    selectedProjectId !== null
-      ? (settings.projects[selectedProjectId] ?? DEFAULT_PROJECT_SETTINGS)
-      : settings.defaultProject;
+  const currentRule =
+    view.type === 'detail' && view.ruleId !== null
+      ? settings.projectRules.find((r) => r.id === view.ruleId)
+      : undefined;
+  const currentSettings: ProjectSettings = currentRule ? currentRule.settings : settings.defaultProject;
 
   const topBarEffectiveColor = resolveColor(
     settings.paletteEnabled,
     settings.palette,
-    currentProject.topBarPaletteId,
-    currentProject.topBarColor,
+    currentSettings.topBarPaletteId,
+    currentSettings.topBarColor,
   );
   const platformBarEffectiveColor = resolveColor(
     settings.paletteEnabled,
     settings.palette,
-    currentProject.platformBarPaletteId,
-    currentProject.platformBarColor,
+    currentSettings.platformBarPaletteId,
+    currentSettings.platformBarColor,
   );
-  const platformBarTextEffectiveColor = currentProject.platformBarTextAuto
+  const platformBarTextEffectiveColor = currentSettings.platformBarTextAuto
     ? contrastTextColor(platformBarEffectiveColor)
     : resolveColor(
         settings.paletteEnabled,
         settings.palette,
-        currentProject.platformBarTextPaletteId,
-        currentProject.platformBarTextColor,
+        currentSettings.platformBarTextPaletteId,
+        currentSettings.platformBarTextColor,
       );
+
+  if (view.type === 'detail') {
+    const detailTitle = currentRule ? currentRule.pattern : 'Default';
+
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <Button
+            isIconOnly
+            variant="outline"
+            size="sm"
+            aria-label="Back"
+            className="shrink-0"
+            onPress={() => setView({ type: 'list' })}
+          >
+            <ArrowLeftIcon />
+          </Button>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{detailTitle}</h1>
+        </div>
+
+        {currentRule && (
+          <Card>
+            <Card.Content className="flex flex-col gap-1">
+              <div className="flex min-h-8 items-center justify-between gap-2">
+                <span className="text-sm">Pattern</span>
+                <Input
+                  aria-label="Pattern"
+                  value={currentRule.pattern}
+                  onChange={handlePatternChange}
+                  className={nameInputClassName}
+                />
+              </div>
+              {!isValidPattern(currentRule.pattern) && (
+                <span className="text-sm text-danger">Invalid regular expression</span>
+              )}
+            </Card.Content>
+          </Card>
+        )}
+
+        <Card>
+          <Card.Content className="flex flex-col gap-2">
+            <Switch
+              className="w-full"
+              isSelected={currentSettings.topBarEnabled}
+              onChange={handleTopBarEnabledChange}
+            >
+              <Switch.Content className="flex w-full items-center justify-between">
+                Top bar
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Content>
+            </Switch>
+            {currentSettings.topBarEnabled && (
+              <div className="flex flex-col gap-2 border-t border-border pt-2">
+                <div className="flex min-h-8 items-center justify-between">
+                  <span className="text-sm">Color</span>
+                  <PaletteColorPicker
+                    ariaLabel="Top bar color"
+                    paletteEnabled={settings.paletteEnabled}
+                    palette={settings.palette}
+                    paletteId={currentSettings.topBarPaletteId}
+                    customColor={currentSettings.topBarColor}
+                    effectiveColor={topBarEffectiveColor}
+                    onSelectPaletteEntry={handleTopBarPaletteSelect}
+                    onSelectCustomColor={handleTopBarCustomColorChange}
+                  />
+                </div>
+                <div className="flex min-h-8 items-center justify-between">
+                  <span className="text-sm">Height</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      aria-label="Top bar height"
+                      min={1}
+                      max={40}
+                      value={currentSettings.topBarHeight}
+                      onChange={handleTopBarHeightChange}
+                      className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
+                    />
+                    <span className="text-sm text-muted">px</span>
+                  </div>
+                </div>
+                <Switch
+                  className="min-h-8 w-full"
+                  isSelected={currentSettings.topBarStripes}
+                  onChange={handleTopBarStripesChange}
+                >
+                  <Switch.Content className="flex w-full items-center justify-between">
+                    <span className="text-sm font-normal">Stripes</span>
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                  </Switch.Content>
+                </Switch>
+              </div>
+            )}
+          </Card.Content>
+        </Card>
+
+        <Card>
+          <Card.Content className="flex flex-col gap-2">
+            <Switch
+              className="w-full"
+              isSelected={currentSettings.platformBarEnabled}
+              onChange={handlePlatformBarEnabledChange}
+            >
+              <Switch.Content className="flex w-full items-center justify-between">
+                Platform Bar
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Content>
+            </Switch>
+            {currentSettings.platformBarEnabled && (
+              <div className="flex flex-col gap-2 border-t border-border pt-2">
+                <div className="flex min-h-8 items-center justify-between">
+                  <span className="text-sm">Color</span>
+                  <PaletteColorPicker
+                    ariaLabel="Platform Bar color"
+                    paletteEnabled={settings.paletteEnabled}
+                    palette={settings.palette}
+                    paletteId={currentSettings.platformBarPaletteId}
+                    customColor={currentSettings.platformBarColor}
+                    effectiveColor={platformBarEffectiveColor}
+                    onSelectPaletteEntry={handlePlatformBarPaletteSelect}
+                    onSelectCustomColor={handlePlatformBarCustomColorChange}
+                  />
+                </div>
+                <Switch
+                  className="min-h-8 w-full"
+                  isSelected={currentSettings.platformBarStripes}
+                  onChange={handlePlatformBarStripesChange}
+                >
+                  <Switch.Content className="flex w-full items-center justify-between">
+                    <span className="text-sm font-normal">Stripes</span>
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                  </Switch.Content>
+                </Switch>
+              </div>
+            )}
+          </Card.Content>
+        </Card>
+
+        <Card>
+          <Card.Content className="flex flex-col gap-2">
+            <Switch
+              className="w-full"
+              isSelected={currentSettings.platformBarTextEnabled}
+              onChange={handlePlatformBarTextEnabledChange}
+            >
+              <Switch.Content className="flex w-full items-center justify-between">
+                Platform Bar text color
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Content>
+            </Switch>
+            {currentSettings.platformBarTextEnabled && (
+              <div className="flex flex-col gap-2 border-t border-border pt-2">
+                <div className="flex min-h-8 items-center justify-between">
+                  <span className="text-sm">Color</span>
+                  <PaletteColorPicker
+                    ariaLabel="Platform Bar text color"
+                    paletteEnabled={settings.paletteEnabled}
+                    palette={settings.palette}
+                    paletteId={currentSettings.platformBarTextPaletteId}
+                    customColor={currentSettings.platformBarTextColor}
+                    effectiveColor={platformBarTextEffectiveColor}
+                    onSelectPaletteEntry={handlePlatformBarTextPaletteSelect}
+                    onSelectCustomColor={handlePlatformBarTextCustomColorChange}
+                    supportsAuto
+                    autoSelected={currentSettings.platformBarTextAuto}
+                    onSelectAuto={handlePlatformBarTextAutoSelect}
+                  />
+                </div>
+              </div>
+            )}
+          </Card.Content>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -240,54 +566,85 @@ function App() {
 
       <Card>
         <Card.Content className="flex flex-col gap-2">
-          <div className="flex min-h-8 items-center justify-between">
-            <span className="text-sm">Project</span>
-            <select
-              aria-label="Project"
-              value={selectedProjectId ?? ''}
-              onChange={handleSelectProject}
-              className="h-8 rounded-md border border-border bg-transparent px-2 text-sm"
+          <div className="text-sm font-medium">Projects</div>
+          {settings.projectRules.map((rule, index) => (
+            <div
+              key={rule.id}
+              draggable
+              onDragStart={handleRowDragStart(index)}
+              onDragOver={handleRowDragOver}
+              onDrop={handleRowDrop(index)}
+              onDragEnd={handleRowDragEnd}
+              className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''}`}
             >
-              <option value="">Default</option>
-              {projectIds.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input
-              aria-label="New project ID"
-              placeholder="my-project-123"
-              value={newProjectId}
-              onChange={(e) => setNewProjectId(e.target.value)}
-              className={nameInputClassName}
-            />
-            <Button
-              isIconOnly
-              variant="outline"
-              aria-label="Add project"
-              className="shrink-0"
-              onPress={handleAddProject}
-            >
-              <PlusIcon />
-            </Button>
-          </div>
-          {selectedProjectId !== null && (
-            <div className="flex min-h-8 items-center justify-between">
-              <span className="text-sm">Remove project</span>
+              <span
+                aria-hidden="true"
+                className="cursor-grab text-muted"
+                onMouseDown={handleGripMouseDown}
+                onMouseUp={handleGripMouseUp}
+              >
+                <GripIcon />
+              </span>
+              <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
               <Button
                 isIconOnly
                 variant="outline"
-                aria-label="Remove project"
+                size="sm"
+                aria-label="Edit"
                 className="shrink-0"
-                onPress={handleRemoveProject}
+                onPress={() => setView({ type: 'detail', ruleId: rule.id })}
+              >
+                <PencilIcon />
+              </Button>
+              <Button
+                isIconOnly
+                variant="outline"
+                size="sm"
+                aria-label="Duplicate"
+                className="shrink-0"
+                onPress={() => handleDuplicateRule(rule.id)}
+              >
+                <DuplicateIcon />
+              </Button>
+              <Button
+                isIconOnly
+                variant="outline"
+                size="sm"
+                aria-label="Delete"
+                className="shrink-0"
+                onPress={() => handleDeleteRule(rule.id)}
               >
                 <TrashIcon />
               </Button>
             </div>
-          )}
+          ))}
+
+          <div className="flex min-h-8 items-center gap-2">
+            <span className="min-w-0 flex-1 text-sm">Default</span>
+            <Button
+              isIconOnly
+              variant="outline"
+              size="sm"
+              aria-label="Edit"
+              className="shrink-0"
+              onPress={() => setView({ type: 'detail', ruleId: null })}
+            >
+              <PencilIcon />
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2 border-t border-border pt-2">
+            <Input
+              aria-label="New rule pattern"
+              placeholder="project id or regex"
+              value={newRulePattern}
+              onChange={(e) => setNewRulePattern(e.target.value)}
+              className={nameInputClassName}
+            />
+            <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0" onPress={handleAddRule}>
+              <PlusIcon />
+            </Button>
+          </div>
         </Card.Content>
       </Card>
 
@@ -333,146 +690,6 @@ function App() {
               <Button isIconOnly variant="outline" aria-label="Add color" onPress={handleAddColor}>
                 <PlusIcon />
               </Button>
-            </div>
-          )}
-        </Card.Content>
-      </Card>
-
-      <Card>
-        <Card.Content className="flex flex-col gap-2">
-          <Switch className="w-full" isSelected={currentProject.topBarEnabled} onChange={handleTopBarEnabledChange}>
-            <Switch.Content className="flex w-full items-center justify-between">
-              Top bar
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-            </Switch.Content>
-          </Switch>
-          {currentProject.topBarEnabled && (
-            <div className="flex flex-col gap-2 border-t border-border pt-2">
-              <div className="flex min-h-8 items-center justify-between">
-                <span className="text-sm">Color</span>
-                <PaletteColorPicker
-                  ariaLabel="Top bar color"
-                  paletteEnabled={settings.paletteEnabled}
-                  palette={settings.palette}
-                  paletteId={currentProject.topBarPaletteId}
-                  customColor={currentProject.topBarColor}
-                  effectiveColor={topBarEffectiveColor}
-                  onSelectPaletteEntry={handleTopBarPaletteSelect}
-                  onSelectCustomColor={handleTopBarCustomColorChange}
-                />
-              </div>
-              <div className="flex min-h-8 items-center justify-between">
-                <span className="text-sm">Height</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    aria-label="Top bar height"
-                    min={1}
-                    max={40}
-                    value={currentProject.topBarHeight}
-                    onChange={handleTopBarHeightChange}
-                    className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
-                  />
-                  <span className="text-sm text-muted">px</span>
-                </div>
-              </div>
-              <Switch
-                className="min-h-8 w-full"
-                isSelected={currentProject.topBarStripes}
-                onChange={handleTopBarStripesChange}
-              >
-                <Switch.Content className="flex w-full items-center justify-between">
-                  <span className="text-sm font-normal">Stripes</span>
-                  <Switch.Control>
-                    <Switch.Thumb />
-                  </Switch.Control>
-                </Switch.Content>
-              </Switch>
-            </div>
-          )}
-        </Card.Content>
-      </Card>
-
-      <Card>
-        <Card.Content className="flex flex-col gap-2">
-          <Switch
-            className="w-full"
-            isSelected={currentProject.platformBarEnabled}
-            onChange={handlePlatformBarEnabledChange}
-          >
-            <Switch.Content className="flex w-full items-center justify-between">
-              Platform Bar
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-            </Switch.Content>
-          </Switch>
-          {currentProject.platformBarEnabled && (
-            <div className="flex flex-col gap-2 border-t border-border pt-2">
-              <div className="flex min-h-8 items-center justify-between">
-                <span className="text-sm">Color</span>
-                <PaletteColorPicker
-                  ariaLabel="Platform Bar color"
-                  paletteEnabled={settings.paletteEnabled}
-                  palette={settings.palette}
-                  paletteId={currentProject.platformBarPaletteId}
-                  customColor={currentProject.platformBarColor}
-                  effectiveColor={platformBarEffectiveColor}
-                  onSelectPaletteEntry={handlePlatformBarPaletteSelect}
-                  onSelectCustomColor={handlePlatformBarCustomColorChange}
-                />
-              </div>
-              <Switch
-                className="min-h-8 w-full"
-                isSelected={currentProject.platformBarStripes}
-                onChange={handlePlatformBarStripesChange}
-              >
-                <Switch.Content className="flex w-full items-center justify-between">
-                  <span className="text-sm font-normal">Stripes</span>
-                  <Switch.Control>
-                    <Switch.Thumb />
-                  </Switch.Control>
-                </Switch.Content>
-              </Switch>
-            </div>
-          )}
-        </Card.Content>
-      </Card>
-
-      <Card>
-        <Card.Content className="flex flex-col gap-2">
-          <Switch
-            className="w-full"
-            isSelected={currentProject.platformBarTextEnabled}
-            onChange={handlePlatformBarTextEnabledChange}
-          >
-            <Switch.Content className="flex w-full items-center justify-between">
-              Platform Bar text color
-              <Switch.Control>
-                <Switch.Thumb />
-              </Switch.Control>
-            </Switch.Content>
-          </Switch>
-          {currentProject.platformBarTextEnabled && (
-            <div className="flex flex-col gap-2 border-t border-border pt-2">
-              <div className="flex min-h-8 items-center justify-between">
-                <span className="text-sm">Color</span>
-                <PaletteColorPicker
-                  ariaLabel="Platform Bar text color"
-                  paletteEnabled={settings.paletteEnabled}
-                  palette={settings.palette}
-                  paletteId={currentProject.platformBarTextPaletteId}
-                  customColor={currentProject.platformBarTextColor}
-                  effectiveColor={platformBarTextEffectiveColor}
-                  onSelectPaletteEntry={handlePlatformBarTextPaletteSelect}
-                  onSelectCustomColor={handlePlatformBarTextCustomColorChange}
-                  supportsAuto
-                  autoSelected={currentProject.platformBarTextAuto}
-                  onSelectAuto={handlePlatformBarTextAutoSelect}
-                />
-              </div>
             </div>
           )}
         </Card.Content>
