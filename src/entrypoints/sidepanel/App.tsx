@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Card, Input, Switch } from '@heroui/react';
+import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import type { PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
 import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings, cloneProjectSettings } from '../../utils/settings';
@@ -137,6 +137,25 @@ function ArrowLeftIcon() {
       <path d="M19 12H5" />
       <path d="M12 19l-7-7 7-7" />
     </svg>
+  );
+}
+
+// Wraps an icon-only Button in a HeroUI Tooltip that shows `label` on hover. Tooltip.Trigger
+// always renders a focusable wrapper element (via react-aria's useFocusable) around its
+// child, since it also needs to support non-interactive children; our children are always
+// already-focusable Buttons, so that wrapper would add a redundant Tab stop right next to the
+// real button. Passing tabIndex={-1} to Tooltip.Trigger removes the wrapper from the Tab
+// order (Tooltip.Trigger spreads extra props onto the wrapper via
+// mergeProps(focusableProps, props), with our props last, so tabIndex={-1} wins there) while
+// leaving the Button's own tabIndex, and hover display, unaffected. Accepted tradeoff:
+// tabbing to the button no longer opens the tooltip via keyboard, since keyboard-focus
+// triggering is wired to the wrapper's focus event, not the inner button's.
+function IconButtonTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Tooltip delay={500}>
+      <Tooltip.Trigger tabIndex={-1}>{children}</Tooltip.Trigger>
+      <Tooltip.Content>{label}</Tooltip.Content>
+    </Tooltip>
   );
 }
 
@@ -396,16 +415,18 @@ function App() {
     return (
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
-          <Button
-            isIconOnly
-            variant="outline"
-            size="sm"
-            aria-label="Back"
-            className="shrink-0"
-            onPress={() => setView({ type: 'list' })}
-          >
-            <ArrowLeftIcon />
-          </Button>
+          <IconButtonTooltip label="Back">
+            <Button
+              isIconOnly
+              variant="outline"
+              size="sm"
+              aria-label="Back"
+              className="shrink-0"
+              onPress={() => setView({ type: 'list' })}
+            >
+              <ArrowLeftIcon />
+            </Button>
+          </IconButtonTooltip>
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold">{detailTitle}</h1>
         </div>
 
@@ -459,21 +480,25 @@ function App() {
                       onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
                       hexHidableOnNarrow
                     />
-                    <Button
-                      isIconOnly
-                      variant="outline"
-                      size="sm"
-                      aria-label="Remove color"
-                      className="shrink-0"
-                      onPress={() => handleRemoveColor(entry.id)}
-                    >
-                      <TrashIcon />
-                    </Button>
+                    <IconButtonTooltip label="Remove color">
+                      <Button
+                        isIconOnly
+                        variant="outline"
+                        size="sm"
+                        aria-label="Remove color"
+                        className="shrink-0"
+                        onPress={() => handleRemoveColor(entry.id)}
+                      >
+                        <TrashIcon />
+                      </Button>
+                    </IconButtonTooltip>
                   </div>
                 ))}
-                <Button isIconOnly variant="outline" aria-label="Add color" onPress={handleAddColor}>
-                  <PlusIcon />
-                </Button>
+                <IconButtonTooltip label="Add color">
+                  <Button isIconOnly variant="outline" aria-label="Add color" onPress={handleAddColor}>
+                    <PlusIcon />
+                  </Button>
+                </IconButtonTooltip>
               </div>
             )}
           </Card.Content>
@@ -633,59 +658,8 @@ function App() {
       <Card>
         <Card.Content className="flex flex-col gap-2">
           <div className="text-sm font-medium">Projects</div>
-          {settings.projectRules.map((rule, index) => (
-            <div
-              key={rule.id}
-              draggable
-              onDragStart={handleRowDragStart(index)}
-              onDragOver={handleRowDragOver(index)}
-              onDrop={handleRowDrop(index)}
-              onDragEnd={handleRowDragEnd}
-              className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
-            >
-              <span
-                aria-hidden="true"
-                className="cursor-grab text-muted"
-                onMouseDown={handleGripMouseDown}
-                onMouseUp={handleGripMouseUp}
-              >
-                <GripIcon />
-              </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
-              <Button
-                isIconOnly
-                variant="outline"
-                size="sm"
-                aria-label="Edit"
-                className="shrink-0"
-                onPress={() => setView({ type: 'detail', ruleId: rule.id })}
-              >
-                <PencilIcon />
-              </Button>
-              <Button
-                isIconOnly
-                variant="outline"
-                size="sm"
-                aria-label="Duplicate"
-                className="shrink-0"
-                onPress={() => handleDuplicateRule(rule.id)}
-              >
-                <DuplicateIcon />
-              </Button>
-              <Button
-                isIconOnly
-                variant="outline"
-                size="sm"
-                aria-label="Delete"
-                className="shrink-0"
-                onPress={() => handleDeleteRule(rule.id)}
-              >
-                <TrashIcon />
-              </Button>
-            </div>
-          ))}
 
-          <div className="flex items-center gap-2 border-t border-border pt-2">
+          <div className="flex items-center gap-2">
             <Input
               aria-label="New rule pattern"
               placeholder="project id or regex"
@@ -693,10 +667,74 @@ function App() {
               onChange={(e) => setNewRulePattern(e.target.value)}
               className={nameInputClassName}
             />
-            <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0" onPress={handleAddRule}>
-              <PlusIcon />
-            </Button>
+            <IconButtonTooltip label="Add rule">
+              <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0" onPress={handleAddRule}>
+                <PlusIcon />
+              </Button>
+            </IconButtonTooltip>
           </div>
+
+          {settings.projectRules.length > 0 && (
+            <div className="flex flex-col gap-2 border-t border-border pt-2">
+              {settings.projectRules.map((rule, index) => (
+                <div
+                  key={rule.id}
+                  draggable
+                  onDragStart={handleRowDragStart(index)}
+                  onDragOver={handleRowDragOver(index)}
+                  onDrop={handleRowDrop(index)}
+                  onDragEnd={handleRowDragEnd}
+                  className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="cursor-grab text-muted"
+                    onMouseDown={handleGripMouseDown}
+                    onMouseUp={handleGripMouseUp}
+                  >
+                    <GripIcon />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
+                  <IconButtonTooltip label="Edit">
+                    <Button
+                      isIconOnly
+                      variant="outline"
+                      size="sm"
+                      aria-label="Edit"
+                      className="shrink-0"
+                      onPress={() => setView({ type: 'detail', ruleId: rule.id })}
+                    >
+                      <PencilIcon />
+                    </Button>
+                  </IconButtonTooltip>
+                  <IconButtonTooltip label="Duplicate">
+                    <Button
+                      isIconOnly
+                      variant="outline"
+                      size="sm"
+                      aria-label="Duplicate"
+                      className="shrink-0"
+                      onPress={() => handleDuplicateRule(rule.id)}
+                    >
+                      <DuplicateIcon />
+                    </Button>
+                  </IconButtonTooltip>
+                  <IconButtonTooltip label="Delete">
+                    <Button
+                      isIconOnly
+                      variant="outline"
+                      size="sm"
+                      aria-label="Delete"
+                      className="shrink-0"
+                      onPress={() => handleDeleteRule(rule.id)}
+                    >
+                      <TrashIcon />
+                    </Button>
+                  </IconButtonTooltip>
+                </div>
+              ))}
+            </div>
+          )}
         </Card.Content>
       </Card>
     </div>

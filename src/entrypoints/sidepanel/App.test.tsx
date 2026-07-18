@@ -210,6 +210,25 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
   });
 
+  it('places the Add row before the rule list, with a divider between them that is hidden while the list is empty and appears once a rule exists', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const addInput = await screen.findByLabelText('New rule pattern');
+
+    // With zero rules there is nothing to separate, so no divider (border-t) container is
+    // rendered below the Add row.
+    const projectsCard = addInput.closest('.card') as HTMLElement;
+    expect(projectsCard.querySelector('.border-t')).toBeNull();
+
+    await addRule(user, 'my-project');
+
+    // Document order: the Add row's Input precedes the rule row once one exists.
+    const position = addInput.compareDocumentPosition(getRuleRow('my-project'));
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The divider now separates the Add row from the rule list below it.
+    expect(projectsCard.querySelector('.border-t')).toBeTruthy();
+  });
+
   it('a freshly-added rule shows the palette entry and Top bar/Platform Bar triggers referencing it by default', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -410,6 +429,46 @@ describe('App', () => {
     });
   });
 
+  it('names new entries as "Color ${length+1}" based on the current array length; this is current, not-a-bug-fix-target behavior, and it can produce a duplicate name after a middle entry is removed and a new one added', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    const addButton = within(getCard('Color palette')).getByRole('button', { name: 'Add color' });
+    await user.click(addButton); // -> ['Primary', 'Color 2']
+    await user.click(addButton); // -> ['Primary', 'Color 2', 'Color 3']
+    await waitFor(async () => {
+      expect((await getStoredSettings()).projectRules[0].settings.palette.map((e) => e.name)).toEqual([
+        'Primary',
+        'Color 2',
+        'Color 3',
+      ]);
+    });
+
+    // Remove the middle entry ("Color 2"), leaving ['Primary', 'Color 3'] (length 2).
+    const removeButtons = within(getCard('Color palette')).getAllByRole('button', { name: 'Remove color' });
+    await user.click(removeButtons[1]);
+    await waitFor(async () => {
+      expect((await getStoredSettings()).projectRules[0].settings.palette.map((e) => e.name)).toEqual([
+        'Primary',
+        'Color 3',
+      ]);
+    });
+
+    // Adding again names the new entry from the current length (2 + 1 = "Color 3"), colliding
+    // with the "Color 3" that was already there.
+    await user.click(within(getCard('Color palette')).getByRole('button', { name: 'Add color' }));
+    await waitFor(async () => {
+      expect((await getStoredSettings()).projectRules[0].settings.palette.map((e) => e.name)).toEqual([
+        'Primary',
+        'Color 3',
+        'Color 3',
+      ]);
+    });
+  });
+
   it("saves a palette entry's name edit to storage", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -491,6 +550,32 @@ describe('App', () => {
       expect(beta.settings.palette).toHaveLength(1);
       expect(beta.settings.topBarPaletteId).toBe('default');
       expect(beta.settings.platformBarPaletteId).toBe('default');
+    });
+  });
+
+  it('removing a palette entry also clears its reference from platformBarTextPaletteId (the third referencing field, alongside topBarPaletteId and platformBarPaletteId)', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    // Point Platform Bar text color at the "default" palette entry (it defaults to a Custom hex).
+    const textDialog = await openPicker(user, 'Platform Bar text color');
+    fireEvent.click(getPaletteSwatch(textDialog, 'Primary'));
+    await waitFor(async () => {
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarTextPaletteId).toBe('default');
+    });
+    await closePicker(user);
+
+    const paletteCard = getCard('Color palette');
+    await user.click(within(paletteCard).getByRole('button', { name: 'Remove color' }));
+
+    await waitFor(async () => {
+      const settings = (await getStoredSettings()).projectRules[0].settings;
+      expect(settings.platformBarTextPaletteId).toBeNull();
+      expect(settings.topBarPaletteId).toBeNull();
+      expect(settings.platformBarPaletteId).toBeNull();
     });
   });
 
@@ -739,6 +824,25 @@ describe('App', () => {
     });
   });
 
+  it('emptying the Top bar Height input is ignored: the previous valid value is kept in storage (valueAsNumber is NaN for an empty number input, which fails the Number.isFinite guard)', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    const heightInput = within(getCard('Top bar')).getByLabelText('Top bar height') as HTMLInputElement;
+    fireEvent.change(heightInput, { target: { value: '15' } });
+    await waitFor(async () => {
+      expect((await getStoredSettings()).projectRules[0].settings.topBarHeight).toBe(15);
+    });
+
+    fireEvent.change(heightInput, { target: { value: '' } });
+
+    // No save happens for the empty value, so the last valid value remains in storage.
+    expect((await getStoredSettings()).projectRules[0].settings.topBarHeight).toBe(15);
+  });
+
   it('Top bar: the Stripes switch toggles topBarStripes in storage', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -775,6 +879,40 @@ describe('App', () => {
       expect(stored.projectRules[0].settings.platformBarStripes).toBe(true);
       expect(stored.projectRules[0].settings.topBarStripes).toBe(false);
     });
+  });
+
+  it('wraps every icon-only button (Edit/Duplicate/Delete/Add rule/Back/Remove color/Add color) in a HeroUI Tooltip.Trigger with a single Tab stop (the button itself, not the trigger wrapper)', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+
+    await addRule(user, 'my-project');
+
+    // HeroUI's Tooltip.Trigger renders an actual wrapping element marked
+    // data-slot="tooltip-trigger" around its child (confirmed by inspecting the rendered DOM),
+    // and that wrapper is itself focusable (tabIndex 0) by default so tooltips also work on
+    // non-interactive children. Since every child here is an already-focusable Button, App.tsx
+    // passes tabIndex={-1} to each Tooltip.Trigger to remove the wrapper from the Tab order,
+    // leaving the button as the page's only Tab stop for that control.
+    function expectSingleTabStop(button: HTMLElement) {
+      const wrapper = button.closest('[data-slot="tooltip-trigger"]') as HTMLElement | null;
+      expect(wrapper).toBeTruthy();
+      expect(wrapper!.tabIndex).toBe(-1);
+      expect(button.tabIndex).toBe(0);
+    }
+
+    // List page: Edit / Duplicate / Delete on the rule row, plus Add rule.
+    const row = getRuleRow('my-project');
+    for (const label of ['Edit', 'Duplicate', 'Delete']) {
+      expectSingleTabStop(within(row).getByRole('button', { name: label }));
+    }
+    expectSingleTabStop(screen.getByRole('button', { name: 'Add rule' }));
+
+    // Detail page: Back, Remove color, Add color.
+    await openRuleDetail(user, 'my-project');
+    expectSingleTabStop(screen.getByRole('button', { name: 'Back' }));
+    expectSingleTabStop(screen.getByRole('button', { name: 'Remove color' }));
+    expectSingleTabStop(screen.getByRole('button', { name: 'Add color' }));
   });
 
   it('does not render a "Reset to defaults" button', async () => {
@@ -883,6 +1021,26 @@ describe('App', () => {
     });
   });
 
+  it('loads settings once on mount; external storage changes made afterward are not reflected in the UI (no live storage.onChanged listener, unlike content.ts)', async () => {
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+
+    // Simulate another tab/window (or content.ts's own writes) changing storage after this
+    // sidepanel instance has already completed its one-time load.
+    await fakeBrowser.storage.local.set({
+      tintSettings: {
+        schemaVersion: CURRENT_VERSION,
+        projectRules: [{ id: 'external', pattern: 'from-elsewhere', settings: { topBarColor: '#334455' } }],
+      },
+    });
+
+    // Give any (hypothetical) listener a chance to fire; App registers none, so nothing changes.
+    await flush();
+
+    expect(screen.queryByText('from-elsewhere')).toBeNull();
+    expect(getAllRuleRows()).toHaveLength(0);
+  });
+
   describe('Rules', () => {
     it('ignores adding an empty or whitespace-only pattern', async () => {
       const user = userEvent.setup();
@@ -934,6 +1092,25 @@ describe('App', () => {
       await goBack(user);
       expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
       expect(getRuleRow('proj-[')).toBeTruthy();
+    });
+
+    it('the Pattern field can be edited down to an empty string and saves it as-is, unlike Add rule which guards against empty (current behavior: no guard on edits, so an in-progress clear-and-retype is never blocked)', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'my-project');
+      await openRuleDetail(user, 'my-project');
+
+      const patternInput = screen.getByLabelText('Pattern') as HTMLInputElement;
+      fireEvent.change(patternInput, { target: { value: '' } });
+
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules[0].pattern).toBe('');
+      });
+      // An empty string is a valid regular expression (it matches the empty position), so no
+      // "Invalid regular expression" warning is shown for it.
+      expect(screen.queryByText('Invalid regular expression')).toBeNull();
     });
 
     it('Duplicate inserts a copy directly below the original with a new id, editable independently', async () => {
@@ -1048,6 +1225,31 @@ describe('App', () => {
       expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
     });
 
+    it('dropping a row onto itself is a no-op: order and storage stay unchanged, and no drop indicator is shown', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      const before = (await getStoredSettings()).projectRules.map((r) => r.id);
+
+      const alphaRow = getRuleRow('alpha');
+      const grip = getGrip(alphaRow);
+      const dt = makeDataTransferInit();
+
+      fireEvent.mouseDown(grip);
+      fireEvent.dragStart(alphaRow, dt); // draggingIndex = 0
+      fireEvent.dragOver(alphaRow, dt); // dragOverIndex = 0 === draggingIndex -> no indicator
+      expect(alphaRow.className).not.toContain('var(--focus)');
+
+      fireEvent.drop(alphaRow, dt);
+      fireEvent.dragEnd(alphaRow, dt);
+
+      expect((await getStoredSettings()).projectRules.map((r) => r.id)).toEqual(before);
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+    });
+
     it('shows a bottom-edge drop indicator on the target row when dragging downward (dragOverIndex > draggingIndex)', async () => {
       const user = userEvent.setup();
       render(<App />);
@@ -1142,6 +1344,9 @@ describe('App', () => {
       fireEvent.dragEnd(alphaRow, dt);
 
       expect(getRuleRow('beta').className).not.toContain('var(--focus)');
+      // Cancelling the drag (no drop) must not reorder anything: handleRowDrop, which is the
+      // only place that calls save() with a reordered array, was never invoked.
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
     });
 
     it("editing a rule's settings in detail saves to that rule only, without affecting other rules", async () => {
