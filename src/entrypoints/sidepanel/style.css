@@ -5,4 +5,17 @@ body {
   margin: 0;
   padding: 16px;
   font-family: system-ui, sans-serif;
+  /* HeroUI's page-level background token, distinct from Card's --surface background so
+     cards read as elevated against the page in both light and dark themes. */
+  background-color: var(--background);
+}
+
+/* HeroUI's Card component has no separate border; the "border" is actually the tightest
+   layer of its --surface-shadow box-shadow (a 1px near-transparent-black shadow). Zeroing
+   box-shadow removes both the drop shadow and that border-like effect in one rule. This rule
+   is intentionally unlayered (outside any @layer), so per CSS cascade layer rules it always
+   wins over HeroUI's own (layered) `.card` rule regardless of import/source order. */
+.card {
+  border: none;
+  box-shadow: none;
 }
