@@ -33,9 +33,9 @@ export default function DeleteConfirmPopover({
         <Popover>
           <Popover.Trigger>{children}</Popover.Trigger>
           <Popover.Content>
-            <Popover.Dialog className="flex w-56 flex-col gap-2 p-3">
+            <Popover.Dialog className="flex max-w-64 flex-col gap-2 p-3">
               <span className="text-sm">{message}</span>
-              <Button slot="close" variant="danger" size="sm" onPress={onConfirm}>
+              <Button slot="close" variant="danger" size="sm" className="self-end" onPress={onConfirm}>
                 {confirmLabel}
               </Button>
             </Popover.Dialog>
