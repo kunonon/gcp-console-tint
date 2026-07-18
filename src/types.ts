@@ -31,7 +31,7 @@ export interface ProjectRule {
 
 export interface TintSettings {
   schemaVersion: string;
-  defaultProject: ProjectSettings;
   // Ordered: earlier rules take priority; first matching rule wins.
+  // When no rule matches (or the URL has no project param), nothing is applied.
   projectRules: ProjectRule[];
 }

@@ -36,7 +36,6 @@ export function cloneProjectSettings(settings: ProjectSettings): ProjectSettings
 
 export const DEFAULT_SETTINGS: TintSettings = {
   schemaVersion: SCHEMA_MIN_VERSION,
-  defaultProject: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS),
   projectRules: [],
 };
 
@@ -53,7 +52,6 @@ function mergeProjectSettings(stored: Partial<ProjectSettings> | null | undefine
 function freshDefaults(currentVersion: string): TintSettings {
   return {
     schemaVersion: currentVersion,
-    defaultProject: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS),
     projectRules: [],
   };
 }
@@ -91,14 +89,14 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
 
   return {
     schemaVersion,
-    defaultProject: mergeProjectSettings(raw.defaultProject as Partial<ProjectSettings>),
     projectRules,
   };
 }
 
 // Rules are ordered by priority (top of the list first). The first rule whose regex
 // pattern matches the project id wins; rules with invalid regexes are skipped.
-export function resolveProjectSettings(settings: TintSettings, projectId: string | null): ProjectSettings {
+// Returns null when the URL has no project id or no rule matches — nothing is applied.
+export function resolveProjectSettings(settings: TintSettings, projectId: string | null): ProjectSettings | null {
   if (projectId) {
     for (const rule of settings.projectRules) {
       try {
@@ -108,5 +106,5 @@ export function resolveProjectSettings(settings: TintSettings, projectId: string
       }
     }
   }
-  return settings.defaultProject;
+  return null;
 }

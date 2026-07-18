@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, cleanup, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import App from './App';
@@ -36,7 +36,6 @@ interface ProjectRule {
 
 interface StoredTintSettings {
   schemaVersion: string;
-  defaultProject: ProjectSettings;
   projectRules: ProjectRule[];
 }
 
@@ -45,6 +44,17 @@ const CURRENT_VERSION = '0.1.0';
 async function getStoredSettings(): Promise<StoredTintSettings> {
   const result = await fakeBrowser.storage.local.get('tintSettings');
   return result.tintSettings as StoredTintSettings;
+}
+
+// Flushes the microtask/task queue (wrapped in act()) so the async
+// `browser.storage.local.get(...).then(...)` inside App's mount effect has a chance to
+// resolve and apply before assertions run. Needed for tests that must prove something did
+// NOT happen after load (e.g. discarded storage), where the "before load" and "after load"
+// states would otherwise be indistinguishable without an explicit wait.
+async function flush() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 function getCard(switchName: string): HTMLElement {
@@ -105,8 +115,7 @@ function hexOrRgb(hex: string): (string | undefined)[] {
   return [hex, `rgb(${r}, ${g}, ${b})`];
 }
 
-// Rule rows are the only list-page elements with the native `draggable` attribute, which
-// distinguishes them from the (non-draggable) Default row.
+// Rule rows are the only list-page elements with the native `draggable` attribute.
 function getAllRuleRows(): HTMLElement[] {
   return Array.from(document.querySelectorAll('[draggable="true"]')) as HTMLElement[];
 }
@@ -132,13 +141,6 @@ function getGrip(row: HTMLElement): HTMLElement {
   return grip as HTMLElement;
 }
 
-function getDefaultRow(): HTMLElement {
-  const label = screen.getByText('Default');
-  const row = label.closest('div');
-  if (!row) throw new Error('Default row not found');
-  return row as HTMLElement;
-}
-
 async function addRule(user: ReturnType<typeof userEvent.setup>, pattern: string) {
   const input = screen.getByLabelText('New rule pattern') as HTMLInputElement;
   fireEvent.change(input, { target: { value: pattern } });
@@ -155,11 +157,6 @@ async function openRuleDetail(user: ReturnType<typeof userEvent.setup>, pattern:
 
 async function openRuleDetailAt(user: ReturnType<typeof userEvent.setup>, index: number) {
   await user.click(within(getRuleRowAt(index)).getByRole('button', { name: 'Edit' }));
-  await screen.findByRole('button', { name: 'Back' });
-}
-
-async function openDefaultDetail(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(within(getDefaultRow()).getByRole('button', { name: 'Edit' }));
   await screen.findByRole('button', { name: 'Back' });
 }
 
@@ -184,6 +181,9 @@ function makeDataTransferInit() {
   };
 }
 
+const TOP_INDICATOR = 'shadow-[inset_0_2px_0_0_var(--focus)]';
+const BOTTOM_INDICATOR = 'shadow-[inset_0_-2px_0_0_var(--focus)]';
+
 beforeEach(() => {
   fakeBrowser.reset();
   // @webext-core/fake-browser leaves runtime.getManifest() as an unimplemented stub that
@@ -199,15 +199,24 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  it('shows default state: on the list page just the Default row and Add row; the Default detail page shows the palette entry and Top bar/Platform Bar triggers referencing it', async () => {
-    const user = userEvent.setup();
+  it('shows an empty rule list with just the Add row by default (no Default row)', async () => {
     render(<App />);
     await screen.findByLabelText('New rule pattern');
 
     expect(getAllRuleRows()).toHaveLength(0);
-    expect(getDefaultRow()).toBeTruthy();
+    expect(screen.queryByText('Default')).toBeNull();
+    expect(screen.queryAllByRole('button', { name: 'Edit' })).toHaveLength(0);
+    expect(screen.getByLabelText('New rule pattern')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
+  });
 
-    await openDefaultDetail(user);
+  it('a freshly-added rule shows the palette entry and Top bar/Platform Bar triggers referencing it by default', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByLabelText('New rule pattern');
+
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteSwitch = screen.getByRole('switch', { name: 'Color palette' }) as HTMLInputElement;
     expect(paletteSwitch.checked).toBe(true);
@@ -222,22 +231,29 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Platform Bar text color' }).textContent).toContain('#ffffff');
   });
 
-  it('shows an empty rule list with just the Default row and the Add row by default', async () => {
+  it("Add rule initializes the new rule's settings from the built-in DEFAULT_PROJECT_SETTINGS", async () => {
+    const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
 
-    expect(getAllRuleRows()).toHaveLength(0);
-    expect(getDefaultRow()).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
-    expect(screen.getByLabelText('New rule pattern')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
+    await addRule(user, 'my-project');
+
+    const stored = await getStoredSettings();
+    expect(stored.projectRules).toHaveLength(1);
+    const settings = stored.projectRules[0].settings;
+    expect(settings.topBarColor).toBe('#ff6d00');
+    expect(settings.topBarPaletteId).toBe('default');
+    expect(settings.topBarHeight).toBe(4);
+    expect(settings.topBarStripes).toBe(false);
+    expect(settings.palette).toEqual([{ id: 'default', name: 'Primary', color: '#ff6d00' }]);
   });
 
   it('opens the Top bar picker showing the referenced palette entry active and Custom inactive', async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const dialog = await openPicker(user, 'Top bar color');
 
@@ -253,27 +269,28 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.palette).toHaveLength(2);
+      expect((await getStoredSettings()).projectRules[0].settings.palette).toHaveLength(2);
     });
 
     const colorInputs = paletteCard.querySelectorAll('input[type="color"]');
     fireEvent.change(colorInputs[1], { target: { value: '#00ff00' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.palette[1].color).toBe('#00ff00');
+      expect((await getStoredSettings()).projectRules[0].settings.palette[1].color).toBe('#00ff00');
     });
-    const secondEntry = (await getStoredSettings()).defaultProject.palette[1];
+    const secondEntry = (await getStoredSettings()).projectRules[0].settings.palette[1];
 
     const dialog = await openPicker(user, 'Top bar color');
     fireEvent.click(getPaletteSwatch(dialog, secondEntry.name));
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.topBarPaletteId).toBe(secondEntry.id);
+      expect(stored.projectRules[0].settings.topBarPaletteId).toBe(secondEntry.id);
     });
 
     await closePicker(user);
@@ -284,15 +301,16 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const dialog = await openPicker(user, 'Top bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#654321' } });
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.topBarPaletteId).toBeNull();
-      expect(stored.defaultProject.topBarColor).toBe('#654321');
+      expect(stored.projectRules[0].settings.topBarPaletteId).toBeNull();
+      expect(stored.projectRules[0].settings.topBarColor).toBe('#654321');
     });
 
     await closePicker(user);
@@ -303,15 +321,16 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#101010' } });
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.platformBarPaletteId).toBeNull();
-      expect(stored.defaultProject.platformBarColor).toBe('#101010');
+      expect(stored.projectRules[0].settings.platformBarPaletteId).toBeNull();
+      expect(stored.projectRules[0].settings.platformBarColor).toBe('#101010');
     });
   });
 
@@ -319,24 +338,26 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getPaletteSwatch(dialog, 'Primary'));
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.platformBarTextPaletteId).toBe('default');
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarTextPaletteId).toBe('default');
     });
 
     await closePicker(user);
     expect(screen.getByRole('button', { name: 'Platform Bar text color' }).textContent).toContain('Primary');
   });
 
-  it('a palette entry color change is reflected in the effective color of the same project (not a one-shot copy)', async () => {
+  it('a palette entry color change is reflected in the effective color of the same rule (not a one-shot copy)', async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteColorInput = getColorInput(getCard('Color palette'));
     fireEvent.change(paletteColorInput, { target: { value: '#123456' } });
@@ -348,23 +369,24 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
 
     const stored = await getStoredSettings();
-    expect(stored.defaultProject.topBarColor).toBe('#ff6d00');
-    expect(stored.defaultProject.palette[0].color).toBe('#123456');
+    expect(stored.projectRules[0].settings.topBarColor).toBe('#ff6d00');
+    expect(stored.projectRules[0].settings.palette[0].color).toBe('#123456');
   });
 
   it('adds a new palette entry via the "Add color" icon button and exposes it in the picker', async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.palette).toHaveLength(2);
-      expect(stored.defaultProject.palette[1].name).toBe('Color 2');
+      expect(stored.projectRules[0].settings.palette).toHaveLength(2);
+      expect(stored.projectRules[0].settings.palette[1].name).toBe('Color 2');
     });
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -375,7 +397,8 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const addButton = within(getCard('Color palette')).getByRole('button', { name: 'Add color' });
     await user.click(addButton);
@@ -383,7 +406,7 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.palette.map((e) => e.name)).toEqual(['Primary', 'Color 2', 'Color 3']);
+      expect(stored.projectRules[0].settings.palette.map((e) => e.name)).toEqual(['Primary', 'Color 2', 'Color 3']);
     });
   });
 
@@ -391,14 +414,15 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const nameInput = within(getCard('Color palette')).getByLabelText('Color name') as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: 'Brand' } });
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.palette[0].name).toBe('Brand');
+      expect(stored.projectRules[0].settings.palette[0].name).toBe('Brand');
     });
   });
 
@@ -406,13 +430,14 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     fireEvent.change(getColorInput(getCard('Color palette')), { target: { value: '#a1b2c3' } });
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.palette[0].color).toBe('#a1b2c3');
+      expect(stored.projectRules[0].settings.palette[0].color).toBe('#a1b2c3');
     });
   });
 
@@ -420,12 +445,13 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.palette).toHaveLength(2);
+      expect((await getStoredSettings()).projectRules[0].settings.palette).toHaveLength(2);
     });
 
     // "default" (Primary) is referenced by Top bar and Platform Bar; remove the second, unreferenced entry.
@@ -434,40 +460,41 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.palette).toHaveLength(1);
-      expect(stored.defaultProject.palette[0].id).toBe('default');
-      expect(stored.defaultProject.topBarPaletteId).toBe('default');
-      expect(stored.defaultProject.platformBarPaletteId).toBe('default');
+      const settings = stored.projectRules[0].settings;
+      expect(settings.palette).toHaveLength(1);
+      expect(settings.palette[0].id).toBe('default');
+      expect(settings.topBarPaletteId).toBe('default');
+      expect(settings.platformBarPaletteId).toBe('default');
     });
   });
 
-  it('removing a palette entry clears its reference within the same project only, leaving other rules and Default unaffected', async () => {
+  it('removing a palette entry clears its reference within the same rule only, leaving other rules unaffected', async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
 
-    // "my-project" is cloned from defaultProject (via cloneProjectSettings), so it starts out
-    // with its own independent copy of the palette, still referencing "default".
-    await addRule(user, 'my-project');
-    await openRuleDetail(user, 'my-project');
+    await addRule(user, 'alpha');
+    await addRule(user, 'beta');
+    await openRuleDetail(user, 'alpha');
 
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Remove color' }));
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      const rule = stored.projectRules.find((r) => r.pattern === 'my-project')!;
-      expect(rule.settings.palette).toHaveLength(0);
-      expect(rule.settings.topBarPaletteId).toBeNull();
-      expect(rule.settings.platformBarPaletteId).toBeNull();
-      // Default's own palette entry and references are untouched.
-      expect(stored.defaultProject.palette).toHaveLength(1);
-      expect(stored.defaultProject.topBarPaletteId).toBe('default');
-      expect(stored.defaultProject.platformBarPaletteId).toBe('default');
+      const alpha = stored.projectRules.find((r) => r.pattern === 'alpha')!;
+      const beta = stored.projectRules.find((r) => r.pattern === 'beta')!;
+      expect(alpha.settings.palette).toHaveLength(0);
+      expect(alpha.settings.topBarPaletteId).toBeNull();
+      expect(alpha.settings.platformBarPaletteId).toBeNull();
+      // The other rule's own palette entry and references are untouched.
+      expect(beta.settings.palette).toHaveLength(1);
+      expect(beta.settings.topBarPaletteId).toBe('default');
+      expect(beta.settings.platformBarPaletteId).toBe('default');
     });
   });
 
-  it("a rule's palette is independent: adding a palette entry to one rule does not affect another rule's or Default's palette", async () => {
+  it("a rule's palette is independent: adding a palette entry to one rule does not affect another rule's palette", async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
@@ -484,19 +511,19 @@ describe('App', () => {
 
     const stored = await getStoredSettings();
     expect(stored.projectRules.find((r) => r.pattern === 'beta')!.settings.palette).toHaveLength(1);
-    expect(stored.defaultProject.palette).toHaveLength(1);
   });
 
   it('shows "(unnamed)" as the swatch label in the picker for a palette entry with an empty name', async () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const nameInput = within(getCard('Color palette')).getByLabelText('Color name') as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: '' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.palette[0].name).toBe('');
+      expect((await getStoredSettings()).projectRules[0].settings.palette[0].name).toBe('');
     });
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -507,13 +534,14 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteSwitch = screen.getByRole('switch', { name: 'Color palette' });
     await user.click(paletteSwitch);
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.paletteEnabled).toBe(false);
+      expect((await getStoredSettings()).projectRules[0].settings.paletteEnabled).toBe(false);
     });
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#ff6d00');
 
@@ -526,20 +554,21 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteSwitch = screen.getByRole('switch', { name: 'Color palette' });
     await user.click(paletteSwitch);
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.paletteEnabled).toBe(false);
-      expect(stored.defaultProject.palette).toHaveLength(1);
-      expect(stored.defaultProject.topBarPaletteId).toBe('default');
+      expect(stored.projectRules[0].settings.paletteEnabled).toBe(false);
+      expect(stored.projectRules[0].settings.palette).toHaveLength(1);
+      expect(stored.projectRules[0].settings.topBarPaletteId).toBe('default');
     });
 
     await user.click(screen.getByRole('switch', { name: 'Color palette' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.paletteEnabled).toBe(true);
+      expect((await getStoredSettings()).projectRules[0].settings.paletteEnabled).toBe(true);
     });
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
   });
@@ -548,7 +577,8 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const paletteCard = getCard('Color palette');
     const removeButton = within(paletteCard).getByRole('button', { name: 'Remove color' });
@@ -556,9 +586,9 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.topBarPaletteId).toBeNull();
-      expect(stored.defaultProject.platformBarPaletteId).toBeNull();
-      expect(stored.defaultProject.palette).toHaveLength(0);
+      expect(stored.projectRules[0].settings.topBarPaletteId).toBeNull();
+      expect(stored.projectRules[0].settings.platformBarPaletteId).toBeNull();
+      expect(stored.projectRules[0].settings.palette).toHaveLength(0);
     });
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -568,7 +598,7 @@ describe('App', () => {
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#777777' } });
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.topBarColor).toBe('#777777');
+      expect(stored.projectRules[0].settings.topBarColor).toBe('#777777');
     });
   });
 
@@ -576,7 +606,8 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const dialog = await openPicker(user, 'Platform Bar text color');
 
@@ -591,13 +622,14 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarTextAuto).toBe(true);
     });
 
     await closePicker(user);
@@ -608,19 +640,20 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarTextAuto).toBe(true);
     });
     await closePicker(user);
 
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#000080' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.platformBarColor).toBe('#000080');
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarColor).toBe('#000080');
     });
     await closePicker(user);
 
@@ -631,7 +664,7 @@ describe('App', () => {
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#ffff00' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.platformBarColor).toBe('#ffff00');
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarColor).toBe('#ffff00');
     });
     await closePicker(user);
 
@@ -644,12 +677,13 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarTextAuto).toBe(true);
     });
     await closePicker(user);
 
@@ -658,8 +692,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.platformBarTextAuto).toBe(false);
-      expect(stored.defaultProject.platformBarTextPaletteId).toBe('default');
+      expect(stored.projectRules[0].settings.platformBarTextAuto).toBe(false);
+      expect(stored.projectRules[0].settings.platformBarTextPaletteId).toBe('default');
     });
   });
 
@@ -667,12 +701,13 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.platformBarTextAuto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0].settings.platformBarTextAuto).toBe(true);
     });
     await closePicker(user);
 
@@ -681,9 +716,9 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.platformBarTextAuto).toBe(false);
-      expect(stored.defaultProject.platformBarTextColor).toBe('#333333');
-      expect(stored.defaultProject.platformBarTextPaletteId).toBeNull();
+      expect(stored.projectRules[0].settings.platformBarTextAuto).toBe(false);
+      expect(stored.projectRules[0].settings.platformBarTextColor).toBe('#333333');
+      expect(stored.projectRules[0].settings.platformBarTextPaletteId).toBeNull();
     });
   });
 
@@ -691,7 +726,8 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const heightInput = within(getCard('Top bar')).getByLabelText('Top bar height') as HTMLInputElement;
     expect(heightInput.value).toBe('4');
@@ -699,7 +735,7 @@ describe('App', () => {
     fireEvent.change(heightInput, { target: { value: '10' } });
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(10);
+      expect((await getStoredSettings()).projectRules[0].settings.topBarHeight).toBe(10);
     });
   });
 
@@ -707,7 +743,8 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const stripesSwitch = within(getCard('Top bar')).getByRole('switch', { name: 'Stripes' }) as HTMLInputElement;
     expect(stripesSwitch.checked).toBe(false);
@@ -715,7 +752,7 @@ describe('App', () => {
     await user.click(stripesSwitch);
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).defaultProject.topBarStripes).toBe(true);
+      expect((await getStoredSettings()).projectRules[0].settings.topBarStripes).toBe(true);
     });
   });
 
@@ -723,7 +760,8 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByLabelText('New rule pattern');
-    await openDefaultDetail(user);
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
 
     const stripesSwitch = within(getCard('Platform Bar')).getByRole('switch', {
       name: 'Stripes',
@@ -734,8 +772,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.defaultProject.platformBarStripes).toBe(true);
-      expect(stored.defaultProject.topBarStripes).toBe(false);
+      expect(stored.projectRules[0].settings.platformBarStripes).toBe(true);
+      expect(stored.projectRules[0].settings.topBarStripes).toBe(false);
     });
   });
 
@@ -750,16 +788,16 @@ describe('App', () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '0.1.0',
-        defaultProject: {
-          topBarColor: '#123123',
-          topBarPaletteId: null,
-        },
+        projectRules: [
+          { id: 'r1', pattern: 'my-project', settings: { topBarColor: '#123123', topBarPaletteId: null } },
+        ],
       },
     });
 
     const user = userEvent.setup();
     render(<App />);
-    await openDefaultDetail(user);
+    await screen.findByText('my-project');
+    await openRuleDetail(user, 'my-project');
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#123123');
@@ -768,73 +806,69 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Platform Bar color' }).textContent).toContain('Primary');
   });
 
-  it('discards stored data with no schemaVersion (old flat v1 shape) and applies defaults on mount', async () => {
+  it('discards stored data with no schemaVersion (old flat v1 shape) and applies fresh (empty) defaults on mount', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
-        topBarEnabled: true,
-        topBarPaletteId: null,
-        topBarColor: '#334455',
+        projectRules: [{ id: 'r1', pattern: 'should-not-appear', settings: { topBarColor: '#334455' } }],
       },
     });
 
-    const user = userEvent.setup();
     render(<App />);
-    await openDefaultDetail(user);
+    await flush();
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
-    });
+    expect(screen.queryByText('should-not-appear')).toBeNull();
+    expect(getAllRuleRows()).toHaveLength(0);
   });
 
   it('reads stored data whose schemaVersion equals SCHEMA_MIN_VERSION on mount', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '0.1.0',
-        defaultProject: { topBarColor: '#334455', topBarPaletteId: null },
+        projectRules: [
+          { id: 'r1', pattern: 'my-project', settings: { topBarColor: '#334455', topBarPaletteId: null } },
+        ],
       },
     });
 
     const user = userEvent.setup();
     render(<App />);
-    await openDefaultDetail(user);
+    await screen.findByText('my-project');
+    await openRuleDetail(user, 'my-project');
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
-    });
+    expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
   });
 
   it('reads stored data whose schemaVersion is newer than the current version as-is on mount', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '9.9.9',
-        defaultProject: { topBarColor: '#334455', topBarPaletteId: null },
+        projectRules: [
+          { id: 'r1', pattern: 'my-project', settings: { topBarColor: '#334455', topBarPaletteId: null } },
+        ],
       },
     });
 
     const user = userEvent.setup();
     render(<App />);
-    await openDefaultDetail(user);
+    await screen.findByText('my-project');
+    await openRuleDetail(user, 'my-project');
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
-    });
+    expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
   });
 
   it('discards stored data whose schemaVersion is missing, non-string, or below SCHEMA_MIN_VERSION on mount', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '0.0.9',
-        defaultProject: { topBarColor: '#334455', topBarPaletteId: null },
+        projectRules: [{ id: 'r1', pattern: 'should-not-appear', settings: { topBarColor: '#334455' } }],
       },
     });
 
-    const user = userEvent.setup();
     render(<App />);
-    await openDefaultDetail(user);
+    await flush();
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
-    });
+    expect(screen.queryByText('should-not-appear')).toBeNull();
+    expect(getAllRuleRows()).toHaveLength(0);
   });
 
   it('stamps the current version as schemaVersion whenever settings are saved', async () => {
@@ -850,50 +884,19 @@ describe('App', () => {
   });
 
   describe('Rules', () => {
-    it('Add rule appends a new rule initialized as a deep copy of defaultProject, at the end of the list, and stays on the list page', async () => {
-      const user = userEvent.setup();
-      render(<App />);
-      await screen.findByLabelText('New rule pattern');
-
-      // Diverge defaultProject from the built-in defaults first, to prove the copy is a snapshot.
-      await openDefaultDetail(user);
-      fireEvent.change(within(getCard('Top bar')).getByLabelText('Top bar height'), { target: { value: '20' } });
-      await waitFor(async () => {
-        expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(20);
-      });
-      await goBack(user);
-
-      await addRule(user, 'my-project');
-
-      const stored = await getStoredSettings();
-      expect(stored.projectRules).toHaveLength(1);
-      expect(stored.projectRules[0].pattern).toBe('my-project');
-      expect(stored.projectRules[0].settings).toEqual(stored.defaultProject);
-
-      // Adding does not navigate away from the list.
-      expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
-      expect(getRuleRow('my-project')).toBeTruthy();
-    });
-
     it('ignores adding an empty or whitespace-only pattern', async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
 
+      await addRule(user, 'existing-rule');
+
       const input = screen.getByLabelText('New rule pattern') as HTMLInputElement;
       fireEvent.change(input, { target: { value: '   ' } });
       await user.click(screen.getByRole('button', { name: 'Add rule' }));
 
-      // Perform an unrelated save first so getStoredSettings() has something to read.
-      await openDefaultDetail(user);
-      await user.click(within(getCard('Top bar')).getByRole('switch', { name: 'Stripes' }));
-      await waitFor(async () => {
-        expect((await getStoredSettings()).defaultProject.topBarStripes).toBe(true);
-      });
-      await goBack(user);
-
-      expect((await getStoredSettings()).projectRules).toEqual([]);
-      expect(getAllRuleRows()).toHaveLength(0);
+      expect((await getStoredSettings()).projectRules).toHaveLength(1);
+      expect(getAllRuleRows()).toHaveLength(1);
     });
 
     it('allows adding multiple rules with the same pattern text, each with its own id (regex duplicates may be intentional)', async () => {
@@ -931,22 +934,6 @@ describe('App', () => {
       await goBack(user);
       expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
       expect(getRuleRow('proj-[')).toBeTruthy();
-    });
-
-    it("Default row's Edit navigates to its detail page without a Pattern field, and edits save to defaultProject", async () => {
-      const user = userEvent.setup();
-      render(<App />);
-      await screen.findByLabelText('New rule pattern');
-
-      await openDefaultDetail(user);
-
-      expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Default');
-      expect(screen.queryByLabelText('Pattern')).toBeNull();
-
-      fireEvent.change(within(getCard('Top bar')).getByLabelText('Top bar height'), { target: { value: '9' } });
-      await waitFor(async () => {
-        expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(9);
-      });
     });
 
     it('Duplicate inserts a copy directly below the original with a new id, editable independently', async () => {
@@ -1061,7 +1048,103 @@ describe('App', () => {
       expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
     });
 
-    it("editing a rule's settings in detail saves to that rule only, without affecting other rules or Default", async () => {
+    it('shows a bottom-edge drop indicator on the target row when dragging downward (dragOverIndex > draggingIndex)', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+
+      const alphaRow = getRuleRow('alpha'); // index 0
+      const betaRow = getRuleRow('beta'); // index 1
+      const grip = getGrip(alphaRow);
+      const dt = makeDataTransferInit();
+
+      fireEvent.mouseDown(grip);
+      fireEvent.dragStart(alphaRow, dt); // draggingIndex = 0
+      fireEvent.dragOver(betaRow, dt); // dragOverIndex = 1 (> 0) -> downward -> bottom line on beta
+
+      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
+      expect(betaRow.className).not.toContain(TOP_INDICATOR);
+      // The dragged row itself never shows an indicator.
+      expect(alphaRow.className).not.toContain('var(--focus)');
+    });
+
+    it('shows a top-edge drop indicator on the target row when dragging upward (dragOverIndex < draggingIndex)', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+
+      const alphaRow = getRuleRow('alpha'); // index 0
+      const betaRow = getRuleRow('beta'); // index 1
+      const grip = getGrip(betaRow);
+      const dt = makeDataTransferInit();
+
+      fireEvent.mouseDown(grip);
+      fireEvent.dragStart(betaRow, dt); // draggingIndex = 1
+      fireEvent.dragOver(alphaRow, dt); // dragOverIndex = 0 (< 1) -> upward -> top line on alpha
+
+      expect(alphaRow.className).toContain(TOP_INDICATOR);
+      expect(alphaRow.className).not.toContain(BOTTOM_INDICATOR);
+      expect(betaRow.className).not.toContain('var(--focus)');
+    });
+
+    it('clears the drop indicator once the drop is handled', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+
+      const alphaRow = getRuleRow('alpha');
+      const betaRow = getRuleRow('beta');
+      const grip = getGrip(alphaRow);
+      const dt = makeDataTransferInit();
+
+      fireEvent.mouseDown(grip);
+      fireEvent.dragStart(alphaRow, dt);
+      fireEvent.dragOver(betaRow, dt);
+      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
+
+      fireEvent.drop(betaRow, dt);
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['beta', 'alpha']);
+      });
+      // Rows are recreated post-reorder; re-fetch and confirm neither shows an indicator.
+      expect(getRuleRow('alpha').className).not.toContain('var(--focus)');
+      expect(getRuleRow('beta').className).not.toContain('var(--focus)');
+    });
+
+    it('clears the drop indicator on dragEnd even when the drag ends outside any row (e.g. dropped outside the list)', async () => {
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByLabelText('New rule pattern');
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+
+      const alphaRow = getRuleRow('alpha');
+      const betaRow = getRuleRow('beta');
+      const grip = getGrip(alphaRow);
+      const dt = makeDataTransferInit();
+
+      fireEvent.mouseDown(grip);
+      fireEvent.dragStart(alphaRow, dt);
+      fireEvent.dragOver(betaRow, dt);
+      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
+
+      // dragEnd without a preceding drop, as happens when the drag is released outside the list.
+      fireEvent.dragEnd(alphaRow, dt);
+
+      expect(getRuleRow('beta').className).not.toContain('var(--focus)');
+    });
+
+    it("editing a rule's settings in detail saves to that rule only, without affecting other rules", async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
@@ -1087,26 +1170,28 @@ describe('App', () => {
         expect(rules.find((r) => r.pattern === 'beta')!.settings.topBarHeight).toBe(33);
         expect(rules.find((r) => r.pattern === 'alpha')!.settings.topBarHeight).toBe(11);
       });
-      expect((await getStoredSettings()).defaultProject.topBarHeight).toBe(4);
     });
 
-    it("a Top bar Custom color change while editing a rule saves to that rule's settings, not defaultProject", async () => {
+    it("a Top bar Custom color change while editing a rule saves to that rule's settings only", async () => {
       const user = userEvent.setup();
       render(<App />);
       await screen.findByLabelText('New rule pattern');
 
-      await addRule(user, 'my-project');
-      await openRuleDetail(user, 'my-project');
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      await openRuleDetail(user, 'alpha');
 
       const dialog = await openPicker(user, 'Top bar color');
       fireEvent.change(getCustomColorInput(dialog), { target: { value: '#654321' } });
 
       await waitFor(async () => {
         const stored = await getStoredSettings();
-        expect(stored.projectRules[0].settings.topBarPaletteId).toBeNull();
-        expect(stored.projectRules[0].settings.topBarColor).toBe('#654321');
-        // defaultProject keeps its copied-from reference untouched.
-        expect(stored.defaultProject.topBarPaletteId).toBe('default');
+        const alpha = stored.projectRules.find((r) => r.pattern === 'alpha')!;
+        const beta = stored.projectRules.find((r) => r.pattern === 'beta')!;
+        expect(alpha.settings.topBarPaletteId).toBeNull();
+        expect(alpha.settings.topBarColor).toBe('#654321');
+        // The other rule keeps its own default reference untouched.
+        expect(beta.settings.topBarPaletteId).toBe('default');
       });
     });
   });

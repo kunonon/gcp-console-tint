@@ -80,6 +80,11 @@ export default defineContentScript({
       lastSettings = settings;
       const projectId = url.searchParams.get('project');
       const project = resolveProjectSettings(settings, projectId);
+      if (project === null) {
+        bar.style.display = 'none';
+        platformBarStyle.textContent = '';
+        return;
+      }
       applyProjectSettings(project);
     };
 

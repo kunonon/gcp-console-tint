@@ -9,9 +9,8 @@ import ColorSwatchField from '../../components/ColorSwatchField';
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
 // The sidepanel is a single-page app with two views: the project rule list (the default
-// landing page) and a detail page for editing one rule's settings (or Default's, when
-// ruleId is null).
-type View = { type: 'list' } | { type: 'detail'; ruleId: string | null };
+// landing page) and a detail page for editing one rule's settings.
+type View = { type: 'list' } | { type: 'detail'; ruleId: string };
 
 const resolveColor = (
   paletteEnabled: boolean,
@@ -146,6 +145,7 @@ function App() {
   const [view, setView] = useState<View>({ type: 'list' });
   const [newRulePattern, setNewRulePattern] = useState('');
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // Native HTML5 drag-and-drop only lets an element itself be `draggable`; to restrict drag
   // initiation to the grip handle (rather than the whole row, e.g. its icon buttons or text)
   // we track whether the most recent mousedown landed on the grip, and cancel dragstart
@@ -159,6 +159,15 @@ function App() {
     });
   }, []);
 
+  // Defensive: if the rule currently open in detail view disappears (there is no UI path to
+  // this today since Delete only acts from the list, but this keeps the view consistent
+  // should that change), fall back to the list instead of rendering a phantom rule's page.
+  useEffect(() => {
+    if (view.type === 'detail' && !settings.projectRules.some((r) => r.id === view.ruleId)) {
+      setView({ type: 'list' });
+    }
+  }, [view, settings.projectRules]);
+
   const save = (next: TintSettings) => {
     const stamped: TintSettings = { ...next, schemaVersion: browser.runtime.getManifest().version };
     setSettings(stamped);
@@ -167,29 +176,25 @@ function App() {
 
   const updateCurrentSettings = (patch: Partial<ProjectSettings>) => {
     if (view.type !== 'detail') return;
-    if (view.ruleId === null) {
-      save({ ...settings, defaultProject: { ...settings.defaultProject, ...patch } });
-    } else {
-      const ruleId = view.ruleId;
-      save({
-        ...settings,
-        projectRules: settings.projectRules.map((r) =>
-          r.id === ruleId ? { ...r, settings: { ...r.settings, ...patch } } : r,
-        ),
-      });
-    }
+    const ruleId = view.ruleId;
+    save({
+      ...settings,
+      projectRules: settings.projectRules.map((r) =>
+        r.id === ruleId ? { ...r, settings: { ...r.settings, ...patch } } : r,
+      ),
+    });
   };
 
   const handleAddRule = () => {
     const pattern = newRulePattern.trim();
     if (!pattern) return;
-    const rule: ProjectRule = { id: crypto.randomUUID(), pattern, settings: cloneProjectSettings(settings.defaultProject) };
+    const rule: ProjectRule = { id: crypto.randomUUID(), pattern, settings: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS) };
     save({ ...settings, projectRules: [...settings.projectRules, rule] });
     setNewRulePattern('');
   };
 
   const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (view.type !== 'detail' || view.ruleId === null) return;
+    if (view.type !== 'detail') return;
     const pattern = e.target.value;
     const ruleId = view.ruleId;
     save({
@@ -233,13 +238,15 @@ function App() {
     setDraggingIndex(index);
   };
 
-  const handleRowDragOver = (e: React.DragEvent) => {
+  const handleRowDragOver = (index: number) => (e: React.DragEvent) => {
     e.preventDefault();
+    setDragOverIndex(index);
   };
 
   const handleRowDrop = (index: number) => (e: React.DragEvent) => {
     e.preventDefault();
     dragHandleActiveRef.current = false;
+    setDragOverIndex(null);
     if (draggingIndex === null || draggingIndex === index) {
       setDraggingIndex(null);
       return;
@@ -254,6 +261,18 @@ function App() {
   const handleRowDragEnd = () => {
     dragHandleActiveRef.current = false;
     setDraggingIndex(null);
+    setDragOverIndex(null);
+  };
+
+  // Shows a 2px inset accent line at the edge of `index` marking where the dragged row would
+  // land if dropped there right now (matches the splice-based reorder in handleRowDrop:
+  // dropping on a row before the dragged one inserts above it, after inserts below). Uses an
+  // inset box-shadow rather than a border so it never shifts layout/row height.
+  const dropIndicatorClassName = (index: number): string => {
+    if (draggingIndex === null || dragOverIndex !== index || index === draggingIndex) return '';
+    return dragOverIndex < draggingIndex
+      ? 'shadow-[inset_0_2px_0_0_var(--focus)]'
+      : 'shadow-[inset_0_-2px_0_0_var(--focus)]';
   };
 
   const handlePaletteEnabledChange = (isSelected: boolean) => {
@@ -277,8 +296,8 @@ function App() {
     updateCurrentSettings({ palette: currentSettings.palette.map((e) => (e.id === id ? { ...e, color } : e)) });
   };
 
-  // Palette entries and their references are scoped to the currently-edited project only;
-  // removing an entry here does not touch any other rule's or Default's palette/references.
+  // Palette entries and their references are scoped to the currently-edited rule only;
+  // removing an entry here does not touch any other rule's palette/references.
   const handleRemoveColor = (id: string) => {
     updateCurrentSettings({
       palette: currentSettings.palette.filter((e) => e.id !== id),
@@ -345,10 +364,10 @@ function App() {
   };
 
   const currentRule =
-    view.type === 'detail' && view.ruleId !== null
-      ? settings.projectRules.find((r) => r.id === view.ruleId)
-      : undefined;
-  const currentSettings: ProjectSettings = currentRule ? currentRule.settings : settings.defaultProject;
+    view.type === 'detail' ? settings.projectRules.find((r) => r.id === view.ruleId) : undefined;
+  // Falls back to the built-in defaults only for the transient frame before the "rule
+  // disappeared" effect above navigates back to the list.
+  const currentSettings: ProjectSettings = currentRule ? currentRule.settings : DEFAULT_PROJECT_SETTINGS;
 
   const topBarEffectiveColor = resolveColor(
     currentSettings.paletteEnabled,
@@ -372,7 +391,7 @@ function App() {
       );
 
   if (view.type === 'detail') {
-    const detailTitle = currentRule ? currentRule.pattern : 'Default';
+    const detailTitle = currentRule?.pattern ?? '';
 
     return (
       <div className="flex flex-col gap-3">
@@ -619,10 +638,10 @@ function App() {
               key={rule.id}
               draggable
               onDragStart={handleRowDragStart(index)}
-              onDragOver={handleRowDragOver}
+              onDragOver={handleRowDragOver(index)}
               onDrop={handleRowDrop(index)}
               onDragEnd={handleRowDragEnd}
-              className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''}`}
+              className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
             >
               <span
                 aria-hidden="true"
@@ -665,20 +684,6 @@ function App() {
               </Button>
             </div>
           ))}
-
-          <div className="flex min-h-8 items-center gap-2">
-            <span className="min-w-0 flex-1 text-sm">Default</span>
-            <Button
-              isIconOnly
-              variant="outline"
-              size="sm"
-              aria-label="Edit"
-              className="shrink-0"
-              onPress={() => setView({ type: 'detail', ruleId: null })}
-            >
-              <PencilIcon />
-            </Button>
-          </div>
 
           <div className="flex items-center gap-2 border-t border-border pt-2">
             <Input
