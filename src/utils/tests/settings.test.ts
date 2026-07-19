@@ -12,8 +12,11 @@ import type {
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
 import {
   cloneProjectSettings,
+  DEFAULT_COLOR,
   DEFAULT_PROJECT_SETTINGS,
   DEFAULT_SETTINGS,
+  DEFAULT_TEXT_COLOR,
+  DEFAULT_TOP_BAR_HEIGHT,
   effectiveSchemaVersion,
   loadSettings,
   MATCH_TYPES,
@@ -108,8 +111,8 @@ describe('loadSettings', () => {
 
   // Pre-release policy: SCHEMA_MIGRATIONS (migrations.ts) is currently EMPTY. Schema changes
   // before the first release are destructive by design instead of being migrated -- old-shaped
-  // fields are simply not recognized by mergeProjectSettings() and every section falls back to
-  // its default. The migration service itself (runMigrations, the injectable `steps` param) is
+  // fields are simply not recognized by the Zod schemas (types.ts) and every section falls back
+  // to its default. The migration service itself (runMigrations, the injectable `steps` param) is
   // still exercised directly in migrations.test.ts against a synthetic chain, proving it's ready
   // for the first real post-release step.
   describe('destructive pre-release read (SCHEMA_MIGRATIONS is currently empty)', () => {
@@ -336,6 +339,20 @@ describe('loadSettings', () => {
     expect(loaded.projectRules[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
+  // Distinct from "missing from storage" above: the id key is PRESENT but wrong-typed. Zod's
+  // `.catch()` fires on any parse failure, not just a missing key, so this recovers the same way
+  // (rather than e.g. coercing 42 to "42" or dropping the whole rule).
+  it('generates a UUID for a rule id that is present but the wrong type (not just missing)', () => {
+    const loaded = loadSettings(
+      { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: 42, pattern: 'junk-id', settings: {} }] },
+      CURRENT_VERSION,
+    );
+
+    expect(loaded.projectRules).toHaveLength(1);
+    expect(loaded.projectRules[0].pattern).toBe('junk-id');
+    expect(loaded.projectRules[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
   it('falls back to the default ProjectSettings when rule.settings is a string', () => {
     const loaded = loadSettings(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: '1', pattern: 'a', settings: 'not-an-object' }] },
@@ -354,9 +371,9 @@ describe('loadSettings', () => {
     expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
   });
 
-  // Arrays pass a bare `typeof value === 'object'` check; mergeProjectSettings() explicitly
-  // rejects them (Array.isArray guard) so their numeric indices never spread onto the merged
-  // ProjectSettings as extraneous keys.
+  // Arrays pass a bare `typeof value === 'object'` check, but Zod's z.object() distinguishes
+  // arrays from plain records and rejects them outright, so ProjectSettingsSchema's outer
+  // .catch() recovers to full defaults instead of spreading numeric indices onto the result.
   it('treats an empty array for rule.settings as invalid, falling back to defaults', () => {
     const loaded = loadSettings(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: '1', pattern: 'a', settings: [] }] },
@@ -462,6 +479,32 @@ describe('loadSettings', () => {
           entries: DEFAULT_PROJECT_SETTINGS.palette.entries,
         });
       });
+
+      // Per-element policy (types.ts's parsePaletteEntries): a non-record element can't be
+      // coerced into a PaletteEntry at all, so it's dropped -- one bad item never nukes its
+      // valid siblings' positions in the array.
+      it('drops non-record entries elements (null, string, number, array) while valid siblings survive', () => {
+        const entries = loadWithSettings({
+          palette: { entries: [null, 'x', 42, [], { id: 'valid', name: 'Valid', color: '#123456' }] },
+        }).palette.entries;
+
+        expect(entries).toEqual([{ id: 'valid', name: 'Valid', color: '#123456' }]);
+      });
+
+      // Contrast with the above: once an element clears the "is it a record" bar, it is NEVER
+      // dropped for having junk fields -- each field recovers independently via its own .catch
+      // (id -> a generated uuid, name -> '', color -> DEFAULT_COLOR), same per-field policy as
+      // every other schema in types.ts.
+      it('always keeps a record entries element, recovering each junk field independently instead of dropping it', () => {
+        const entries = loadWithSettings({
+          palette: { entries: [{ id: 42, name: 99, color: true }] },
+        }).palette.entries;
+
+        expect(entries).toHaveLength(1);
+        expect(entries[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        expect(entries[0].name).toBe('');
+        expect(entries[0].color).toBe(DEFAULT_COLOR);
+      });
     });
 
     describe('topBar', () => {
@@ -552,9 +595,11 @@ describe('loadSettings', () => {
       });
     });
 
-    // mergeDefined() explicitly skips `undefined` values so a migration step that emits
-    // undefined for a field the old shape lacked never clobbers that field's default.
-    it('never lets an explicit undefined field clobber its default (mergeDefined contract)', () => {
+    // Zod's `.catch()` fires on ANY parse failure, and `undefined` fails every field schema here
+    // (none is `.optional()`) exactly like a missing key does -- so an explicit `undefined`
+    // recovers to the default too, the same guarantee a migration step emitting `undefined` for
+    // a field the old shape lacked relies on (see migrations.test.ts's synthetic-chain tests).
+    it('never lets an explicit undefined field clobber its default (Zod .catch treats it like a missing key)', () => {
       const settings = loadWithSettings({
         topBar: { enabled: undefined, height: 30, color: { paletteId: undefined, custom: '#fedcba' } },
       });
@@ -565,6 +610,117 @@ describe('loadSettings', () => {
         color: { paletteId: DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId, custom: '#fedcba' },
       });
     });
+
+    // Stricter than the pre-Zod implementation: the old hand-rolled merge only ever checked
+    // `!== undefined` and passed everything else through verbatim, so a wrong-typed field (e.g.
+    // height: 'abc') would have landed in the final ProjectSettings unchanged -- a runtime type
+    // violation. Each field's `.catch()` now re-validates the type and recovers to its own
+    // default instead, independently of its siblings.
+    describe('field-level wrong-type recovery (Zod .catch, stricter than the old pass-through)', () => {
+      it('recovers a boolean field to its default when the stored value is the wrong type', () => {
+        expect(loadWithSettings({ topBar: { enabled: 'yes' } }).topBar.enabled).toBe(true);
+        expect(loadWithSettings({ topBar: { stripes: 1 } }).topBar.stripes).toBe(false);
+        expect(loadWithSettings({ palette: { enabled: 'nope' } }).palette.enabled).toBe(true);
+      });
+
+      it('recovers a number field to its default when the stored value is the wrong type', () => {
+        expect(loadWithSettings({ topBar: { height: 'abc' } }).topBar.height).toBe(
+          DEFAULT_PROJECT_SETTINGS.topBar.height,
+        );
+      });
+
+      it('recovers a string field to its default when the stored value is the wrong type', () => {
+        expect(loadWithSettings({ topBar: { color: { custom: 42 } } }).topBar.color.custom).toBe(
+          DEFAULT_PROJECT_SETTINGS.topBar.color.custom,
+        );
+      });
+
+      it('recovers a nested color.paletteId to its default when the stored value is the wrong type', () => {
+        expect(loadWithSettings({ topBar: { color: { paletteId: 42 } } }).topBar.color.paletteId).toBe(
+          DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId,
+        );
+      });
+
+      it('recovers every wrong-typed field independently in one section while a valid sibling field survives untouched', () => {
+        const settings = loadWithSettings({
+          topBar: {
+            enabled: 'yes', // wrong type (string) -> default true
+            height: 'abc', // wrong type (string) -> default 4
+            stripes: 1, // wrong type (number) -> default false
+            color: {
+              paletteId: 42, // wrong type (number) -> default 'default'
+              custom: '#123456', // valid -> survives
+            },
+          },
+        });
+
+        expect(settings.topBar).toEqual({
+          ...DEFAULT_PROJECT_SETTINGS.topBar,
+          color: { ...DEFAULT_PROJECT_SETTINGS.topBar.color, custom: '#123456' },
+        });
+      });
+    });
+  });
+});
+
+// DEFAULT_PROJECT_SETTINGS is `ProjectSettingsSchema.parse({})` (settings.ts), not a hand-written
+// literal -- these tests guard the schema's derived defaults directly, independent of loadSettings.
+describe('DEFAULT_PROJECT_SETTINGS derivation (Zod schema defaults)', () => {
+  it('parse({}) deep-equals the documented default shape (guards against schema-default drift)', () => {
+    expect(DEFAULT_PROJECT_SETTINGS).toEqual({
+      palette: {
+        enabled: true,
+        entries: [{ id: 'default', name: 'Primary', color: DEFAULT_COLOR }],
+      },
+      topBar: {
+        enabled: true,
+        color: { paletteId: 'default', custom: DEFAULT_COLOR },
+        height: DEFAULT_TOP_BAR_HEIGHT,
+        stripes: false,
+      },
+      platformBar: {
+        enabled: true,
+        color: { paletteId: 'default', custom: DEFAULT_COLOR },
+        stripes: false,
+      },
+      platformBarText: {
+        enabled: true,
+        color: { paletteId: null, custom: DEFAULT_TEXT_COLOR },
+        auto: false,
+      },
+    });
+  });
+
+  // Zod 4 pitfall: a `.catch()` fallback given as a static value (object/array) is returned by
+  // shared reference on every parse call; types.ts avoids this by using the function form
+  // (`.catch(() => ...)`) everywhere a mutable default is produced. This proves that guarantee
+  // end-to-end: two independently-defaulted ProjectSettings must not alias each other anywhere,
+  // or mutating one rule's settings in the side panel would silently corrupt every other rule
+  // still sitting on its defaults.
+  it('does not share object references between two independently-defaulted ProjectSettings (the .catch function-form guarantee)', () => {
+    const stored = {
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      projectRules: [
+        { id: '1', matchType: 'exact', pattern: 'a', settings: {} },
+        { id: '2', matchType: 'exact', pattern: 'b', settings: {} },
+      ],
+    };
+
+    const loaded = loadSettings(stored, CURRENT_VERSION);
+    const [first, second] = loaded.projectRules.map((rule) => rule.settings);
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+    expect(first.palette.entries).not.toBe(second.palette.entries);
+    expect(first.palette.entries[0]).not.toBe(second.palette.entries[0]);
+    expect(first.topBar.color).not.toBe(second.topBar.color);
+    expect(first.platformBar.color).not.toBe(second.platformBar.color);
+    expect(first.platformBarText.color).not.toBe(second.platformBarText.color);
+
+    first.palette.entries[0].color = '#000000';
+    first.topBar.color.custom = '#000000';
+    expect(second.palette.entries[0].color).toBe(DEFAULT_COLOR);
+    expect(second.topBar.color.custom).toBe(DEFAULT_COLOR);
   });
 });
 

@@ -45,8 +45,8 @@ interface ProjectSettings {
 }
 
 // Partial, section-by-section override shape for building test fixtures: every section (and
-// each section's nested `color`) is independently optional, since the real loadSettings()/
-// mergeProjectSettings() (exercised inside content.ts, not re-implemented here) fills in
+// each section's nested `color`) is independently optional, since the real loadSettings() (Zod
+// schemas in types.ts, exercised inside content.ts and not re-implemented here) fills in
 // whatever is omitted, against the real ProjectSettings defaults.
 interface ProjectSettingsOverrides {
   palette?: Partial<PaletteSettings>;
@@ -566,8 +566,8 @@ describe('content script', () => {
 
   // Pre-release: SCHEMA_MIGRATIONS is currently empty, so no migration ever runs. Old
   // flat-shaped settings (the pre-nested-schema shape) stored at schemaVersion 0.1.0 are read
-  // destructively -- mergeProjectSettings() doesn't recognize any of the old flat keys, so every
-  // surface falls back to its default rather than picking up the stored custom color.
+  // destructively -- none of the old flat keys match the Zod schemas' expected nested shape, so
+  // every surface falls back to its default rather than picking up the stored custom color.
   it('ignores old flat-shaped settings at schemaVersion 0.1.0 now that no migration runs; the default color applies instead', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
