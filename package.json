@@ -22,7 +22,8 @@
     "@heroui/react": "^3.2.2",
     "@heroui/styles": "^3.2.2",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",

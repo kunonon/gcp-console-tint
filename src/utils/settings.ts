@@ -1,40 +1,26 @@
 import { browser } from 'wxt/browser';
-import type { ColorSelection, MatchType, PaletteSettings, ProjectRule, ProjectSettings, TintSettings } from '../types';
+import type { ColorSelection, MatchType, PaletteSettings } from '../types';
+import {
+  MatchTypeSchema,
+  type ProjectRule,
+  ProjectRuleSchema,
+  type ProjectSettings,
+  ProjectSettingsSchema,
+  type TintSettings,
+  UnknownRecordSchema,
+} from '../types';
 import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
 
-export const MATCH_TYPES: readonly MatchType[] = ['prefix', 'suffix', 'exact', 'regex'];
+export const MATCH_TYPES: readonly MatchType[] = MatchTypeSchema.options;
 
-export const DEFAULT_COLOR = '#ff6d00';
-export const DEFAULT_TEXT_COLOR = '#ffffff';
-export const DEFAULT_TOP_BAR_HEIGHT = 4;
+export { DEFAULT_COLOR, DEFAULT_TEXT_COLOR, DEFAULT_TOP_BAR_HEIGHT } from '../types';
 
 // The oldest schemaVersion the migration chain can read. Anything below (or missing, or
 // invalid) predates every released shape and is replaced by fresh defaults.
 export const SCHEMA_MIN_VERSION = '0.1.0';
 
-export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  palette: {
-    enabled: true,
-    entries: [{ id: 'default', name: 'Primary', color: DEFAULT_COLOR }],
-  },
-  topBar: {
-    enabled: true,
-    color: { paletteId: 'default', custom: DEFAULT_COLOR },
-    height: DEFAULT_TOP_BAR_HEIGHT,
-    stripes: false,
-  },
-  platformBar: {
-    enabled: true,
-    color: { paletteId: 'default', custom: DEFAULT_COLOR },
-    stripes: false,
-  },
-  platformBarText: {
-    enabled: true,
-    color: { paletteId: null, custom: DEFAULT_TEXT_COLOR },
-    auto: false,
-  },
-};
+export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = ProjectSettingsSchema.parse({});
 
 export function cloneProjectSettings(settings: ProjectSettings): ProjectSettings {
   return {
@@ -64,46 +50,7 @@ export function resolveSelectedColor(palette: PaletteSettings, selection: ColorS
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  // Arrays pass a bare typeof check and would spread their indices as extraneous keys.
-  return value != null && typeof value === 'object' && !Array.isArray(value);
-}
-
-// Spread, but stored fields that are absent or explicitly undefined never clobber the
-// default (migration steps may emit undefined for fields the old shape lacked).
-function mergeDefined<T extends object>(base: T, stored: unknown): T {
-  if (!isRecord(stored)) return base;
-  const merged = { ...base } as Record<string, unknown>;
-  for (const [key, value] of Object.entries(stored)) {
-    if (value !== undefined) merged[key] = value;
-  }
-  return merged as T;
-}
-
-function mergeProjectSettings(stored: unknown): ProjectSettings {
-  const base = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
-  if (!isRecord(stored)) return base;
-
-  const palette = mergeDefined(base.palette, stored.palette);
-  palette.entries = Array.isArray(palette.entries)
-    ? palette.entries.map((entry) => ({ ...entry }))
-    : base.palette.entries;
-
-  const topBar = mergeDefined(base.topBar, stored.topBar);
-  topBar.color = mergeDefined(base.topBar.color, isRecord(stored.topBar) ? stored.topBar.color : undefined);
-
-  const platformBar = mergeDefined(base.platformBar, stored.platformBar);
-  platformBar.color = mergeDefined(
-    base.platformBar.color,
-    isRecord(stored.platformBar) ? stored.platformBar.color : undefined,
-  );
-
-  const platformBarText = mergeDefined(base.platformBarText, stored.platformBarText);
-  platformBarText.color = mergeDefined(
-    base.platformBarText.color,
-    isRecord(stored.platformBarText) ? stored.platformBarText.color : undefined,
-  );
-
-  return { palette, topBar, platformBar, platformBarText };
+  return UnknownRecordSchema.safeParse(value).success;
 }
 
 // The schemaVersion to stamp on anything we write: the running release version, floored at
@@ -128,10 +75,12 @@ function freshDefaults(currentVersion: string): TintSettings {
 // Reads whatever is in storage and returns it in the CURRENT schema shape:
 // - no/invalid schemaVersion, or below SCHEMA_MIN_VERSION -> fresh defaults (nothing to
 //   migrate from),
-// - otherwise the migration chain folds the data forward version by version, then each
-//   rule is validated and merged with defaults. While the chain is empty (pre-release),
-//   old-shaped fields are simply ignored here and defaults fill in — destructive by
-//   design; rules' id/matchType/pattern still survive.
+// - otherwise the migration chain folds the data forward version by version, then each rule
+//   is parsed by ProjectRuleSchema (dropping only the ones whose pattern isn't a string;
+//   every other field recovers via its own default) and merged with defaults. While the
+//   chain is empty (pre-release), old-shaped fields are simply not recognized by the schemas
+//   below and defaults fill in — destructive by design; rules' id/matchType/pattern still
+//   survive.
 // Pure: never writes storage. The background script persists the migrated form once via
 // migrateStoredSettings.
 export function loadSettings(stored: unknown, currentVersion: string): TintSettings {
@@ -151,16 +100,8 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
   const projectRules: ProjectRule[] = [];
   if (Array.isArray(data.projectRules)) {
     for (const value of data.projectRules) {
-      if (!isRecord(value)) continue;
-      if (typeof value.pattern !== 'string') continue;
-      projectRules.push({
-        id: typeof value.id === 'string' ? value.id : crypto.randomUUID(),
-        // Missing (early 0.1.0 data) or unknown values fall back to 'regex' — the shape
-        // every pre-matchType pattern was written as.
-        matchType: MATCH_TYPES.includes(value.matchType as MatchType) ? (value.matchType as MatchType) : 'regex',
-        pattern: value.pattern,
-        settings: mergeProjectSettings(value.settings),
-      });
+      const parsed = ProjectRuleSchema.safeParse(value);
+      if (parsed.success) projectRules.push(parsed.data);
     }
   }
 
