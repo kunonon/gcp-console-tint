@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The checks are independent of each other, so they run as one parallel group
+      # (each member becomes a background step with an implicit wait at the end; if one
+      # fails, the rest still finish and the job fails at the group boundary). The two
+      # browser builds stay sequential inside a single member: they share wxt's build
+      # pipeline, and 5s of build time isn't worth probing it for temp-dir races.
+      - parallel:
+          - name: Lint
+            run: pnpm lint
+
+          - name: Type check
+            run: pnpm compile
+
+          - name: Test
+            run: pnpm test
+
+          - name: Build (Chrome + Firefox)
+            run: pnpm build && pnpm build:firefox

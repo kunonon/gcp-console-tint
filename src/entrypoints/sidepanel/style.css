@@ -1,0 +1,40 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+body {
+  margin: 0;
+  padding: 16px;
+  font-family: system-ui, sans-serif;
+  /* HeroUI's page-level background token, distinct from Card's --surface background so
+     cards read as elevated against the page in both light and dark themes. */
+  background-color: var(--background);
+}
+
+/* HeroUI's Card component has no separate border; the "border" is actually the tightest
+   layer of its --surface-shadow box-shadow (a 1px near-transparent-black shadow). Zeroing
+   box-shadow removes both the drop shadow and that border-like effect in one rule. This rule
+   is intentionally unlayered (outside any @layer), so per CSS cascade layer rules it always
+   wins over HeroUI's own (layered) `.card` rule regardless of import/source order. */
+.card {
+  border: none;
+  box-shadow: none;
+}
+
+/* HeroUI's Select.Trigger (`.select__trigger`, @layer components) ships min-height: 2.25rem
+   (36px, taller than every other 32px control row in this app) and, when it contains a
+   Select.Indicator, an own `:has()` rule reserving padding-inline-end: 1.75rem (28px) for the
+   chevron — which is itself absolutely positioned (inset-inline-end: 0.5rem), so flex gap on the
+   trigger has no effect on its position; only padding creates real clearance.
+   Confirmed via computed-style probing (@layer utilities > @layer components, so our own
+   utility classes win property-by-property, not wholesale): our `min-h-8` utility already
+   overrides `min-height` to 32px correctly, but our `px-2` utility (needed for the 8px
+   start-padding shared with every sibling control) also overrides `padding-inline-end` down to
+   8px in the same stroke, undoing HeroUI's chevron clearance and causing the value text to
+   overlap the chevron. An unlayered rule sidesteps this utility-vs-utility tug of war entirely
+   (guaranteed to win over any @layer'd rule regardless of which utilities happen to be compiled),
+   matching the `.card` override above. */
+.select__trigger {
+  height: 2rem;
+  min-height: 2rem;
+  padding-inline-end: 1.75rem;
+}

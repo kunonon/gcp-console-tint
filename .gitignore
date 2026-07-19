@@ -1,0 +1,9 @@
+node_modules/
+.output/
+.wxt/
+.pnpm-store/
+coverage/
+.env
+.env.*
+*.log
+.DS_Store
