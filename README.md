@@ -30,7 +30,15 @@ docker compose run --rm dev sh -c "corepack enable && pnpm install && pnpm build
 
 ## Development
 
-All package-manager and runtime work happens inside the Docker container.
+All package-manager and runtime work happens inside the Docker container. Make shortcuts:
+
+```sh
+make up      # start the dev stack in the background (docker compose up -d)
+make down    # stop it
+make export  # production Chrome zip (Web Store submittable) into .output/
+```
+
+Or run compose directly:
 
 ```sh
 docker compose up
