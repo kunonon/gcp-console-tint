@@ -3,16 +3,7 @@ import { render, screen, waitFor, fireEvent, cleanup, within, act } from '@testi
 import userEvent from '@testing-library/user-event';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import App from './App';
-import { MATCH_TYPE_LABELS } from '../../components/AddRuleModal';
-
-// jsdom (unlike real browsers) doesn't implement CSS.escape, which react-aria's selection
-// utilities call to scroll a newly-selected collection item into view — a path only the new
-// Match type Select (a ListBox-backed collection) exercises in this file. The escaping itself
-// is irrelevant here since every key this suite selects (matchType strings, crypto.randomUUID()
-// ids) is already a valid, unescaped CSS identifier.
-if (typeof globalThis.CSS === 'undefined') {
-  (globalThis as { CSS?: Pick<typeof CSS, 'escape'> }).CSS = { escape: (value: string) => value };
-}
+import { MATCH_TYPE_LABELS } from '../../components/MatchTypeSelect';
 
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 
@@ -194,9 +185,9 @@ async function addRule(user: ReturnType<typeof userEvent.setup>, pattern: string
   });
 }
 
-// Adds a rule through the modal with an explicit match type, selecting the corresponding radio
-// when it isn't the modal's default ('exact'). The value input's accessible label follows
-// AddRuleModal's own convention: "Pattern" for regex, "Project ID" for the others.
+// Adds a rule through the modal with an explicit match type, selecting it via the shared
+// MatchTypeSelect when it isn't the modal's default ('exact'). The value input's accessible
+// label follows AddRuleModal's own convention: "Pattern" for regex, "Project ID" for the others.
 async function addRuleWithMatchType(
   user: ReturnType<typeof userEvent.setup>,
   matchType: MatchType,
@@ -204,7 +195,11 @@ async function addRuleWithMatchType(
 ) {
   const dialog = await openAddRuleModal(user);
   if (matchType !== 'exact') {
-    await user.click(within(dialog).getByRole('radio', { name: MATCH_TYPE_LABELS[matchType] }));
+    // The Select trigger's accessible name concatenates its aria-labelledby refs (the
+    // currently-selected value's text, then the field's own "Match type" aria-label), so match
+    // by substring rather than an exact string (see the equivalent detail-page tests below).
+    await user.click(within(dialog).getByRole('button', { name: /Match type/ }));
+    await user.click(await screen.findByRole('option', { name: MATCH_TYPE_LABELS[matchType] }));
   }
   const label = matchType === 'regex' ? 'Pattern' : 'Project ID';
   fireEvent.change(within(dialog).getByLabelText(label), { target: { value: pattern } });

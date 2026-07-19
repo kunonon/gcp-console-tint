@@ -1,15 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, Modal, Radio, RadioGroup, Tooltip } from '@heroui/react';
+import { Button, Input, Modal, Tooltip } from '@heroui/react';
 import type { MatchType } from '../types';
-import { MATCH_TYPES } from '../utils/settings';
-
-// Shared with App.tsx's detail-page Match type Select so both surfaces speak the same labels.
-export const MATCH_TYPE_LABELS: Record<MatchType, string> = {
-  prefix: 'Starts with',
-  suffix: 'Ends with',
-  exact: 'Exact',
-  regex: 'Regex',
-};
+import MatchTypeSelect from './MatchTypeSelect';
 
 const valueInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -31,6 +23,11 @@ function isValidRegex(pattern: string): boolean {
 // pattern text. Follows DeleteConfirmPopover's trigger-composition idiom: a Tooltip wraps the
 // whole overlay tree (not just the trigger button), and there is no Cancel button — dismissal
 // (Esc / backdrop / the modal's own close trigger) is the only cancel path.
+//
+// Body anatomy deliberately mirrors the detail page's Pattern card (two 32px label/control
+// rows via MatchTypeSelect) rather than a radio list: one shared vocabulary for "match type"
+// app-wide, and the primary object — the value input — reads as primary because it's just a
+// second row, not a whole separate mode questionnaire above a divider.
 export default function AddRuleModal({ onAdd, children }: AddRuleModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [matchType, setMatchType] = useState<MatchType>('exact');
@@ -48,6 +45,7 @@ export default function AddRuleModal({ onAdd, children }: AddRuleModalProps) {
   const isRegexInvalid = matchType === 'regex' && !isValidRegex(trimmed);
   const canAdd = trimmed !== '' && !isRegexInvalid;
   const valueLabel = matchType === 'regex' ? 'Pattern' : 'Project ID';
+  const valuePlaceholder = matchType === 'regex' ? '^my-project-.*$' : 'my-project-123';
 
   const commit = () => {
     if (!canAdd) return;
@@ -80,28 +78,25 @@ export default function AddRuleModal({ onAdd, children }: AddRuleModalProps) {
                   <Modal.Heading>Add project rule</Modal.Heading>
                   <Modal.CloseTrigger />
                 </Modal.Header>
-                <Modal.Body className="flex flex-col gap-2">
-                  <RadioGroup
-                    aria-label="Match type"
-                    value={matchType}
-                    onChange={(next) => setMatchType(next as MatchType)}
-                    className="flex flex-col"
-                  >
-                    {MATCH_TYPES.map((type) => (
-                      <Radio key={type} value={type}>
-                        <Radio.Content className="flex min-h-8 w-full items-center gap-2">
-                          <Radio.Control>
-                            <Radio.Indicator />
-                          </Radio.Control>
-                          <span className="text-sm">{MATCH_TYPE_LABELS[type]}</span>
-                        </Radio.Content>
-                      </Radio>
-                    ))}
-                  </RadioGroup>
-                  <div className="flex min-h-8 items-center justify-between gap-2 border-t border-border pt-2">
+                <Modal.Body className="flex flex-col gap-1">
+                  <div className="flex min-h-8 items-center justify-between gap-2">
+                    <span className="text-sm">Match type</span>
+                    <MatchTypeSelect value={matchType} onChange={setMatchType} />
+                  </div>
+                  <div className="flex min-h-8 items-center justify-between gap-2">
                     <span className="text-sm">{valueLabel}</span>
+                    {/* autoFocus (not the Select) so the flow is open -> paste -> Enter: the
+                        value input is the primary object of "add a rule", match type is a
+                        secondary, defaulted adjustment. useFocusable's own autoFocus effect (on
+                        this Input) runs before the Dialog's FocusScope autofocus-on-mount effect
+                        (child effects fire before parent effects), and FocusScope only moves
+                        focus when nothing in its scope already has it — so this wins over the
+                        Dialog's own default of focusing the first tabbable element (the Select
+                        trigger, which sits first in DOM order). */}
                     <Input
+                      autoFocus
                       aria-label={valueLabel}
+                      placeholder={valuePlaceholder}
                       value={value}
                       onChange={(e) => setValue(e.target.value)}
                       onKeyDown={handleValueKeyDown}

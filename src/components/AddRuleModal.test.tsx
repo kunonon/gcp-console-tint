@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import AddRuleModal, { MATCH_TYPE_LABELS } from './AddRuleModal';
+import AddRuleModal from './AddRuleModal';
+import { MATCH_TYPE_LABELS } from './MatchTypeSelect';
 import type { MatchType } from '../types';
 
 afterEach(() => {
@@ -26,6 +27,19 @@ async function openModal(user: ReturnType<typeof userEvent.setup>) {
 
 function getAdd(dialog: HTMLElement): HTMLButtonElement {
   return within(dialog).getByRole('button', { name: 'Add' }) as HTMLButtonElement;
+}
+
+// The Select trigger's accessible name concatenates its aria-labelledby refs (the
+// currently-selected value's text, then the field's own "Match type" aria-label), e.g.
+// "Exact Match type" — so it's matched by substring, and its displayed value is read from its
+// text content rather than an exact accessible name.
+function getMatchTypeTrigger(dialog: HTMLElement): HTMLElement {
+  return within(dialog).getByRole('button', { name: /Match type/ });
+}
+
+async function selectMatchType(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, matchType: MatchType) {
+  await user.click(getMatchTypeTrigger(dialog));
+  await user.click(await screen.findByRole('option', { name: MATCH_TYPE_LABELS[matchType] }));
 }
 
 describe('AddRuleModal', () => {
@@ -67,14 +81,22 @@ describe('AddRuleModal', () => {
     expect(await screen.findByRole('dialog')).toBeTruthy();
   });
 
-  it('offers all four match types, in order, as radio options', async () => {
+  it('autofocuses the value input when the modal opens (not the Match type Select) so the flow is open -> paste -> Enter', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
     const dialog = await openModal(user);
 
-    const radios = within(dialog).getAllByRole('radio');
-    const labels = radios.map((radio) => radio.closest('label')?.textContent?.trim());
-    expect(labels).toEqual(['Starts with', 'Ends with', 'Exact', 'Regex']);
+    expect(document.activeElement).toBe(within(dialog).getByLabelText('Project ID'));
+  });
+
+  it('offers all four match types, in order, in the Match type Select', async () => {
+    const user = userEvent.setup();
+    renderHarness(() => {});
+    const dialog = await openModal(user);
+
+    await user.click(getMatchTypeTrigger(dialog));
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['Starts with', 'Ends with', 'Exact', 'Regex']);
   });
 
   it('defaults to "Exact" selected, an empty "Project ID" value field, and a disabled Add button', async () => {
@@ -82,37 +104,35 @@ describe('AddRuleModal', () => {
     renderHarness(() => {});
     const dialog = await openModal(user);
 
-    expect((within(dialog).getByRole('radio', { name: 'Exact' }) as HTMLInputElement).checked).toBe(true);
+    expect(getMatchTypeTrigger(dialog).textContent).toContain('Exact');
     const valueInput = within(dialog).getByLabelText('Project ID') as HTMLInputElement;
     expect(valueInput.value).toBe('');
     expect(getAdd(dialog).disabled).toBe(true);
   });
 
-  it('each match type is selectable and updates the checked radio', async () => {
+  it("each match type is selectable and updates the Select's displayed value", async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
     const dialog = await openModal(user);
 
     for (const matchType of ['prefix', 'suffix', 'regex', 'exact'] as const) {
-      await user.click(within(dialog).getByRole('radio', { name: MATCH_TYPE_LABELS[matchType] }));
-      expect((within(dialog).getByRole('radio', { name: MATCH_TYPE_LABELS[matchType] }) as HTMLInputElement).checked).toBe(
-        true,
-      );
+      await selectMatchType(user, dialog, matchType);
+      expect(getMatchTypeTrigger(dialog).textContent).toContain(MATCH_TYPE_LABELS[matchType]);
     }
   });
 
-  it('switches the value field\'s label to "Pattern" for Regex and back to "Project ID" for the others', async () => {
+  it('switches the value field\'s label (and placeholder) to "Pattern" for Regex and back to "Project ID" for the others', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
     const dialog = await openModal(user);
 
-    expect(within(dialog).getByLabelText('Project ID')).toBeTruthy();
+    expect(within(dialog).getByLabelText('Project ID').getAttribute('placeholder')).toBe('my-project-123');
 
-    await user.click(within(dialog).getByRole('radio', { name: 'Regex' }));
-    expect(within(dialog).getByLabelText('Pattern')).toBeTruthy();
+    await selectMatchType(user, dialog, 'regex');
+    expect(within(dialog).getByLabelText('Pattern').getAttribute('placeholder')).toBe('^my-project-.*$');
     expect(within(dialog).queryByLabelText('Project ID')).toBeNull();
 
-    await user.click(within(dialog).getByRole('radio', { name: 'Starts with' }));
+    await selectMatchType(user, dialog, 'prefix');
     expect(within(dialog).getByLabelText('Project ID')).toBeTruthy();
     expect(within(dialog).queryByLabelText('Pattern')).toBeNull();
   });
@@ -136,7 +156,7 @@ describe('AddRuleModal', () => {
     renderHarness(() => {});
     const dialog = await openModal(user);
 
-    await user.click(within(dialog).getByRole('radio', { name: 'Regex' }));
+    await selectMatchType(user, dialog, 'regex');
     fireEvent.change(within(dialog).getByLabelText('Pattern'), { target: { value: 'proj-[' } });
 
     expect(within(dialog).getByText('Invalid regular expression')).toBeTruthy();
@@ -165,7 +185,7 @@ describe('AddRuleModal', () => {
     renderHarness(onAdd);
     const dialog = await openModal(user);
 
-    await user.click(within(dialog).getByRole('radio', { name: 'Ends with' }));
+    await selectMatchType(user, dialog, 'suffix');
     fireEvent.change(within(dialog).getByLabelText('Project ID'), { target: { value: '  my-project  ' } });
     await user.click(getAdd(dialog));
 
@@ -204,21 +224,27 @@ describe('AddRuleModal', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
-  it('resets to Exact and an empty value every time it is reopened, discarding the previous session', async () => {
+  it('resets to Exact, an empty value, and input focus every time it is reopened, discarding the previous session', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
 
     let dialog = await openModal(user);
-    await user.click(within(dialog).getByRole('radio', { name: 'Regex' }));
-    fireEvent.change(within(dialog).getByLabelText('Pattern'), { target: { value: 'left-over' } });
+    await selectMatchType(user, dialog, 'regex');
+    const patternInput = within(dialog).getByLabelText('Pattern');
+    fireEvent.change(patternInput, { target: { value: 'left-over' } });
+    // Move focus into the field before Escape, matching a real user's flow (pick match type,
+    // then click/type into the value field) rather than leaving focus on the Select's trigger
+    // right after it closes.
+    patternInput.focus();
     await user.keyboard('{Escape}');
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
 
     dialog = await openModal(user);
-    expect((within(dialog).getByRole('radio', { name: 'Exact' }) as HTMLInputElement).checked).toBe(true);
+    expect(getMatchTypeTrigger(dialog).textContent).toContain('Exact');
     expect((within(dialog).getByLabelText('Project ID') as HTMLInputElement).value).toBe('');
+    expect(document.activeElement).toBe(within(dialog).getByLabelText('Project ID'));
   });
 
   it('pressing Escape dismisses the modal without calling onAdd (no Cancel button; dismissal is the only cancel path)', async () => {

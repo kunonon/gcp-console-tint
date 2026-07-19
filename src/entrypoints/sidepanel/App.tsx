@@ -1,18 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Card, Input, ListBox, Select, Switch, Tooltip } from '@heroui/react';
+import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import type { MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
-import {
-  DEFAULT_SETTINGS,
-  DEFAULT_PROJECT_SETTINGS,
-  loadSettings,
-  cloneProjectSettings,
-  MATCH_TYPES,
-} from '../../utils/settings';
+import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings, cloneProjectSettings } from '../../utils/settings';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
 import ColorSwatchField from '../../components/ColorSwatchField';
 import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
-import AddRuleModal, { MATCH_TYPE_LABELS } from '../../components/AddRuleModal';
+import AddRuleModal from '../../components/AddRuleModal';
+import MatchTypeSelect from '../../components/MatchTypeSelect';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -456,30 +451,7 @@ function App() {
             <Card.Content className="flex flex-col gap-1">
               <div className="flex min-h-8 items-center justify-between gap-2">
                 <span className="text-sm">Match type</span>
-                <Select
-                  aria-label="Match type"
-                  value={currentRule.matchType}
-                  onChange={(key) => {
-                    if (key != null) handleMatchTypeChange(key as MatchType);
-                  }}
-                >
-                  {/* No gap utility here: Select.Indicator is absolutely positioned (see the
-                      .select__trigger override in style.css), so flex gap between it and
-                      Select.Value has no effect — spacing comes from that unlayered CSS instead. */}
-                  <Select.Trigger className="flex h-8 min-w-0 items-center rounded-md border border-border bg-transparent px-2 text-sm">
-                    <Select.Value />
-                    <Select.Indicator />
-                  </Select.Trigger>
-                  <Select.Popover>
-                    <ListBox>
-                      {MATCH_TYPES.map((type) => (
-                        <ListBox.Item key={type} id={type} textValue={MATCH_TYPE_LABELS[type]}>
-                          {MATCH_TYPE_LABELS[type]}
-                        </ListBox.Item>
-                      ))}
-                    </ListBox>
-                  </Select.Popover>
-                </Select>
+                <MatchTypeSelect value={currentRule.matchType} onChange={handleMatchTypeChange} />
               </div>
               <div className="flex min-h-8 items-center justify-between gap-2">
                 <span className="text-sm">{currentRule.matchType === 'regex' ? 'Pattern' : 'Project ID'}</span>
