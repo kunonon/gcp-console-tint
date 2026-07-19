@@ -5,9 +5,16 @@ import ColorSwatchField from '../../components/ColorSwatchField';
 import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
 import MatchTypeSelect from '../../components/MatchTypeSelect';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
-import type { MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
+import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
 import { contrastTextColor } from '../../utils/color';
-import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, DEFAULT_SETTINGS, loadSettings } from '../../utils/settings';
+import {
+  cloneProjectSettings,
+  DEFAULT_PROJECT_SETTINGS,
+  DEFAULT_SETTINGS,
+  effectiveSchemaVersion,
+  loadSettings,
+  resolveSelectedColor,
+} from '../../utils/settings';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -15,18 +22,10 @@ const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border b
 // landing page) and a detail page for editing one rule's settings.
 type View = { type: 'list' } | { type: 'detail'; ruleId: string };
 
-const resolveColor = (
-  paletteEnabled: boolean,
-  palette: PaletteEntry[],
-  paletteId: string | null,
-  ownColor: string,
-): string => {
-  if (paletteEnabled && paletteId) {
-    const entry = palette.find((e) => e.id === paletteId);
-    if (entry) return entry.color;
-  }
-  return ownColor;
-};
+// The three tinted surfaces that share the {enabled, color, ...} shape (ColorSelection plus
+// surface-specific fields). Palette is deliberately excluded: it has no `color` field and its
+// entries array needs its own update path (see handleAddColor/handlePaletteNameChange/etc.).
+type ColorSurfaceKey = 'topBar' | 'platformBar' | 'platformBarText';
 
 function isValidPattern(pattern: string): boolean {
   try {
@@ -190,7 +189,14 @@ function App() {
   }, [view, settings.projectRules]);
 
   const save = (next: TintSettings) => {
-    const stamped: TintSettings = { ...next, schemaVersion: browser.runtime.getManifest().version };
+    // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
+    // version here could label current-shape nested data with an older schemaVersion, causing
+    // the next load to re-run the flat->nested migration against already-nested data and
+    // silently reset the user's values to defaults.
+    const stamped: TintSettings = {
+      ...next,
+      schemaVersion: effectiveSchemaVersion(browser.runtime.getManifest().version),
+    };
     setSettings(stamped);
     browser.storage.local.set({ tintSettings: stamped });
   };
@@ -205,6 +211,23 @@ function App() {
       ),
     });
   };
+
+  // Merges `patch` over the current rule's surface object (topBar/platformBar/platformBarText)
+  // and saves it — the generic replacement for the old per-field handler zoo
+  // (handleTopBarEnabledChange, handleTopBarStripesChange, ...). `patch` may itself include a
+  // full replacement `color`, so composite updates that must land in a single save (e.g.
+  // "pick a palette entry AND clear auto") go through this directly rather than
+  // updateSurfaceColor.
+  function updateSurface<K extends ColorSurfaceKey>(key: K, patch: Partial<ProjectSettings[K]>) {
+    updateCurrentSettings({ [key]: { ...currentSettings[key], ...patch } } as Partial<ProjectSettings>);
+  }
+
+  // Merges `patch` over the current rule's surface.color (ColorSelection) — the common case of
+  // updateSurface where only the color changes.
+  function updateSurfaceColor(key: ColorSurfaceKey, patch: Partial<ColorSelection>) {
+    const surface = currentSettings[key];
+    updateCurrentSettings({ [key]: { ...surface, color: { ...surface.color, ...patch } } } as Partial<ProjectSettings>);
+  }
 
   const handleAddRule = (matchType: MatchType, pattern: string) => {
     const rule: ProjectRule = {
@@ -310,91 +333,48 @@ function App() {
       : 'shadow-[inset_0_-2px_0_0_var(--focus)]';
   };
 
-  const handlePaletteEnabledChange = (isSelected: boolean) => {
-    updateCurrentSettings({ paletteEnabled: isSelected });
-  };
-
   const handleAddColor = () => {
     const entry: PaletteEntry = {
       id: crypto.randomUUID(),
-      name: `Color ${currentSettings.palette.length + 1}`,
-      color: DEFAULT_PROJECT_SETTINGS.topBarColor,
+      name: `Color ${currentSettings.palette.entries.length + 1}`,
+      color: DEFAULT_PROJECT_SETTINGS.topBar.color.custom,
     };
-    updateCurrentSettings({ palette: [...currentSettings.palette, entry] });
-  };
-
-  const handlePaletteNameChange = (id: string, name: string) => {
-    updateCurrentSettings({ palette: currentSettings.palette.map((e) => (e.id === id ? { ...e, name } : e)) });
-  };
-
-  const handlePaletteColorChange = (id: string, color: string) => {
-    updateCurrentSettings({ palette: currentSettings.palette.map((e) => (e.id === id ? { ...e, color } : e)) });
-  };
-
-  // Palette entries and their references are scoped to the currently-edited rule only;
-  // removing an entry here does not touch any other rule's palette/references.
-  const handleRemoveColor = (id: string) => {
     updateCurrentSettings({
-      palette: currentSettings.palette.filter((e) => e.id !== id),
-      topBarPaletteId: currentSettings.topBarPaletteId === id ? null : currentSettings.topBarPaletteId,
-      platformBarPaletteId: currentSettings.platformBarPaletteId === id ? null : currentSettings.platformBarPaletteId,
-      platformBarTextPaletteId:
-        currentSettings.platformBarTextPaletteId === id ? null : currentSettings.platformBarTextPaletteId,
+      palette: { ...currentSettings.palette, entries: [...currentSettings.palette.entries, entry] },
     });
   };
 
-  const handleTopBarEnabledChange = (isSelected: boolean) => {
-    updateCurrentSettings({ topBarEnabled: isSelected });
+  const handlePaletteNameChange = (id: string, name: string) => {
+    updateCurrentSettings({
+      palette: {
+        ...currentSettings.palette,
+        entries: currentSettings.palette.entries.map((e) => (e.id === id ? { ...e, name } : e)),
+      },
+    });
   };
 
-  const handlePlatformBarEnabledChange = (isSelected: boolean) => {
-    updateCurrentSettings({ platformBarEnabled: isSelected });
+  const handlePaletteColorChange = (id: string, color: string) => {
+    updateCurrentSettings({
+      palette: {
+        ...currentSettings.palette,
+        entries: currentSettings.palette.entries.map((e) => (e.id === id ? { ...e, color } : e)),
+      },
+    });
   };
 
-  const handleTopBarHeightChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.valueAsNumber;
-    if (!Number.isFinite(value)) return;
-    updateCurrentSettings({ topBarHeight: value });
-  };
-
-  const handleTopBarStripesChange = (isSelected: boolean) => {
-    updateCurrentSettings({ topBarStripes: isSelected });
-  };
-
-  const handlePlatformBarStripesChange = (isSelected: boolean) => {
-    updateCurrentSettings({ platformBarStripes: isSelected });
-  };
-
-  const handlePlatformBarTextEnabledChange = (isSelected: boolean) => {
-    updateCurrentSettings({ platformBarTextEnabled: isSelected });
-  };
-
-  const handleTopBarPaletteSelect = (id: string) => {
-    updateCurrentSettings({ topBarPaletteId: id });
-  };
-
-  const handleTopBarCustomColorChange = (color: string) => {
-    updateCurrentSettings({ topBarPaletteId: null, topBarColor: color });
-  };
-
-  const handlePlatformBarPaletteSelect = (id: string) => {
-    updateCurrentSettings({ platformBarPaletteId: id });
-  };
-
-  const handlePlatformBarCustomColorChange = (color: string) => {
-    updateCurrentSettings({ platformBarPaletteId: null, platformBarColor: color });
-  };
-
-  const handlePlatformBarTextPaletteSelect = (id: string) => {
-    updateCurrentSettings({ platformBarTextPaletteId: id, platformBarTextAuto: false });
-  };
-
-  const handlePlatformBarTextCustomColorChange = (color: string) => {
-    updateCurrentSettings({ platformBarTextPaletteId: null, platformBarTextColor: color, platformBarTextAuto: false });
-  };
-
-  const handlePlatformBarTextAutoSelect = () => {
-    updateCurrentSettings({ platformBarTextAuto: true });
+  // Palette entries and their references are scoped to the currently-edited rule only;
+  // removing an entry here does not touch any other rule's palette/references. All three
+  // surfaces' color references are cleared atomically alongside the entry removal, in the
+  // same save, so storage never passes through an intermediate state with a dangling paletteId.
+  const handleRemoveColor = (id: string) => {
+    const clearRef = (color: ColorSelection): ColorSelection =>
+      color.paletteId === id ? { ...color, paletteId: null } : color;
+    updateCurrentSettings({
+      palette: { ...currentSettings.palette, entries: currentSettings.palette.entries.filter((e) => e.id !== id) },
+      topBar: { ...currentSettings.topBar, color: clearRef(currentSettings.topBar.color) },
+      platformBar: { ...currentSettings.platformBar, color: clearRef(currentSettings.platformBar.color) },
+      platformBarText: { ...currentSettings.platformBarText, color: clearRef(currentSettings.platformBarText.color) },
+    });
   };
 
   const currentRule = view.type === 'detail' ? settings.projectRules.find((r) => r.id === view.ruleId) : undefined;
@@ -402,26 +382,11 @@ function App() {
   // disappeared" effect above navigates back to the list.
   const currentSettings: ProjectSettings = currentRule ? currentRule.settings : DEFAULT_PROJECT_SETTINGS;
 
-  const topBarEffectiveColor = resolveColor(
-    currentSettings.paletteEnabled,
-    currentSettings.palette,
-    currentSettings.topBarPaletteId,
-    currentSettings.topBarColor,
-  );
-  const platformBarEffectiveColor = resolveColor(
-    currentSettings.paletteEnabled,
-    currentSettings.palette,
-    currentSettings.platformBarPaletteId,
-    currentSettings.platformBarColor,
-  );
-  const platformBarTextEffectiveColor = currentSettings.platformBarTextAuto
+  const topBarEffectiveColor = resolveSelectedColor(currentSettings.palette, currentSettings.topBar.color);
+  const platformBarEffectiveColor = resolveSelectedColor(currentSettings.palette, currentSettings.platformBar.color);
+  const platformBarTextEffectiveColor = currentSettings.platformBarText.auto
     ? contrastTextColor(platformBarEffectiveColor)
-    : resolveColor(
-        currentSettings.paletteEnabled,
-        currentSettings.palette,
-        currentSettings.platformBarTextPaletteId,
-        currentSettings.platformBarTextColor,
-      );
+    : resolveSelectedColor(currentSettings.palette, currentSettings.platformBarText.color);
 
   if (view.type === 'detail') {
     const detailTitle = currentRule?.pattern ?? '';
@@ -471,8 +436,10 @@ function App() {
           <Card.Content className="flex flex-col gap-2">
             <Switch
               className="w-full"
-              isSelected={currentSettings.paletteEnabled}
-              onChange={handlePaletteEnabledChange}
+              isSelected={currentSettings.palette.enabled}
+              onChange={(isSelected) =>
+                updateCurrentSettings({ palette: { ...currentSettings.palette, enabled: isSelected } })
+              }
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Color palette
@@ -481,9 +448,9 @@ function App() {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.paletteEnabled && (
+            {currentSettings.palette.enabled && (
               <div className="flex flex-col gap-2 border-t border-border pt-2">
-                {currentSettings.palette.map((entry) => (
+                {currentSettings.palette.entries.map((entry) => (
                   <div key={entry.id} className="@container flex items-center justify-between gap-2">
                     <Input
                       aria-label="Color name"
@@ -523,7 +490,11 @@ function App() {
 
         <Card>
           <Card.Content className="flex flex-col gap-2">
-            <Switch className="w-full" isSelected={currentSettings.topBarEnabled} onChange={handleTopBarEnabledChange}>
+            <Switch
+              className="w-full"
+              isSelected={currentSettings.topBar.enabled}
+              onChange={(isSelected) => updateSurface('topBar', { enabled: isSelected })}
+            >
               <Switch.Content className="flex w-full items-center justify-between">
                 Top bar
                 <Switch.Control>
@@ -531,19 +502,19 @@ function App() {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.topBarEnabled && (
+            {currentSettings.topBar.enabled && (
               <div className="flex flex-col gap-2 border-t border-border pt-2">
                 <div className="flex min-h-8 items-center justify-between">
                   <span className="text-sm">Color</span>
                   <PaletteColorPicker
                     ariaLabel="Top bar color"
-                    paletteEnabled={currentSettings.paletteEnabled}
-                    palette={currentSettings.palette}
-                    paletteId={currentSettings.topBarPaletteId}
-                    customColor={currentSettings.topBarColor}
+                    paletteEnabled={currentSettings.palette.enabled}
+                    palette={currentSettings.palette.entries}
+                    paletteId={currentSettings.topBar.color.paletteId}
+                    customColor={currentSettings.topBar.color.custom}
                     effectiveColor={topBarEffectiveColor}
-                    onSelectPaletteEntry={handleTopBarPaletteSelect}
-                    onSelectCustomColor={handleTopBarCustomColorChange}
+                    onSelectPaletteEntry={(id) => updateSurfaceColor('topBar', { paletteId: id })}
+                    onSelectCustomColor={(color) => updateSurfaceColor('topBar', { paletteId: null, custom: color })}
                   />
                 </div>
                 <div className="flex min-h-8 items-center justify-between">
@@ -554,8 +525,11 @@ function App() {
                       aria-label="Top bar height"
                       min={1}
                       max={40}
-                      value={currentSettings.topBarHeight}
-                      onChange={handleTopBarHeightChange}
+                      value={currentSettings.topBar.height}
+                      onChange={(e) => {
+                        const value = e.target.valueAsNumber;
+                        if (Number.isFinite(value)) updateSurface('topBar', { height: value });
+                      }}
                       className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                     />
                     <span className="text-sm text-muted">px</span>
@@ -563,8 +537,8 @@ function App() {
                 </div>
                 <Switch
                   className="min-h-8 w-full"
-                  isSelected={currentSettings.topBarStripes}
-                  onChange={handleTopBarStripesChange}
+                  isSelected={currentSettings.topBar.stripes}
+                  onChange={(isSelected) => updateSurface('topBar', { stripes: isSelected })}
                 >
                   <Switch.Content className="flex w-full items-center justify-between">
                     <span className="text-sm font-normal">Stripes</span>
@@ -582,8 +556,8 @@ function App() {
           <Card.Content className="flex flex-col gap-2">
             <Switch
               className="w-full"
-              isSelected={currentSettings.platformBarEnabled}
-              onChange={handlePlatformBarEnabledChange}
+              isSelected={currentSettings.platformBar.enabled}
+              onChange={(isSelected) => updateSurface('platformBar', { enabled: isSelected })}
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Platform Bar
@@ -592,25 +566,27 @@ function App() {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.platformBarEnabled && (
+            {currentSettings.platformBar.enabled && (
               <div className="flex flex-col gap-2 border-t border-border pt-2">
                 <div className="flex min-h-8 items-center justify-between">
                   <span className="text-sm">Color</span>
                   <PaletteColorPicker
                     ariaLabel="Platform Bar color"
-                    paletteEnabled={currentSettings.paletteEnabled}
-                    palette={currentSettings.palette}
-                    paletteId={currentSettings.platformBarPaletteId}
-                    customColor={currentSettings.platformBarColor}
+                    paletteEnabled={currentSettings.palette.enabled}
+                    palette={currentSettings.palette.entries}
+                    paletteId={currentSettings.platformBar.color.paletteId}
+                    customColor={currentSettings.platformBar.color.custom}
                     effectiveColor={platformBarEffectiveColor}
-                    onSelectPaletteEntry={handlePlatformBarPaletteSelect}
-                    onSelectCustomColor={handlePlatformBarCustomColorChange}
+                    onSelectPaletteEntry={(id) => updateSurfaceColor('platformBar', { paletteId: id })}
+                    onSelectCustomColor={(color) =>
+                      updateSurfaceColor('platformBar', { paletteId: null, custom: color })
+                    }
                   />
                 </div>
                 <Switch
                   className="min-h-8 w-full"
-                  isSelected={currentSettings.platformBarStripes}
-                  onChange={handlePlatformBarStripesChange}
+                  isSelected={currentSettings.platformBar.stripes}
+                  onChange={(isSelected) => updateSurface('platformBar', { stripes: isSelected })}
                 >
                   <Switch.Content className="flex w-full items-center justify-between">
                     <span className="text-sm font-normal">Stripes</span>
@@ -628,8 +604,8 @@ function App() {
           <Card.Content className="flex flex-col gap-2">
             <Switch
               className="w-full"
-              isSelected={currentSettings.platformBarTextEnabled}
-              onChange={handlePlatformBarTextEnabledChange}
+              isSelected={currentSettings.platformBarText.enabled}
+              onChange={(isSelected) => updateSurface('platformBarText', { enabled: isSelected })}
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Platform Bar text color
@@ -638,22 +614,32 @@ function App() {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.platformBarTextEnabled && (
+            {currentSettings.platformBarText.enabled && (
               <div className="flex flex-col gap-2 border-t border-border pt-2">
                 <div className="flex min-h-8 items-center justify-between">
                   <span className="text-sm">Color</span>
                   <PaletteColorPicker
                     ariaLabel="Platform Bar text color"
-                    paletteEnabled={currentSettings.paletteEnabled}
-                    palette={currentSettings.palette}
-                    paletteId={currentSettings.platformBarTextPaletteId}
-                    customColor={currentSettings.platformBarTextColor}
+                    paletteEnabled={currentSettings.palette.enabled}
+                    palette={currentSettings.palette.entries}
+                    paletteId={currentSettings.platformBarText.color.paletteId}
+                    customColor={currentSettings.platformBarText.color.custom}
                     effectiveColor={platformBarTextEffectiveColor}
-                    onSelectPaletteEntry={handlePlatformBarTextPaletteSelect}
-                    onSelectCustomColor={handlePlatformBarTextCustomColorChange}
+                    onSelectPaletteEntry={(id) =>
+                      updateSurface('platformBarText', {
+                        color: { ...currentSettings.platformBarText.color, paletteId: id },
+                        auto: false,
+                      })
+                    }
+                    onSelectCustomColor={(color) =>
+                      updateSurface('platformBarText', {
+                        color: { ...currentSettings.platformBarText.color, paletteId: null, custom: color },
+                        auto: false,
+                      })
+                    }
                     supportsAuto
-                    autoSelected={currentSettings.platformBarTextAuto}
-                    onSelectAuto={handlePlatformBarTextAutoSelect}
+                    autoSelected={currentSettings.platformBarText.auto}
+                    onSelectAuto={() => updateSurface('platformBarText', { auto: true })}
                   />
                 </div>
               </div>

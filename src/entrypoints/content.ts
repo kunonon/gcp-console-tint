@@ -1,14 +1,20 @@
-import type { PaletteEntry, ProjectSettings, TintSettings } from '../types';
+import type { ProjectSettings, TintSettings } from '../types';
 import { contrastTextColor, stripeGradient } from '../utils/color';
-import { DEFAULT_PROJECT_SETTINGS, DEFAULT_SETTINGS, loadSettings, resolveProjectSettings } from '../utils/settings';
+import {
+  DEFAULT_PROJECT_SETTINGS,
+  DEFAULT_SETTINGS,
+  loadSettings,
+  resolveProjectSettings,
+  resolveSelectedColor,
+} from '../utils/settings';
 
 export default defineContentScript({
   matches: ['https://console.cloud.google.com/*'],
   main(ctx) {
     const clampTopBarHeight = (height: number): number => {
-      if (!Number.isFinite(height)) return DEFAULT_PROJECT_SETTINGS.topBarHeight;
+      if (!Number.isFinite(height)) return DEFAULT_PROJECT_SETTINGS.topBar.height;
       const rounded = Math.round(height);
-      if (rounded < 1 || rounded > 40) return DEFAULT_PROJECT_SETTINGS.topBarHeight;
+      if (rounded < 1 || rounded > 40) return DEFAULT_PROJECT_SETTINGS.topBar.height;
       return rounded;
     };
 
@@ -30,41 +36,23 @@ export default defineContentScript({
     const platformBarStyle = document.createElement('style');
     document.documentElement.appendChild(platformBarStyle);
 
-    const resolveColor = (
-      paletteEnabled: boolean,
-      palette: PaletteEntry[],
-      paletteId: string | null,
-      ownColor: string,
-    ): string => {
-      if (paletteEnabled && paletteId) {
-        const entry = palette.find((e) => e.id === paletteId);
-        if (entry) return entry.color;
-      }
-      return ownColor;
-    };
-
     const applyProjectSettings = (project: ProjectSettings) => {
-      const { paletteEnabled, palette } = project;
-      if (project.topBarEnabled) {
+      const { palette } = project;
+      if (project.topBar.enabled) {
         bar.style.display = '';
-        bar.style.height = `${clampTopBarHeight(project.topBarHeight)}px`;
-        const topBarColor = resolveColor(paletteEnabled, palette, project.topBarPaletteId, project.topBarColor);
+        bar.style.height = `${clampTopBarHeight(project.topBar.height)}px`;
+        const topBarColor = resolveSelectedColor(palette, project.topBar.color);
         bar.style.backgroundColor = topBarColor;
-        bar.style.backgroundImage = project.topBarStripes ? stripeGradient(topBarColor) : '';
+        bar.style.backgroundImage = project.topBar.stripes ? stripeGradient(topBarColor) : '';
       } else {
         bar.style.display = 'none';
       }
 
       const rules: string[] = [];
-      if (project.platformBarEnabled) {
-        const platformBarColor = resolveColor(
-          paletteEnabled,
-          palette,
-          project.platformBarPaletteId,
-          project.platformBarColor,
-        );
+      if (project.platformBar.enabled) {
+        const platformBarColor = resolveSelectedColor(palette, project.platformBar.color);
         const declarations = [`background-color: ${platformBarColor} !important;`];
-        if (project.platformBarStripes) {
+        if (project.platformBar.stripes) {
           declarations.push(`background-image: ${stripeGradient(platformBarColor)} !important;`);
         }
         if (animate) {
@@ -72,12 +60,10 @@ export default defineContentScript({
         }
         rules.push(`#ocb-platform-bar { ${declarations.join(' ')} }`);
       }
-      if (project.platformBarTextEnabled) {
-        const textColor = project.platformBarTextAuto
-          ? contrastTextColor(
-              resolveColor(paletteEnabled, palette, project.platformBarPaletteId, project.platformBarColor),
-            )
-          : resolveColor(paletteEnabled, palette, project.platformBarTextPaletteId, project.platformBarTextColor);
+      if (project.platformBarText.enabled) {
+        const textColor = project.platformBarText.auto
+          ? contrastTextColor(resolveSelectedColor(palette, project.platformBar.color))
+          : resolveSelectedColor(palette, project.platformBarText.color);
         const textDeclarations = [`color: ${textColor} !important;`];
         if (animate) {
           textDeclarations.push('transition: color 300ms ease !important;');

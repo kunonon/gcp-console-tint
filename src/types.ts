@@ -4,22 +4,46 @@ export interface PaletteEntry {
   color: string;
 }
 
+// A color choice shared by every tinted surface: the palette entry wins while paletteId is
+// set (and the project's palette is enabled), otherwise `custom` applies. `custom` is kept
+// even while a palette entry is selected, so switching back to custom restores the last
+// hand-picked value.
+export interface ColorSelection {
+  paletteId: string | null;
+  custom: string;
+}
+
+export interface PaletteSettings {
+  enabled: boolean;
+  entries: PaletteEntry[];
+}
+
+export interface TopBarSettings {
+  enabled: boolean;
+  color: ColorSelection;
+  height: number;
+  stripes: boolean;
+}
+
+export interface PlatformBarSettings {
+  enabled: boolean;
+  color: ColorSelection;
+  stripes: boolean;
+}
+
+export interface PlatformBarTextSettings {
+  enabled: boolean;
+  color: ColorSelection;
+  // Pick black/white automatically by WCAG contrast against the platform bar color.
+  auto: boolean;
+}
+
+// One object per tinted surface, mirroring the settings UI's cards.
 export interface ProjectSettings {
-  paletteEnabled: boolean;
-  palette: PaletteEntry[];
-  topBarEnabled: boolean;
-  topBarColor: string;
-  topBarPaletteId: string | null;
-  topBarHeight: number;
-  topBarStripes: boolean;
-  platformBarEnabled: boolean;
-  platformBarColor: string;
-  platformBarPaletteId: string | null;
-  platformBarStripes: boolean;
-  platformBarTextEnabled: boolean;
-  platformBarTextColor: string;
-  platformBarTextPaletteId: string | null;
-  platformBarTextAuto: boolean;
+  palette: PaletteSettings;
+  topBar: TopBarSettings;
+  platformBar: PlatformBarSettings;
+  platformBarText: PlatformBarTextSettings;
 }
 
 // How a ProjectRule's pattern is compared against the console URL's ?project= param.
