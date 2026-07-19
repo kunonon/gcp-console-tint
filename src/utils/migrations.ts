@@ -1,4 +1,4 @@
-import { compareVersions } from './version';
+import { compareVersions, VersionComparisonResult } from './version';
 
 // One schema upgrade step. `migrate` receives settings data in the shape that immediately
 // precedes `to` and returns data in the `to` shape. Steps only reshape the data — they may
@@ -30,7 +30,7 @@ export function runMigrations(
   let current = data;
   let version = fromVersion;
   for (const step of steps) {
-    if (compareVersions(version, step.to) < 0) {
+    if (compareVersions(version, step.to) === VersionComparisonResult.Older) {
       current = step.migrate(current);
       version = step.to;
     }

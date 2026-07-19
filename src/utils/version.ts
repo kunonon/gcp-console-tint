@@ -1,14 +1,20 @@
-// The three possible outcomes of a version comparison, as literal types rather than a
-// bare `number`: callers can exhaustively match on it, and the compiler proves this
-// function never returns anything else.
-export type VersionComparison = -1 | 0 | 1;
+// Named comparison results — how `a` stands relative to `b` — so call sites read as
+// intent, e.g. `compareVersions(stored, floor) === VersionComparisonResult.Older`.
+// String-valued on purpose: numeric idioms like `< 0` on the result are a type error, so
+// the named form is the only way to branch on it.
+export const VersionComparisonResult = {
+  Older: 'older',
+  Equal: 'equal',
+  Newer: 'newer',
+} as const;
+
+export type VersionComparisonResult = (typeof VersionComparisonResult)[keyof typeof VersionComparisonResult];
 
 // Compares two dot-separated numeric version strings (e.g. "0.1.0" vs "0.2.0").
-// Returns -1 if a < b, 0 if a === b, 1 if a > b.
 // Defensive: if either side fails to parse as a dot-separated sequence of non-negative
-// integers, the comparison is resolved as -1 so callers using
-// `compareVersions(x, threshold) >= 0` reject invalid input rather than accept it.
-export function compareVersions(a: string, b: string): VersionComparison {
+// integers, the comparison resolves to Older, so callers gating on "not Older" reject
+// invalid input rather than accept it.
+export function compareVersions(a: string, b: string): VersionComparisonResult {
   const parse = (value: string): number[] | null => {
     if (typeof value !== 'string' || value.trim() === '') return null;
     const nums = value.split('.').map(Number);
@@ -18,13 +24,15 @@ export function compareVersions(a: string, b: string): VersionComparison {
 
   const partsA = parse(a);
   const partsB = parse(b);
-  if (partsA === null || partsB === null) return -1;
+  if (partsA === null || partsB === null) return VersionComparisonResult.Older;
 
   const length = Math.max(partsA.length, partsB.length);
   for (let i = 0; i < length; i++) {
     const numA = partsA[i] ?? 0;
     const numB = partsB[i] ?? 0;
-    if (numA !== numB) return numA < numB ? -1 : 1;
+    if (numA !== numB) {
+      return numA < numB ? VersionComparisonResult.Older : VersionComparisonResult.Newer;
+    }
   }
-  return 0;
+  return VersionComparisonResult.Equal;
 }

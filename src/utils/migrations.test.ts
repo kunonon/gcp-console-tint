@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIGRATIONS, type SchemaMigration } from './migrations';
 import { migrateStoredSettings } from './settings';
-import { compareVersions } from './version';
+import { compareVersions, VersionComparisonResult } from './version';
 
 describe('runMigrations', () => {
   // SCHEMA_MIGRATIONS is currently EMPTY (see migrations.ts): the extension is unreleased, so
@@ -17,7 +17,7 @@ describe('runMigrations', () => {
 
   it('SCHEMA_MIGRATIONS is ordered ascending by `to` (vacuously true while the registry is empty)', () => {
     for (let i = 1; i < SCHEMA_MIGRATIONS.length; i++) {
-      expect(compareVersions(SCHEMA_MIGRATIONS[i - 1].to, SCHEMA_MIGRATIONS[i].to)).toBeLessThan(0);
+      expect(compareVersions(SCHEMA_MIGRATIONS[i - 1].to, SCHEMA_MIGRATIONS[i].to)).toBe(VersionComparisonResult.Older);
     }
   });
 

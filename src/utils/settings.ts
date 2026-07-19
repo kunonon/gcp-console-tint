@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import type { ColorSelection, MatchType, PaletteSettings, ProjectRule, ProjectSettings, TintSettings } from '../types';
 import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
-import { compareVersions } from './version';
+import { compareVersions, VersionComparisonResult } from './version';
 
 export const MATCH_TYPES: readonly MatchType[] = ['prefix', 'suffix', 'exact', 'regex'];
 
@@ -113,7 +113,9 @@ function mergeProjectSettings(stored: unknown): ProjectSettings {
 // the user's values (reachable if a new migration step ships without the manifest version
 // catching up).
 export function effectiveSchemaVersion(currentVersion: string): string {
-  return compareVersions(currentVersion, CURRENT_SCHEMA_VERSION) >= 0 ? currentVersion : CURRENT_SCHEMA_VERSION;
+  return compareVersions(currentVersion, CURRENT_SCHEMA_VERSION) === VersionComparisonResult.Older
+    ? CURRENT_SCHEMA_VERSION
+    : currentVersion;
 }
 
 function freshDefaults(currentVersion: string): TintSettings {
@@ -137,7 +139,10 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
     return freshDefaults(currentVersion);
   }
   const schemaVersion = stored.schemaVersion;
-  if (typeof schemaVersion !== 'string' || compareVersions(schemaVersion, SCHEMA_MIN_VERSION) < 0) {
+  if (
+    typeof schemaVersion !== 'string' ||
+    compareVersions(schemaVersion, SCHEMA_MIN_VERSION) === VersionComparisonResult.Older
+  ) {
     return freshDefaults(currentVersion);
   }
 
@@ -175,7 +180,10 @@ export async function migrateStoredSettings(currentVersion: string): Promise<voi
   if (stored == null) return;
   if (isRecord(stored)) {
     const storedVersion = stored.schemaVersion;
-    if (typeof storedVersion === 'string' && compareVersions(storedVersion, CURRENT_SCHEMA_VERSION) >= 0) {
+    if (
+      typeof storedVersion === 'string' &&
+      compareVersions(storedVersion, CURRENT_SCHEMA_VERSION) !== VersionComparisonResult.Older
+    ) {
       return;
     }
   }
