@@ -1,205 +1,76 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIGRATIONS } from './migrations';
-import { loadSettings, migrateStoredSettings } from './settings';
+import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIGRATIONS, type SchemaMigration } from './migrations';
+import { migrateStoredSettings } from './settings';
 import { compareVersions } from './version';
 
-// Reads a nested path out of an untyped migration/storage result without a cast at every call
-// site.
-function get(obj: unknown, ...path: string[]): unknown {
-  return path.reduce((acc, key) => (acc as Record<string, unknown> | undefined)?.[key], obj);
-}
-
 describe('runMigrations', () => {
-  it('applies nothing when fromVersion is already CURRENT_SCHEMA_VERSION', () => {
-    const data = {
-      projectRules: [{ id: '1', pattern: 'p', settings: { palette: { enabled: true, entries: [] } } }],
-    };
-
-    const result = runMigrations(data, CURRENT_SCHEMA_VERSION);
-
-    expect(result.version).toBe(CURRENT_SCHEMA_VERSION);
-    expect(result.data).toEqual(data);
+  // SCHEMA_MIGRATIONS is currently EMPTY (see migrations.ts): the extension is unreleased, so
+  // pre-release schema changes are destructive-read instead of migrated (see settings.test.ts's
+  // "destructive pre-release read" tests). This assertion documents that invariant directly and
+  // stays correct once real steps are added: it falls back to the empty-registry baseline only
+  // while the registry is still empty.
+  it("CURRENT_SCHEMA_VERSION equals the last migration step's `to` whenever steps exist, or the pre-release baseline while the registry is empty", () => {
+    const expected = SCHEMA_MIGRATIONS.length > 0 ? SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1].to : '0.1.0';
+    expect(CURRENT_SCHEMA_VERSION).toBe(expected);
   });
 
-  it('applies nothing when fromVersion is newer than CURRENT_SCHEMA_VERSION', () => {
-    const data = { projectRules: [] };
-
-    const result = runMigrations(data, '9.9.9');
-
-    expect(result.version).toBe('9.9.9');
-    expect(result.data).toEqual(data);
-  });
-
-  it('applies the flat -> nested step when fromVersion is exactly 0.1.0', () => {
-    const data = { projectRules: [{ id: '1', pattern: 'p', settings: { topBarColor: '#123456' } }] };
-
-    const result = runMigrations(data, '0.1.0');
-
-    expect(result.version).toBe(CURRENT_SCHEMA_VERSION);
-    const settings = get(result.data, 'projectRules') as Record<string, unknown>[];
-    expect(get(settings[0].settings, 'topBar', 'color', 'custom')).toBe('#123456');
-  });
-
-  it('applies the flat -> nested step for an intermediate version below CURRENT_SCHEMA_VERSION (e.g. 0.1.5)', () => {
-    const data = { projectRules: [{ id: '1', pattern: 'p', settings: { topBarColor: '#abcdef' } }] };
-
-    const result = runMigrations(data, '0.1.5');
-
-    expect(result.version).toBe(CURRENT_SCHEMA_VERSION);
-    const settings = get(result.data, 'projectRules') as Record<string, unknown>[];
-    expect(get(settings[0].settings, 'topBar', 'color', 'custom')).toBe('#abcdef');
-  });
-
-  it("CURRENT_SCHEMA_VERSION equals the last migration step's `to`", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1].to);
-  });
-
-  it('SCHEMA_MIGRATIONS is ordered ascending by `to` (so folding forward step by step is valid)', () => {
-    expect(SCHEMA_MIGRATIONS.length).toBeGreaterThan(0);
+  it('SCHEMA_MIGRATIONS is ordered ascending by `to` (vacuously true while the registry is empty)', () => {
     for (let i = 1; i < SCHEMA_MIGRATIONS.length; i++) {
       expect(compareVersions(SCHEMA_MIGRATIONS[i - 1].to, SCHEMA_MIGRATIONS[i].to)).toBeLessThan(0);
     }
   });
-});
 
-describe('migrateFlatSettingsToNested (the 0.1.0 -> 0.2.0 step) field mapping', () => {
-  // Every old flat field gets a distinct sentinel value (including two distinct paletteId
-  // sentinels, 'custom-top' vs 'custom-text') so a copy-paste cross-wiring bug between two
-  // sections (e.g. reading topBarPaletteId into platformBarText's color) would surface as a
-  // mismatch rather than an accidental pass by both fields sharing one value.
-  const flatFixture = {
-    paletteEnabled: false,
-    palette: [{ id: 'custom', name: 'Custom', color: '#abcdef' }],
-    topBarEnabled: false,
-    topBarColor: '#111111',
-    topBarPaletteId: 'custom-top',
-    topBarHeight: 22,
-    topBarStripes: true,
-    platformBarEnabled: false,
-    platformBarColor: '#222222',
-    platformBarPaletteId: null,
-    platformBarStripes: true,
-    platformBarTextEnabled: false,
-    platformBarTextColor: '#333333',
-    platformBarTextPaletteId: 'custom-text',
-    platformBarTextAuto: true,
-  };
+  it('applies nothing via the real (currently empty) SCHEMA_MIGRATIONS registry, regardless of fromVersion', () => {
+    const data = { projectRules: [{ id: '1', pattern: 'p', settings: { topBarColor: '#123456' } }] };
 
-  const migrated = SCHEMA_MIGRATIONS[0].migrate({
-    projectRules: [{ id: 'r1', pattern: 'p', settings: flatFixture }],
-  });
-  const nested = get(migrated, 'projectRules', '0', 'settings');
-
-  it.each<[string, unknown, unknown]>([
-    ['paletteEnabled -> palette.enabled', get(nested, 'palette', 'enabled'), flatFixture.paletteEnabled],
-    ['palette -> palette.entries', get(nested, 'palette', 'entries'), flatFixture.palette],
-    ['topBarEnabled -> topBar.enabled', get(nested, 'topBar', 'enabled'), flatFixture.topBarEnabled],
-    [
-      'topBarPaletteId -> topBar.color.paletteId',
-      get(nested, 'topBar', 'color', 'paletteId'),
-      flatFixture.topBarPaletteId,
-    ],
-    ['topBarColor -> topBar.color.custom', get(nested, 'topBar', 'color', 'custom'), flatFixture.topBarColor],
-    ['topBarHeight -> topBar.height', get(nested, 'topBar', 'height'), flatFixture.topBarHeight],
-    ['topBarStripes -> topBar.stripes', get(nested, 'topBar', 'stripes'), flatFixture.topBarStripes],
-    [
-      'platformBarEnabled -> platformBar.enabled',
-      get(nested, 'platformBar', 'enabled'),
-      flatFixture.platformBarEnabled,
-    ],
-    [
-      'platformBarPaletteId -> platformBar.color.paletteId',
-      get(nested, 'platformBar', 'color', 'paletteId'),
-      flatFixture.platformBarPaletteId,
-    ],
-    [
-      'platformBarColor -> platformBar.color.custom',
-      get(nested, 'platformBar', 'color', 'custom'),
-      flatFixture.platformBarColor,
-    ],
-    [
-      'platformBarStripes -> platformBar.stripes',
-      get(nested, 'platformBar', 'stripes'),
-      flatFixture.platformBarStripes,
-    ],
-    [
-      'platformBarTextEnabled -> platformBarText.enabled',
-      get(nested, 'platformBarText', 'enabled'),
-      flatFixture.platformBarTextEnabled,
-    ],
-    [
-      'platformBarTextPaletteId -> platformBarText.color.paletteId',
-      get(nested, 'platformBarText', 'color', 'paletteId'),
-      flatFixture.platformBarTextPaletteId,
-    ],
-    [
-      'platformBarTextColor -> platformBarText.color.custom',
-      get(nested, 'platformBarText', 'color', 'custom'),
-      flatFixture.platformBarTextColor,
-    ],
-    [
-      'platformBarTextAuto -> platformBarText.auto',
-      get(nested, 'platformBarText', 'auto'),
-      flatFixture.platformBarTextAuto,
-    ],
-  ])('maps %s', (_label, actual, expected) => {
-    expect(actual).toEqual(expected);
-  });
-});
-
-describe('migrateFlatSettingsToNested defensive passes', () => {
-  const migrate = SCHEMA_MIGRATIONS[0].migrate;
-
-  it('treats a missing projectRules key as empty', () => {
-    const result = migrate({});
-    expect(result.projectRules).toEqual([]);
+    expect(runMigrations(data, '0.1.0')).toEqual({ data, version: '0.1.0' });
+    expect(runMigrations(data, '9.9.9')).toEqual({ data, version: '9.9.9' });
   });
 
-  it('treats a non-array projectRules value as empty', () => {
-    const result = migrate({ projectRules: 'not-an-array' });
-    expect(result.projectRules).toEqual([]);
-  });
+  // The registry is empty today, but the folding service itself (this function plus the
+  // injectable `steps` param) is dormant infrastructure for the first post-release migration.
+  // These tests exercise that general capability against a synthetic multi-step chain so it's
+  // proven correct now rather than only once a real step exists to test it against.
+  describe('with an injected synthetic multi-step chain (proving the service for future post-release use)', () => {
+    // Each step appends its own `to` to a `markers` array, so both WHICH steps ran and the
+    // ORDER they ran in are directly observable in the output data.
+    const markerStep = (to: string): SchemaMigration => ({
+      to,
+      migrate: (data) => ({
+        ...data,
+        markers: [...(Array.isArray(data.markers) ? data.markers : []), to],
+      }),
+    });
+    const steps: SchemaMigration[] = [markerStep('0.1.1'), markerStep('0.2.0'), markerStep('0.3.0')];
 
-  it('passes through non-object rule entries unchanged (null, number, string)', () => {
-    const result = migrate({ projectRules: [null, 42, 'x'] });
-    expect(result.projectRules).toEqual([null, 42, 'x']);
-  });
+    it('applies every step in order from the very first version (0.1.0)', () => {
+      const result = runMigrations({}, '0.1.0', steps);
 
-  it('passes through a rule whose settings is null unchanged', () => {
-    const rule = { id: '1', pattern: 'p', settings: null };
-    const result = migrate({ projectRules: [rule] });
-    expect((result.projectRules as unknown[])[0]).toEqual(rule);
-  });
+      expect(result.version).toBe('0.3.0');
+      expect(result.data.markers).toEqual(['0.1.1', '0.2.0', '0.3.0']);
+    });
 
-  it('passes through a rule whose settings key is missing (undefined) unchanged', () => {
-    const rule = { id: '1', pattern: 'p' };
-    const result = migrate({ projectRules: [rule] });
-    expect((result.projectRules as unknown[])[0]).toEqual(rule);
-  });
+    it('applies only the steps newer than an intermediate fromVersion, skipping earlier ones (0.1.5 skips the 0.1.1 step)', () => {
+      const result = runMigrations({}, '0.1.5', steps);
 
-  it('passes through a rule whose settings is an array unchanged (not reshaped)', () => {
-    const rule = { id: '1', pattern: 'p', settings: ['x', 'y'] };
-    const result = migrate({ projectRules: [rule] });
-    expect((result.projectRules as unknown[])[0]).toEqual(rule);
-  });
+      expect(result.version).toBe('0.3.0');
+      expect(result.data.markers).toEqual(['0.2.0', '0.3.0']);
+    });
 
-  it('reshapes a rule whose settings is an empty object into an all-undefined nested shape (not a no-op)', () => {
-    const result = migrate({ projectRules: [{ id: '1', pattern: 'p', settings: {} }] });
-    const settings = get(result, 'projectRules', '0', 'settings');
+    it("applies no steps when fromVersion is already at the last step's `to`", () => {
+      const result = runMigrations({}, '0.3.0', steps);
 
-    expect(get(settings, 'palette', 'enabled')).toBeUndefined();
-    expect(get(settings, 'topBar', 'color', 'custom')).toBeUndefined();
-    expect(get(settings, 'platformBarText', 'auto')).toBeUndefined();
-    // The shape itself is already nested (has the four section keys), not literally `{}` --
-    // proving this is a genuine reshape that loadSettings' mergeDefined() later fills in, not a
-    // pass-through no-op like the null/array/missing cases above.
-    expect(Object.keys(settings as object).sort()).toEqual(['palette', 'platformBar', 'platformBarText', 'topBar']);
-  });
+      expect(result.version).toBe('0.3.0');
+      expect(result.data).toEqual({});
+    });
 
-  it('does not throw and preserves other top-level TintSettings keys via the spread', () => {
-    const result = migrate({ schemaVersion: '0.1.0', someLegacyKey: 'kept', projectRules: [] });
-    expect(result.someLegacyKey).toBe('kept');
+    it("applies no steps when fromVersion is above the last step's `to`", () => {
+      const result = runMigrations({}, '9.9.9', steps);
+
+      expect(result.version).toBe('9.9.9');
+      expect(result.data).toEqual({});
+    });
   });
 });
 
@@ -242,61 +113,36 @@ describe('migrateStoredSettings', () => {
     expect(setSpy).not.toHaveBeenCalled();
   });
 
-  it('migrates 0.1.0 flat data and writes the nested result back, stamped with currentVersion (currentVersion above CURRENT_SCHEMA_VERSION: no floor applies)', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        schemaVersion: '0.1.0',
-        projectRules: [{ id: '1', matchType: 'exact', pattern: 'my-app', settings: { topBarColor: '#123456' } }],
-      },
-    });
+  // Pre-release: CURRENT_SCHEMA_VERSION was rolled back to '0.1.0' (== SCHEMA_MIN_VERSION), so
+  // ANY stored data that passes loadSettings' floor check is now "already current" by
+  // definition -- migrateStoredSettings never has anything left to migrate-and-write-back. This
+  // supersedes the old flat->nested write-back test that used to live here (that migration step,
+  // and the schemaVersion gap it needed, no longer exist).
+  it('no-ops for stored data at schemaVersion 0.1.0 (now equal to CURRENT_SCHEMA_VERSION), regardless of its (now-legacy) shape', async () => {
+    const legacyFlatShape = {
+      schemaVersion: '0.1.0',
+      projectRules: [{ id: '1', matchType: 'exact', pattern: 'my-app', settings: { topBarColor: '#123456' } }],
+    };
+    await fakeBrowser.storage.local.set({ tintSettings: legacyFlatShape });
+    const setSpy = vi.spyOn(fakeBrowser.storage.local, 'set');
 
-    // A distinct patch version from CURRENT_SCHEMA_VERSION ('0.2.0'), but still above it, so
-    // effectiveSchemaVersion() is a no-op here: this proves the written schemaVersion is the
-    // passed-in `currentVersion` parameter, not a hardcoded constant. The below-the-floor case
-    // (currentVersion < CURRENT_SCHEMA_VERSION) is covered separately below.
     await migrateStoredSettings('0.2.7');
 
-    const stored = (await fakeBrowser.storage.local.get('tintSettings')).tintSettings;
-    expect(get(stored, 'schemaVersion')).toBe('0.2.7');
-    const settings = get(stored, 'projectRules', '0', 'settings');
-    expect(get(settings, 'topBar', 'color', 'custom')).toBe('#123456');
-  });
-
-  // Regression test for a real bug found and reproduced during this rework: migrateStoredSettings
-  // used to stamp the write-back with the raw `currentVersion` verbatim. When currentVersion (the
-  // extension's manifest version) lagged behind CURRENT_SCHEMA_VERSION -- e.g. a future migration
-  // step ships without the manifest version being bumped to match -- the written data ended up
-  // already in the NESTED shape but labeled with a schemaVersion still below CURRENT_SCHEMA_VERSION.
-  // The next loadSettings() call would then see that low schemaVersion, decide the flat->nested
-  // migration still needs to run, and apply it to already-nested data -- reading e.g.
-  // `flat.topBarColor` off an object that only has `flat.topBar.color.custom`, silently resetting
-  // every value to defaults. Fixed via effectiveSchemaVersion() flooring the write at
-  // CURRENT_SCHEMA_VERSION.
-  it('floors the written schemaVersion at CURRENT_SCHEMA_VERSION when currentVersion lags behind it, so the round-tripped data survives a subsequent load instead of being re-migrated and reset', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        schemaVersion: '0.1.0',
-        projectRules: [{ id: '1', matchType: 'exact', pattern: 'my-app', settings: { topBarColor: '#123456' } }],
-      },
-    });
-
-    const laggingCurrentVersion = '0.1.5'; // < CURRENT_SCHEMA_VERSION ('0.2.0')
-    await migrateStoredSettings(laggingCurrentVersion);
-
-    const written = (await fakeBrowser.storage.local.get('tintSettings')).tintSettings;
-    expect(get(written, 'schemaVersion')).toBe(CURRENT_SCHEMA_VERSION);
-    expect(get(written, 'projectRules', '0', 'settings', 'topBar', 'color', 'custom')).toBe('#123456');
-
-    // Simulate the next app load reading back exactly what was just written, still under the
-    // same lagging manifest version: the floored schemaVersion must prevent a second migration
-    // pass from stripping the user's value back to the default.
-    const reloaded = loadSettings(written, laggingCurrentVersion);
-    expect(reloaded.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(reloaded.projectRules[0].settings.topBar.color.custom).toBe('#123456');
+    expect(setSpy).not.toHaveBeenCalled();
+    expect((await fakeBrowser.storage.local.get('tintSettings')).tintSettings).toEqual(legacyFlatShape);
   });
 
   it('normalizes corrupt stored data (non-object) to fresh defaults and writes them', async () => {
     await fakeBrowser.storage.local.set({ tintSettings: 'not-an-object' });
+
+    await migrateStoredSettings('0.2.7');
+
+    const stored = (await fakeBrowser.storage.local.get('tintSettings')).tintSettings;
+    expect(stored).toEqual({ schemaVersion: '0.2.7', projectRules: [] });
+  });
+
+  it('normalizes stored data with no schemaVersion key at all (versionless) to fresh defaults and writes them', async () => {
+    await fakeBrowser.storage.local.set({ tintSettings: { projectRules: [] } });
 
     await migrateStoredSettings('0.2.7');
 
@@ -313,10 +159,19 @@ describe('migrateStoredSettings', () => {
     expect(stored).toEqual({ schemaVersion: '0.2.7', projectRules: [] });
   });
 
+  it('normalizes stored data whose schemaVersion is below SCHEMA_MIN_VERSION to fresh defaults and writes them', async () => {
+    await fakeBrowser.storage.local.set({ tintSettings: { schemaVersion: '0.0.9', projectRules: [] } });
+
+    await migrateStoredSettings('0.2.7');
+
+    const stored = (await fakeBrowser.storage.local.get('tintSettings')).tintSettings;
+    expect(stored).toEqual({ schemaVersion: '0.2.7', projectRules: [] });
+  });
+
   it('normalizes corrupt stored data to fresh defaults floored at CURRENT_SCHEMA_VERSION, even when currentVersion lags behind it', async () => {
     await fakeBrowser.storage.local.set({ tintSettings: 'not-an-object' });
 
-    await migrateStoredSettings('0.1.5'); // < CURRENT_SCHEMA_VERSION ('0.2.0')
+    await migrateStoredSettings('0.0.5'); // < CURRENT_SCHEMA_VERSION ('0.1.0')
 
     const stored = (await fakeBrowser.storage.local.get('tintSettings')).tintSettings;
     expect(stored).toEqual({ schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [] });

@@ -69,7 +69,7 @@ interface TintSettings {
   projectRules: ProjectRule[];
 }
 
-const CURRENT_VERSION = '0.2.0';
+const CURRENT_VERSION = '0.1.0';
 
 // Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
 // The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
@@ -541,7 +541,7 @@ describe('content script', () => {
     expect(styleEl.textContent).toBe('');
   });
 
-  it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION (0.1.0 flat data migrates forward)', async () => {
+  it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION (data already in the current nested shape)', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         schemaVersion: '0.1.0',
@@ -550,10 +550,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: TEST_PROJECT_PATTERN,
-            // Intentionally the OLD flat shape (not ProjectSettingsOverrides): schemaVersion
-            // '0.1.0' is below CURRENT_SCHEMA_VERSION, so content.ts's loadSettings() call runs
-            // the real 0.1.0 -> 0.2.0 migration on this, which expects flat input.
-            settings: { topBarPaletteId: null, topBarColor: '#334455' } as unknown as ProjectSettingsOverrides,
+            settings: { topBar: { color: { paletteId: null, custom: '#334455' } } },
           },
         ],
       }),
@@ -565,6 +562,36 @@ describe('content script', () => {
 
     const { bar } = getElements();
     expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
+  });
+
+  // Pre-release: SCHEMA_MIGRATIONS is currently empty, so no migration ever runs. Old
+  // flat-shaped settings (the pre-nested-schema shape) stored at schemaVersion 0.1.0 are read
+  // destructively -- mergeProjectSettings() doesn't recognize any of the old flat keys, so every
+  // surface falls back to its default rather than picking up the stored custom color.
+  it('ignores old flat-shaped settings at schemaVersion 0.1.0 now that no migration runs; the default color applies instead', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        schemaVersion: '0.1.0',
+        projectRules: [
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: TEST_PROJECT_PATTERN,
+            settings: { topBarPaletteId: null, topBarColor: '#334455' } as unknown as ProjectSettingsOverrides,
+          },
+        ],
+      }),
+    );
+    setTestProjectLocation();
+
+    runContentScript();
+    await flush();
+
+    const { bar } = getElements();
+    // '#334455' never applies -- the DEFAULT_COLOR ('#ff6d00') resolves instead, since
+    // topBar.color.paletteId defaults to 'default' and the default palette entry is that color.
+    expect(hexOrRgb('#334455')).not.toContain(bar.style.backgroundColor);
+    expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
   });
 
   it('applies stored data whose schemaVersion is newer than the current version as-is', async () => {

@@ -8,62 +8,28 @@ export interface SchemaMigration {
   migrate(data: Record<string, unknown>): Record<string, unknown>;
 }
 
-// --- 0.1.0 -> 0.2.0: flat per-surface keys become nested per-surface objects ------------
-//
-// Old shape (ProjectSettings): paletteEnabled, palette[], topBarEnabled, topBarColor,
-// topBarPaletteId, topBarHeight, topBarStripes, platformBarEnabled, platformBarColor,
-// platformBarPaletteId, platformBarStripes, platformBarTextEnabled, platformBarTextColor,
-// platformBarTextPaletteId, platformBarTextAuto.
-function migrateFlatSettingsToNested(data: Record<string, unknown>): Record<string, unknown> {
-  const rules = Array.isArray(data.projectRules) ? data.projectRules : [];
-  return {
-    ...data,
-    projectRules: rules.map((value) => {
-      if (value == null || typeof value !== 'object') return value;
-      const rule = value as Record<string, unknown>;
-      const old = rule.settings;
-      if (old == null || typeof old !== 'object' || Array.isArray(old)) return rule;
-      const flat = old as Record<string, unknown>;
-      return {
-        ...rule,
-        settings: {
-          palette: { enabled: flat.paletteEnabled, entries: flat.palette },
-          topBar: {
-            enabled: flat.topBarEnabled,
-            color: { paletteId: flat.topBarPaletteId, custom: flat.topBarColor },
-            height: flat.topBarHeight,
-            stripes: flat.topBarStripes,
-          },
-          platformBar: {
-            enabled: flat.platformBarEnabled,
-            color: { paletteId: flat.platformBarPaletteId, custom: flat.platformBarColor },
-            stripes: flat.platformBarStripes,
-          },
-          platformBarText: {
-            enabled: flat.platformBarTextEnabled,
-            color: { paletteId: flat.platformBarTextPaletteId, custom: flat.platformBarTextColor },
-            auto: flat.platformBarTextAuto,
-          },
-        },
-      };
-    }),
-  };
-}
+// Ascending by `to`. Empty while the extension is unreleased: pre-release schema changes
+// are destructive (old-shaped fields are simply ignored on read and defaults fill in), so
+// no steps exist yet. From the first public release onward, every shape change must ship
+// as a step here — and bump CURRENT_SCHEMA_VERSION to match its `to`.
+export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [];
 
-// Ascending by `to`. The last entry's `to` is, by definition, the current schema version.
-export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [{ to: '0.2.0', migrate: migrateFlatSettingsToNested }];
-
-export const CURRENT_SCHEMA_VERSION = SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1].to;
+// The version of the current schema shape. Must equal the last SCHEMA_MIGRATIONS entry's
+// `to` whenever steps exist (asserted in tests); stays at the initial version while the
+// registry is empty.
+export const CURRENT_SCHEMA_VERSION = '0.1.0';
 
 // Applies every migration step newer than `fromVersion`, in order, so data recorded under
-// any past release folds forward into the current shape (0.1.0 -> 0.2.0 -> ... -> latest).
+// any past release folds forward step by step into the current shape. `steps` is
+// injectable for tests; production callers use the real registry.
 export function runMigrations(
   data: Record<string, unknown>,
   fromVersion: string,
+  steps: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
 ): { data: Record<string, unknown>; version: string } {
   let current = data;
   let version = fromVersion;
-  for (const step of SCHEMA_MIGRATIONS) {
+  for (const step of steps) {
     if (compareVersions(version, step.to) < 0) {
       current = step.migrate(current);
       version = step.to;

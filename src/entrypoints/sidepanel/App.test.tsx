@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { MATCH_TYPE_LABELS } from '../../components/MatchTypeSelect';
-import { CURRENT_SCHEMA_VERSION } from '../../utils/migrations';
 import { effectiveSchemaVersion, loadSettings } from '../../utils/settings';
 import App from './App';
 
@@ -1089,11 +1088,19 @@ describe('App', () => {
   });
 
   it('reflects a partial stored settings object merged with defaults', async () => {
+    // Nested (current-shape) on purpose: with an empty migration registry, 0.1.0 data is read
+    // as-is (no reshaping), so a "partial merge" fixture must already be in the current shape
+    // to actually exercise per-field merging rather than the destructive old-shape path
+    // (covered separately below, "... but destructively").
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '0.1.0',
         projectRules: [
-          { id: 'r1', pattern: 'my-project', settings: { topBarColor: '#123123', topBarPaletteId: null } },
+          {
+            id: 'r1',
+            pattern: 'my-project',
+            settings: { topBar: { color: { custom: '#123123', paletteId: null } } },
+          },
         ],
       },
     });
@@ -1124,7 +1131,7 @@ describe('App', () => {
     expect(getAllRuleRows()).toHaveLength(0);
   });
 
-  it('reads stored data whose schemaVersion equals SCHEMA_MIN_VERSION on mount', async () => {
+  it('reads stored data whose schemaVersion equals SCHEMA_MIN_VERSION on mount, but destructively: with no migration steps pre-release, old flat-shape settings are ignored and every section defaults, while the rule itself survives', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '0.1.0',
@@ -1139,7 +1146,11 @@ describe('App', () => {
     await screen.findByText('my-project');
     await openRuleDetail(user, 'my-project');
 
-    expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
+    // The rule (id/pattern) is kept, but its flat-shape settings don't match any key
+    // mergeProjectSettings looks for (it reads stored.topBar, not stored.topBarColor), so
+    // topBar falls back to DEFAULT_PROJECT_SETTINGS entirely: the old hex is gone, and the
+    // trigger shows the default palette entry's name instead.
+    expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
   });
 
   it('reads stored data whose schemaVersion is newer than the current version as-is on mount', async () => {
@@ -1188,19 +1199,23 @@ describe('App', () => {
 
     await addRule(user, 'my-project');
 
-    // CURRENT_VERSION ('0.1.0') is itself below CURRENT_SCHEMA_VERSION, so the stamp is
-    // floored (see effectiveSchemaVersion) rather than the raw manifest version — the
-    // dedicated regression test below covers that floor explicitly.
+    // CURRENT_VERSION ('0.1.0') currently equals CURRENT_SCHEMA_VERSION, so
+    // effectiveSchemaVersion is a no-op here; asserting through the real function (rather
+    // than the literal '0.1.0') keeps this test meaningful if that ever changes. The
+    // dedicated regression test below exercises a manifest version that actually differs
+    // from CURRENT_SCHEMA_VERSION.
     await waitFor(async () => {
       expect((await getStoredSettings()).schemaVersion).toBe(effectiveSchemaVersion(CURRENT_VERSION));
     });
   });
 
-  it('floors a saved schemaVersion at CURRENT_SCHEMA_VERSION when the manifest reports an older release, so the payload survives a loadSettings round-trip instead of being re-migrated and reset', async () => {
-    // Reproduces the bug this floor fixes: stamping the raw (older) manifest version here
-    // would relabel already-nested data as pre-nested, so the next loadSettings call would
-    // re-run the flat->nested migration against nested data and silently reset the user's
-    // values to defaults.
+  it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a loadSettings round-trip unchanged', async () => {
+    // '0.1.5' is newer than CURRENT_SCHEMA_VERSION ('0.1.0'), so effectiveSchemaVersion
+    // passes it through unfloored — this no longer exercises the floor itself (that only
+    // triggers below '0.1.0', which is the floor value itself, so no realistic manifest
+    // version reaches it pre-release). What it still guards: with an empty migration
+    // registry, a save-then-reload round-trip on already-nested data must not lose or reset
+    // the user's values, regardless of which valid schemaVersion label it carries.
     (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({
       version: '0.1.5',
     });
@@ -1217,7 +1232,7 @@ describe('App', () => {
     });
 
     const stored = await getStoredSettings();
-    expect(stored.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(stored.schemaVersion).toBe('0.1.5');
 
     const reloaded = loadSettings(stored, '0.1.5');
     expect(reloaded.projectRules[0].settings.topBar.height).toBe(19);

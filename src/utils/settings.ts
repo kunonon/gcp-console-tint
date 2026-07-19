@@ -108,10 +108,10 @@ function mergeProjectSettings(stored: unknown): ProjectSettings {
 
 // The schemaVersion to stamp on anything we write: the running release version, floored at
 // CURRENT_SCHEMA_VERSION. The floor is the invariant that matters — data written in the
-// current NESTED shape must never carry a label older than the nested schema, or the next
-// load would re-run the flat->nested migration against nested data and silently reset the
-// user's values to defaults (reachable if a new migration step ships without the manifest
-// version catching up).
+// current shape must never carry a label older than that shape's schema version, or the
+// next load would re-run migration steps against already-migrated data and silently reset
+// the user's values (reachable if a new migration step ships without the manifest version
+// catching up).
 export function effectiveSchemaVersion(currentVersion: string): string {
   return compareVersions(currentVersion, CURRENT_SCHEMA_VERSION) >= 0 ? currentVersion : CURRENT_SCHEMA_VERSION;
 }
@@ -126,8 +126,10 @@ function freshDefaults(currentVersion: string): TintSettings {
 // Reads whatever is in storage and returns it in the CURRENT schema shape:
 // - no/invalid schemaVersion, or below SCHEMA_MIN_VERSION -> fresh defaults (nothing to
 //   migrate from),
-// - otherwise the migration chain folds the data forward version by version
-//   (0.1.0 -> 0.2.0 -> ...), then each rule is validated and merged with defaults.
+// - otherwise the migration chain folds the data forward version by version, then each
+//   rule is validated and merged with defaults. While the chain is empty (pre-release),
+//   old-shaped fields are simply ignored here and defaults fill in — destructive by
+//   design; rules' id/matchType/pattern still survive.
 // Pure: never writes storage. The background script persists the migrated form once via
 // migrateStoredSettings.
 export function loadSettings(stored: unknown, currentVersion: string): TintSettings {

@@ -21,7 +21,7 @@ import {
   resolveSelectedColor,
 } from './settings';
 
-const CURRENT_VERSION = '0.2.0';
+const CURRENT_VERSION = '0.1.0';
 
 // Shallow, section-by-section builder for expected/fixture ProjectSettings values. When
 // overriding a section's `color`, the full { paletteId, custom } pair must be given (this
@@ -97,7 +97,7 @@ describe('loadSettings', () => {
   // flat->nested migration" and silently reset every value to defaults. freshDefaults() now goes
   // through effectiveSchemaVersion() to floor at CURRENT_SCHEMA_VERSION.
   it('floors the stamped schemaVersion at CURRENT_SCHEMA_VERSION when currentVersion is below it (freshDefaults path)', () => {
-    const laggingVersion = '0.1.5';
+    const laggingVersion = '0.0.5';
 
     expect(loadSettings(null, laggingVersion).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(loadSettings('not-an-object', laggingVersion).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
@@ -106,8 +106,14 @@ describe('loadSettings', () => {
     );
   });
 
-  describe('migration integration', () => {
-    it('folds a real 0.1.0 flat fixture forward into the nested shape, preserving every value at its new nested path (with and without a stored matchType)', () => {
+  // Pre-release policy: SCHEMA_MIGRATIONS (migrations.ts) is currently EMPTY. Schema changes
+  // before the first release are destructive by design instead of being migrated -- old-shaped
+  // fields are simply not recognized by mergeProjectSettings() and every section falls back to
+  // its default. The migration service itself (runMigrations, the injectable `steps` param) is
+  // still exercised directly in migrations.test.ts against a synthetic chain, proving it's ready
+  // for the first real post-release step.
+  describe('destructive pre-release read (SCHEMA_MIGRATIONS is currently empty)', () => {
+    it('reads a legacy flat 0.1.0 fixture destructively: rule id/matchType/pattern survive, but every ProjectSettings section falls back to defaults', () => {
       const flatSettings = {
         paletteEnabled: false,
         palette: [{ id: 'custom', name: 'Custom', color: '#abcdef' }],
@@ -125,56 +131,48 @@ describe('loadSettings', () => {
         platformBarTextPaletteId: 'custom',
         platformBarTextAuto: true,
       };
-      const expectedNested: ProjectSettings = {
-        palette: { enabled: false, entries: [{ id: 'custom', name: 'Custom', color: '#abcdef' }] },
-        topBar: { enabled: false, color: { paletteId: 'custom', custom: '#111111' }, height: 22, stripes: true },
-        platformBar: { enabled: false, color: { paletteId: null, custom: '#222222' }, stripes: true },
-        platformBarText: { enabled: false, color: { paletteId: 'custom', custom: '#333333' }, auto: true },
-      };
 
       const loaded = loadSettings(
         {
           schemaVersion: '0.1.0',
           projectRules: [
             { id: 'r1', matchType: 'exact', pattern: 'my-app', settings: flatSettings },
-            // No matchType on this one: pre-matchType 0.1.0 data falls back to 'regex'.
+            // No matchType on this one: pre-matchType data still falls back to 'regex'.
             { id: 'r2', pattern: 'other-app', settings: flatSettings },
           ],
         },
         CURRENT_VERSION,
       );
 
-      expect(loaded.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+      expect(loaded.schemaVersion).toBe('0.1.0');
       expect(loaded.projectRules).toEqual([
-        { id: 'r1', matchType: 'exact', pattern: 'my-app', settings: expectedNested },
-        { id: 'r2', matchType: 'regex', pattern: 'other-app', settings: expectedNested },
+        { id: 'r1', matchType: 'exact', pattern: 'my-app', settings: DEFAULT_PROJECT_SETTINGS },
+        { id: 'r2', matchType: 'regex', pattern: 'other-app', settings: DEFAULT_PROJECT_SETTINGS },
       ]);
     });
 
-    it('reads data whose schemaVersion is already newer than CURRENT_SCHEMA_VERSION as-is, without migrating', () => {
-      const stored = {
-        schemaVersion: '9.9.9',
-        projectRules: [
-          { id: '1', matchType: 'exact', pattern: 'x', settings: { topBar: { color: { custom: '#00ff00' } } } },
-        ],
-      };
+    it('merges nested-shaped settings directly (no migration step runs) at any valid schemaVersion, from the floor up through arbitrarily newer versions', () => {
+      const atFloor = loadSettings(
+        {
+          schemaVersion: '0.1.0',
+          projectRules: [{ id: '1', matchType: 'exact', pattern: 'x', settings: { platformBarText: { auto: true } } }],
+        },
+        CURRENT_VERSION,
+      );
+      expect(atFloor.schemaVersion).toBe('0.1.0');
+      expect(atFloor.projectRules[0].settings.platformBarText.auto).toBe(true);
 
-      const loaded = loadSettings(stored, CURRENT_VERSION);
-
-      expect(loaded.schemaVersion).toBe('9.9.9');
-      expect(loaded.projectRules[0].settings.topBar.color.custom).toBe('#00ff00');
-    });
-
-    it('does not attempt to migrate data already exactly at CURRENT_SCHEMA_VERSION', () => {
-      const stored = {
-        schemaVersion: CURRENT_SCHEMA_VERSION,
-        projectRules: [{ id: '1', matchType: 'exact', pattern: 'x', settings: { platformBarText: { auto: true } } }],
-      };
-
-      const loaded = loadSettings(stored, CURRENT_VERSION);
-
-      expect(loaded.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-      expect(loaded.projectRules[0].settings.platformBarText.auto).toBe(true);
+      const wellAbove = loadSettings(
+        {
+          schemaVersion: '9.9.9',
+          projectRules: [
+            { id: '1', matchType: 'exact', pattern: 'x', settings: { topBar: { color: { custom: '#00ff00' } } } },
+          ],
+        },
+        CURRENT_VERSION,
+      );
+      expect(wellAbove.schemaVersion).toBe('9.9.9');
+      expect(wellAbove.projectRules[0].settings.topBar.color.custom).toBe('#00ff00');
     });
   });
 
@@ -598,7 +596,7 @@ describe('cloneProjectSettings', () => {
 
 describe('effectiveSchemaVersion', () => {
   it('floors a currentVersion below CURRENT_SCHEMA_VERSION up to CURRENT_SCHEMA_VERSION', () => {
-    expect(effectiveSchemaVersion('0.1.5')).toBe(CURRENT_SCHEMA_VERSION);
+    expect(effectiveSchemaVersion('0.0.5')).toBe(CURRENT_SCHEMA_VERSION);
     expect(effectiveSchemaVersion('0.0.1')).toBe(CURRENT_SCHEMA_VERSION);
   });
 
