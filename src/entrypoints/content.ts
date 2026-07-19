@@ -1,6 +1,6 @@
 import type { PaletteEntry, ProjectSettings, TintSettings } from '../types';
 import { contrastTextColor, stripeGradient } from '../utils/color';
-import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings, resolveProjectSettings } from '../utils/settings';
+import { DEFAULT_PROJECT_SETTINGS, DEFAULT_SETTINGS, loadSettings, resolveProjectSettings } from '../utils/settings';
 
 export default defineContentScript({
   matches: ['https://console.cloud.google.com/*'],

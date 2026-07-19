@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, cleanup, within, act } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import App from './App';
 import { MATCH_TYPE_LABELS } from '../../components/MatchTypeSelect';
+import App from './App';
 
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 
@@ -108,11 +108,7 @@ async function openDeleteConfirm(user: ReturnType<typeof userEvent.setup>, trigg
 
 // Opens the DeleteConfirmPopover from `trigger` and clicks its confirm action (labeled
 // `confirmLabel`, e.g. "Delete" or "Remove"), waiting for the popover to close afterward.
-async function confirmDelete(
-  user: ReturnType<typeof userEvent.setup>,
-  trigger: HTMLElement,
-  confirmLabel: string,
-) {
+async function confirmDelete(user: ReturnType<typeof userEvent.setup>, trigger: HTMLElement, confirmLabel: string) {
   const popover = await openDeleteConfirm(user, trigger);
   await user.click(within(popover).getByRole('button', { name: confirmLabel }));
   await waitFor(() => {
@@ -188,11 +184,7 @@ async function addRule(user: ReturnType<typeof userEvent.setup>, pattern: string
 // Adds a rule through the modal with an explicit match type, selecting it via the shared
 // MatchTypeSelect when it isn't the modal's default ('exact'). The value input's accessible
 // label follows AddRuleModal's own convention: "Pattern" for regex, "Project ID" for the others.
-async function addRuleWithMatchType(
-  user: ReturnType<typeof userEvent.setup>,
-  matchType: MatchType,
-  pattern: string,
-) {
+async function addRuleWithMatchType(user: ReturnType<typeof userEvent.setup>, matchType: MatchType, pattern: string) {
   const dialog = await openAddRuleModal(user);
   if (matchType !== 'exact') {
     // The Select trigger's accessible name concatenates its aria-labelledby refs (the
@@ -488,6 +480,7 @@ describe('App', () => {
     });
   });
 
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: prose describing App.tsx's `Color ${length+1}` naming pattern, not a template literal
   it('names new entries as "Color ${length+1}" based on the current array length; this is current, not-a-bug-fix-target behavior, and it can produce a duplicate name after a middle entry is removed and a new one added', async () => {
     const user = userEvent.setup();
     render(<App />);

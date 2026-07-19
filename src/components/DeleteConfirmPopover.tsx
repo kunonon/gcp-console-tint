@@ -54,13 +54,7 @@ export default function DeleteConfirmPopover({
             <Popover.Dialog className="flex max-w-64 flex-col gap-2 p-3">
               <span className="text-sm">{question}</span>
               <span className="truncate font-mono text-sm text-muted">{target}</span>
-              <Button
-                slot="close"
-                variant="danger"
-                size="sm"
-                className="w-full rounded-xl"
-                onPress={onConfirm}
-              >
+              <Button slot="close" variant="danger" size="sm" className="w-full rounded-xl" onPress={onConfirm}>
                 {confirmLabel}
               </Button>
             </Popover.Dialog>

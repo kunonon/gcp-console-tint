@@ -26,11 +26,7 @@ export default function ColorSwatchField({
         onChange={onChange}
         className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
       />
-      <span
-        className={`font-mono text-sm text-muted ${
-          hexHidableOnNarrow ? 'hidden @min-[220px]:inline' : ''
-        }`}
-      >
+      <span className={`font-mono text-sm text-muted ${hexHidableOnNarrow ? 'hidden @min-[220px]:inline' : ''}`}>
         {value}
       </span>
     </label>

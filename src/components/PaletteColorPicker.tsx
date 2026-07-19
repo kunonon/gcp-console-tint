@@ -31,11 +31,7 @@ export default function PaletteColorPicker({
 }: PaletteColorPickerProps) {
   const referencedEntry = paletteEnabled && paletteId ? palette.find((e) => e.id === paletteId) : undefined;
   const isCustomActive = !autoSelected && !referencedEntry;
-  const triggerLabel = autoSelected
-    ? 'Auto'
-    : referencedEntry
-      ? referencedEntry.name || '(unnamed)'
-      : effectiveColor;
+  const triggerLabel = autoSelected ? 'Auto' : referencedEntry ? referencedEntry.name || '(unnamed)' : effectiveColor;
 
   return (
     <Popover>

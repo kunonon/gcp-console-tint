@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
-import type { MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
-import { contrastTextColor } from '../../utils/color';
-import { DEFAULT_SETTINGS, DEFAULT_PROJECT_SETTINGS, loadSettings, cloneProjectSettings } from '../../utils/settings';
-import PaletteColorPicker from '../../components/PaletteColorPicker';
+import { useEffect, useRef, useState } from 'react';
+import AddRuleModal from '../../components/AddRuleModal';
 import ColorSwatchField from '../../components/ColorSwatchField';
 import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
-import AddRuleModal from '../../components/AddRuleModal';
 import MatchTypeSelect from '../../components/MatchTypeSelect';
+import PaletteColorPicker from '../../components/PaletteColorPicker';
+import type { MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
+import { contrastTextColor } from '../../utils/color';
+import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, DEFAULT_SETTINGS, loadSettings } from '../../utils/settings';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -337,8 +337,7 @@ function App() {
     updateCurrentSettings({
       palette: currentSettings.palette.filter((e) => e.id !== id),
       topBarPaletteId: currentSettings.topBarPaletteId === id ? null : currentSettings.topBarPaletteId,
-      platformBarPaletteId:
-        currentSettings.platformBarPaletteId === id ? null : currentSettings.platformBarPaletteId,
+      platformBarPaletteId: currentSettings.platformBarPaletteId === id ? null : currentSettings.platformBarPaletteId,
       platformBarTextPaletteId:
         currentSettings.platformBarTextPaletteId === id ? null : currentSettings.platformBarTextPaletteId,
     });
@@ -398,8 +397,7 @@ function App() {
     updateCurrentSettings({ platformBarTextAuto: true });
   };
 
-  const currentRule =
-    view.type === 'detail' ? settings.projectRules.find((r) => r.id === view.ruleId) : undefined;
+  const currentRule = view.type === 'detail' ? settings.projectRules.find((r) => r.id === view.ruleId) : undefined;
   // Falls back to the built-in defaults only for the transient frame before the "rule
   // disappeared" effect above navigates back to the list.
   const currentSettings: ProjectSettings = currentRule ? currentRule.settings : DEFAULT_PROJECT_SETTINGS;
@@ -507,13 +505,7 @@ function App() {
                       tooltipLabel="Remove color"
                       onConfirm={() => handleRemoveColor(entry.id)}
                     >
-                      <Button
-                        isIconOnly
-                        variant="outline"
-                        size="sm"
-                        aria-label="Remove color"
-                        className="shrink-0"
-                      >
+                      <Button isIconOnly variant="outline" size="sm" aria-label="Remove color" className="shrink-0">
                         <TrashIcon />
                       </Button>
                     </DeleteConfirmPopover>
@@ -531,11 +523,7 @@ function App() {
 
         <Card>
           <Card.Content className="flex flex-col gap-2">
-            <Switch
-              className="w-full"
-              isSelected={currentSettings.topBarEnabled}
-              onChange={handleTopBarEnabledChange}
-            >
+            <Switch className="w-full" isSelected={currentSettings.topBarEnabled} onChange={handleTopBarEnabledChange}>
               <Switch.Content className="flex w-full items-center justify-between">
                 Top bar
                 <Switch.Control>
@@ -694,6 +682,7 @@ function App() {
           {settings.projectRules.length > 0 && (
             <div className="flex flex-col gap-2 border-t border-border pt-2">
               {settings.projectRules.map((rule, index) => (
+                // biome-ignore lint/a11y/noStaticElementInteractions: native HTML5 drag-and-drop row reordering; no keyboard-accessible equivalent yet
                 <div
                   key={rule.id}
                   draggable

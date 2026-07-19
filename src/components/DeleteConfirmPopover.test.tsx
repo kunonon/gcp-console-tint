@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import DeleteConfirmPopover from './DeleteConfirmPopover';
 
 afterEach(() => {
@@ -17,7 +17,9 @@ function renderHarness(onConfirm: () => void) {
         tooltipLabel="Delete"
         onConfirm={onConfirm}
       >
-        <button aria-label="Delete">X</button>
+        <button type="button" aria-label="Delete">
+          X
+        </button>
       </DeleteConfirmPopover>
       <h1>outside content</h1>
     </div>,
@@ -32,7 +34,7 @@ describe('DeleteConfirmPopover', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
   });
 
-  it('has no extra focusable wrapper: Popover.Trigger\'s own Pressable wrapper div is removed from the Tab order (tabindex=-1), leaving the trigger button as the only stop', () => {
+  it("has no extra focusable wrapper: Popover.Trigger's own Pressable wrapper div is removed from the Tab order (tabindex=-1), leaving the trigger button as the only stop", () => {
     renderHarness(() => {});
 
     const button = screen.getByRole('button', { name: 'Delete' });
@@ -174,7 +176,9 @@ describe('DeleteConfirmPopover', () => {
         tooltipLabel="Remove color"
         onConfirm={() => {}}
       >
-        <button aria-label="Remove color">X</button>
+        <button type="button" aria-label="Remove color">
+          X
+        </button>
       </DeleteConfirmPopover>,
     );
 

@@ -1,13 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import {
-  loadSettings,
-  resolveProjectSettings,
-  cloneProjectSettings,
-  DEFAULT_SETTINGS,
-  DEFAULT_PROJECT_SETTINGS,
-  MATCH_TYPES,
-} from './settings';
+import { describe, expect, it } from 'vitest';
 import type { MatchType, ProjectRule, TintSettings } from '../types';
+import {
+  cloneProjectSettings,
+  DEFAULT_PROJECT_SETTINGS,
+  DEFAULT_SETTINGS,
+  loadSettings,
+  MATCH_TYPES,
+  resolveProjectSettings,
+} from './settings';
 
 const CURRENT_VERSION = '0.1.0';
 
@@ -373,10 +373,7 @@ describe('resolveProjectSettings', () => {
   });
 
   it('gives priority to the earlier rule when multiple rules of different matchTypes match the same projectId', () => {
-    const settings = withRules(
-      rule('first', 'exact', 'my-app', '#first'),
-      rule('second', 'prefix', 'my', '#second'),
-    );
+    const settings = withRules(rule('first', 'exact', 'my-app', '#first'), rule('second', 'prefix', 'my', '#second'));
 
     expect(resolveProjectSettings(settings, 'my-app')?.topBarColor).toBe('#first');
   });
@@ -477,10 +474,7 @@ describe('resolveProjectSettings', () => {
     });
 
     it('skips a rule with an invalid regex pattern and evaluates the next rule', () => {
-      const settings = withRules(
-        rule('invalid', 'regex', '(', '#invalid'),
-        rule('valid', 'regex', 'my-app', '#valid'),
-      );
+      const settings = withRules(rule('invalid', 'regex', '(', '#invalid'), rule('valid', 'regex', 'my-app', '#valid'));
 
       expect(resolveProjectSettings(settings, 'my-app')?.topBarColor).toBe('#valid');
     });

@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, within, fireEvent } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { MatchType } from '../types';
 import AddRuleModal from './AddRuleModal';
 import { MATCH_TYPE_LABELS } from './MatchTypeSelect';
-import type { MatchType } from '../types';
 
 afterEach(() => {
   cleanup();
@@ -13,7 +13,9 @@ function renderHarness(onAdd: (matchType: MatchType, pattern: string) => void) {
   return render(
     <div>
       <AddRuleModal onAdd={onAdd}>
-        <button aria-label="Add rule">+</button>
+        <button type="button" aria-label="Add rule">
+          +
+        </button>
       </AddRuleModal>
       <h1>outside content</h1>
     </div>,
@@ -59,7 +61,7 @@ describe('AddRuleModal', () => {
     expect(within(dialog).getByRole('heading', { name: 'Add project rule' })).toBeTruthy();
   });
 
-  it('has no extra focusable wrapper: Modal.Trigger\'s own Pressable wrapper div is removed from the Tab order (tabindex=-1), leaving the trigger Button as the only stop', () => {
+  it("has no extra focusable wrapper: Modal.Trigger's own Pressable wrapper div is removed from the Tab order (tabindex=-1), leaving the trigger Button as the only stop", () => {
     renderHarness(() => {});
 
     const button = screen.getByRole('button', { name: 'Add rule' });
