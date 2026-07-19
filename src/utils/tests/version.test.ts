@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareVersions, VersionComparisonResult } from './version';
+import { compareVersions, VersionComparisonResult } from '../version';
 
 const { Older, Equal, Newer } = VersionComparisonResult;
 

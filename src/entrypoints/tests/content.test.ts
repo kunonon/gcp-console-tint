@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import contentScript from './entrypoints/content';
+import contentScript from '../content';
 
 interface PaletteEntry {
   id: string;

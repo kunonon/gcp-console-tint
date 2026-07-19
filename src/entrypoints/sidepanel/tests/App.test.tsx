@@ -2,9 +2,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { MATCH_TYPE_LABELS } from '../../components/MatchTypeSelect';
-import { effectiveSchemaVersion, loadSettings } from '../../utils/settings';
-import App from './App';
+import { MATCH_TYPE_LABELS } from '../../../components/MatchTypeSelect';
+import { effectiveSchemaVersion, loadSettings } from '../../../utils/settings';
+import App from '../App';
 
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 

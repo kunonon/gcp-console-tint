@@ -8,8 +8,8 @@ import type {
   ProjectSettings,
   TintSettings,
   TopBarSettings,
-} from '../types';
-import { CURRENT_SCHEMA_VERSION } from './migrations';
+} from '../../types';
+import { CURRENT_SCHEMA_VERSION } from '../migrations';
 import {
   cloneProjectSettings,
   DEFAULT_PROJECT_SETTINGS,
@@ -19,7 +19,7 @@ import {
   MATCH_TYPES,
   resolveProjectSettings,
   resolveSelectedColor,
-} from './settings';
+} from '../settings';
 
 const CURRENT_VERSION = '0.1.0';
 

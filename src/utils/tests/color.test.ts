@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contrastTextColor, stripeGradient } from './color';
+import { contrastTextColor, stripeGradient } from '../color';
 
 describe('contrastTextColor', () => {
   it('returns white text for a dark background', () => {

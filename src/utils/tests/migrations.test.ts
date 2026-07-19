@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIGRATIONS, type SchemaMigration } from './migrations';
-import { migrateStoredSettings } from './settings';
-import { compareVersions, VersionComparisonResult } from './version';
+import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIGRATIONS, type SchemaMigration } from '../migrations';
+import { migrateStoredSettings } from '../settings';
+import { compareVersions, VersionComparisonResult } from '../version';
 
 describe('runMigrations', () => {
   // SCHEMA_MIGRATIONS is currently EMPTY (see migrations.ts): the extension is unreleased, so

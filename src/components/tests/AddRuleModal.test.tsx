@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MatchType } from '../types';
-import AddRuleModal from './AddRuleModal';
-import { MATCH_TYPE_LABELS } from './MatchTypeSelect';
+import type { MatchType } from '../../types';
+import AddRuleModal from '../AddRuleModal';
+import { MATCH_TYPE_LABELS } from '../MatchTypeSelect';
 
 afterEach(() => {
   cleanup();
