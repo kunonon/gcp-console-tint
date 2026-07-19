@@ -1,9 +1,14 @@
+// The three possible outcomes of a version comparison, as literal types rather than a
+// bare `number`: callers can exhaustively match on it, and the compiler proves this
+// function never returns anything else.
+export type VersionComparison = -1 | 0 | 1;
+
 // Compares two dot-separated numeric version strings (e.g. "0.1.0" vs "0.2.0").
 // Returns -1 if a < b, 0 if a === b, 1 if a > b.
 // Defensive: if either side fails to parse as a dot-separated sequence of non-negative
 // integers, the comparison is resolved as -1 so callers using
 // `compareVersions(x, threshold) >= 0` reject invalid input rather than accept it.
-export function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): VersionComparison {
   const parse = (value: string): number[] | null => {
     if (typeof value !== 'string' || value.trim() === '') return null;
     const nums = value.split('.').map(Number);
