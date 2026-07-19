@@ -82,7 +82,9 @@ export default defineContentScript({
         if (animate) {
           textDeclarations.push('transition: color 300ms ease !important;');
         }
-        rules.push(`.cfc-platform-bar-left *, .cfc-platform-bar-right * { ${textDeclarations.join(' ')} }`);
+        rules.push(
+          `.cfc-platform-bar-left *, .cfc-platform-bar-right *, .pcc-platform-bar-button * { ${textDeclarations.join(' ')} }`,
+        );
       }
       platformBarStyle.textContent = rules.join('\n');
     };

@@ -359,6 +359,7 @@ describe('content script', () => {
     const { styleEl } = getElements();
     expect(styleEl.textContent).not.toContain('#ocb-platform-bar');
     expect(styleEl.textContent).toContain('.cfc-platform-bar-left');
+    expect(styleEl.textContent).toContain('.pcc-platform-bar-button');
   });
 
   it('omits only the text color rule when platformBarTextEnabled is false', async () => {
@@ -371,6 +372,7 @@ describe('content script', () => {
     const { styleEl } = getElements();
     expect(styleEl.textContent).toContain('#ocb-platform-bar');
     expect(styleEl.textContent).not.toContain('.cfc-platform-bar-left');
+    expect(styleEl.textContent).not.toContain('.pcc-platform-bar-button');
   });
 
   it('produces an empty style tag when both platformBarEnabled and platformBarTextEnabled are false', async () => {
