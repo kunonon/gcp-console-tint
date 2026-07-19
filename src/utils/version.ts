@@ -1,7 +1,9 @@
 // Named comparison results — how `a` stands relative to `b` — so call sites read as
 // intent, e.g. `compareVersions(stored, floor) === VersionComparisonResult.Older`.
-// String-valued on purpose: numeric idioms like `< 0` on the result are a type error, so
-// the named form is the only way to branch on it.
+// String-valued on purpose: numeric idioms like `< 0` on the result are a type error.
+// (A raw literal like `=== 'older'` still typechecks — string unions are structural; only
+// a TS enum or symbol values would forbid that, at the cost of non-erasable syntax or
+// non-serializable values. The named constants are the convention here.)
 export const VersionComparisonResult = {
   Older: 'older',
   Equal: 'equal',
