@@ -1,0 +1,48 @@
+name: Label PR
+
+# pull_request_target (not pull_request) so labeling also works for fork PRs,
+# whose pull_request token is read-only. Safe here because this workflow never
+# checks out or executes PR code — it only reads the title and edits labels.
+on:
+  pull_request_target:
+    types: [opened, edited]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: label-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply type label from the PR title prefix
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed via env, not inline ${{ }} interpolation in the script, so a
+          # crafted PR title can't inject shell code.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          # Conventional-commit type = everything before the first ':', '(' or '!'.
+          type="${PR_TITLE%%[:(!]*}"
+          case "$type" in
+            feat) label=enhancement ;;
+            fix) label=bug ;;
+            docs) label=documentation ;;
+            ci|build) label=ci ;;
+            chore|refactor|test|perf|style) label=maintenance ;;
+            *) label='' ;;
+          esac
+
+          # Drop stale type labels first so an edited title re-categorizes cleanly.
+          for known in enhancement bug documentation ci maintenance; do
+            if [ "$known" != "$label" ]; then
+              gh pr edit "$PR_URL" --remove-label "$known" 2> /dev/null || true
+            fi
+          done
+          if [ -n "$label" ]; then
+            gh pr edit "$PR_URL" --add-label "$label"
+          fi

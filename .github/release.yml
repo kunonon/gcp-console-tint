@@ -1,0 +1,31 @@
+# Shapes GitHub's auto-generated release notes — applied to both the release PR
+# body (generate-notes API) and the published Release (--generate-notes).
+# Bot-authored PRs (the release PRs themselves) are excluded; both login
+# spellings are listed because author matching differs across GitHub surfaces.
+changelog:
+  exclude:
+    authors:
+      - github-actions
+      - github-actions[bot]
+  # Categories match by PR label, not by title prefix; label-pr.yml applies the
+  # labels from conventional-commit titles (feat:/fix:/docs:/ci:/chore:...).
+  categories:
+    - title: 🚀 Features
+      labels:
+        - enhancement
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
+    - title: 📖 Documentation
+      labels:
+        - documentation
+    - title: 🧰 Maintenance
+      labels:
+        - maintenance
+        - ci
+    - title: 📦 Dependencies
+      labels:
+        - dependencies
+    - title: Other Changes
+      labels:
+        - "*"
