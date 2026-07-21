@@ -60,7 +60,25 @@ If dev-mode styles look stale after larger edits, restart the server: `docker co
 
 ## CI
 
-GitHub Actions runs on every pull request and push to `main`: Biome lint, typecheck, the Vitest suite, and both browser builds, executed as a parallel step group.
+GitHub Actions runs on every pull request and push to `develop` or `main`: Biome lint, typecheck, the Vitest suite, and both browser builds, executed as a parallel step group.
+
+## Branching and releases
+
+`develop` is the default branch. Feature work is PRed into `develop` (squash merges are fine there).
+
+Every merge into `develop` automatically creates or updates a release PR (`develop` → `main`) listing the changes since the last release.
+
+To ship a release:
+
+1. If needed, merge a version-bump PR (bumping `version` in `package.json`) into `develop`.
+2. Merge the release PR into `main` using **Create a merge commit** — the only method the `main` ruleset allows, since squashing would break the invariant that `develop`'s history is a superset of `main`'s.
+
+Merging the release PR triggers CI to tag `v{version}`, build the Chrome and Firefox zips, and publish a GitHub Release with generated notes and the zips attached.
+
+Two things worth knowing:
+
+- The release PR is opened by `github-actions[bot]`, so CI checks don't run on it when it's first opened — close and reopen the PR to trigger them if you want a green check before merging.
+- `develop`'s required status check is bound to the CI job name `Lint, typecheck, test, build`; renaming that job requires updating the `develop` branch ruleset to match.
 
 ## Project layout
 

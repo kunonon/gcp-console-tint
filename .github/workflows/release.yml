@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve version and guard against existing tag
+        run: |
+          version="$(jq -r .version package.json)"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" > /dev/null; then
+            echo "::error::Tag v${version} already exists. Bump the version in package.json (via a PR to develop) before merging a release PR."
+            exit 1
+          else
+            echo "VERSION=${version}" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build extension zips
+        run: |
+          pnpm zip
+          pnpm zip:firefox
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${VERSION}" --target "${GITHUB_SHA}" --title "v${VERSION}" --generate-notes .output/*.zip

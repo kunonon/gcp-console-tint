@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches:
+      - develop
       - main
   workflow_dispatch:
 
@@ -51,3 +52,21 @@ jobs:
 
           - name: Build (Chrome + Firefox)
             run: pnpm build && pnpm build:firefox
+
+  version-check:
+    name: Version bump check (release PRs)
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check version was bumped
+        run: |
+          version="$(jq -r .version package.json)"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" > /dev/null; then
+            echo "::error::package.json is still ${version}, which is already released as v${version}. Merge a version bump PR into develop before releasing."
+            exit 1
+          fi
