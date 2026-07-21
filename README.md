@@ -71,14 +71,14 @@ Every merge into `develop` automatically creates or updates a release PR (`devel
 To ship a release:
 
 1. If needed, merge a version-bump PR (bumping `version` in `package.json`) into `develop`.
-2. Merge the release PR into `main` using **Create a merge commit** — the only method the `main` ruleset allows, since squashing would break the invariant that `develop`'s history is a superset of `main`'s.
+2. On the release PR, click **Approve and run** on its held CI run (bot-opened PRs are held with `action_required` until a maintainer approves the run) and wait for green. The required version bump check fails here if step 1 was skipped.
+3. Approve the release PR (the `main` ruleset requires one approving review, and approvals reset whenever `develop` moves), then merge it using **Create a merge commit** — the only method the `main` ruleset allows, since squashing would break the invariant that `develop`'s history is a superset of `main`'s.
 
 Merging the release PR triggers CI to tag `v{version}`, build the Chrome and Firefox zips, and publish a GitHub Release with generated notes and the zips attached.
 
-Two things worth knowing:
+One thing worth knowing:
 
-- The release PR is opened by `github-actions[bot]`, so its CI run is held for approval (`action_required`) — click **Approve and run** on the held run if you want a green check before merging.
-- `develop`'s required status check is bound to the CI job name `Lint, typecheck, test, build`; renaming that job requires updating the `develop` branch ruleset to match.
+- Required status checks are bound to CI job names: `Lint, typecheck, test, build` (required on `develop` and `main`) and `Version bump check (release PRs)` (required on `main`). Renaming those jobs requires updating the branch rulesets to match.
 
 ## Project layout
 
