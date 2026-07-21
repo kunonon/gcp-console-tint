@@ -1,0 +1,9 @@
+# Shapes GitHub's auto-generated release notes — applied to both the release PR
+# body (generate-notes API) and the published Release (--generate-notes).
+# Bot-authored PRs (the release PRs themselves) are excluded; both login
+# spellings are listed because author matching differs across GitHub surfaces.
+changelog:
+  exclude:
+    authors:
+      - github-actions
+      - github-actions[bot]
