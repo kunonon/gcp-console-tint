@@ -4,8 +4,9 @@ on:
   push:
     branches: [develop]
 
+# contents: write — the generate-notes API is a Releases endpoint and 403s with read-only.
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -27,7 +28,11 @@ jobs:
         run: |
           version="$(jq -r .version package.json)"
 
-          notes="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="v${version}" -f target_commitish=develop --jq .body || true)"
+          # On failure gh api prints the error response to stdout, so reset notes
+          # instead of letting the error JSON leak into the PR body.
+          if ! notes="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="v${version}" -f target_commitish=develop --jq .body)"; then
+            notes=""
+          fi
 
           body="$(printf '%s\n\n---\n\nMerging this PR tags `v%s` and publishes a GitHub Release with the extension zips attached.\nMerge with **Create a merge commit** (the only method allowed on `main`).\n' "$notes" "$version")"
 
