@@ -77,7 +77,7 @@ Merging the release PR triggers CI to tag `v{version}`, build the Chrome and Fir
 
 Two things worth knowing:
 
-- The release PR is opened by `github-actions[bot]`, so CI checks don't run on it when it's first opened — close and reopen the PR to trigger them if you want a green check before merging.
+- The release PR is opened by `github-actions[bot]`, so its CI run is held for approval (`action_required`) — click **Approve and run** on the held run if you want a green check before merging.
 - `develop`'s required status check is bound to the CI job name `Lint, typecheck, test, build`; renaming that job requires updating the `develop` branch ruleset to match.
 
 ## Project layout
