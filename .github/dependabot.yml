@@ -1,0 +1,23 @@
+# Routine version updates (grouped weekly PRs), on top of the security alerts
+# GitHub raises by default. The github-actions ecosystem also keeps the
+# SHA-pinned actions in .github/workflows/ current (Dependabot updates the SHA
+# and the trailing version comment together).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
