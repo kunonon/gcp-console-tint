@@ -1,8 +1,12 @@
 name: Release
 
+# workflow_dispatch: manual recovery button (e.g. re-release after a cancelled
+# run). The guard step rejects any ref other than main, so a dispatch started
+# from develop cannot tag the wrong commit.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,12 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Resolve version and guard against existing tag
         run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::Releases only run from main (got ${GITHUB_REF}). Select the main branch when dispatching manually."
+            exit 1
+          fi
           version="$(jq -r .version package.json)"
           if git ls-remote --exit-code --tags origin "refs/tags/v${version}" > /dev/null; then
             echo "::error::Tag v${version} already exists. Bump the version in package.json (via a PR to develop) before merging a release PR."
@@ -31,10 +39,10 @@ jobs:
           fi
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm

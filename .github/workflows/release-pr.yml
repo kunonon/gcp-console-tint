@@ -1,8 +1,11 @@
 name: Release PR
 
+# workflow_dispatch: manual body refresh (e.g. after retro-labeling merged PRs)
+# without waiting for the next develop push.
 on:
   push:
     branches: [develop]
+  workflow_dispatch:
 
 # contents: write — the generate-notes API is a Releases endpoint and 403s with read-only.
 permissions:
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 

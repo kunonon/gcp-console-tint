@@ -19,13 +19,15 @@ changelog:
     - title: 📖 Documentation
       labels:
         - documentation
+    # Dependencies must precede Maintenance: categories match first-wins, and a
+    # dependency PR can also carry a maintenance/ci type label.
+    - title: 📦 Dependencies
+      labels:
+        - dependencies
     - title: 🧰 Maintenance
       labels:
         - maintenance
         - ci
-    - title: 📦 Dependencies
-      labels:
-        - dependencies
     - title: Other Changes
       labels:
         - "*"
