@@ -16,9 +16,14 @@ A browser extension (Chrome MV3 / Firefox MV2) that tints parts of the [Google C
 
 Click the toolbar icon: the settings open in the side panel (Chrome) or sidebar (Firefox), so you can adjust colors while the console stays visible.
 
-## Install from source
+## Install
 
-Not published to the extension stores yet. Build inside Docker (no Node or pnpm needed on the host):
+- **Chrome**: install from the [Chrome Web Store](https://chromewebstore.google.com/detail/gcp-console-tint/kaekepkbdapagaiikdbhdlkbefoepghi).
+- **Firefox**: not published to AMO yet — build from source below.
+
+### Build from source
+
+Build inside Docker (no Node or pnpm needed on the host):
 
 ```sh
 docker compose run --rm dev sh -c "corepack enable && pnpm install && pnpm build"          # Chrome  → .output/chrome-mv3
@@ -60,7 +65,7 @@ If dev-mode styles look stale after larger edits, restart the server: `docker co
 
 ## CI
 
-GitHub Actions runs on every pull request and push to `develop` or `main`: Biome lint, typecheck, the Vitest suite, and both browser builds, executed as a parallel step group.
+GitHub Actions runs on every pull request and push to `main`: Biome lint, typecheck, the Vitest suite, and both browser builds, executed as a parallel step group. Commits on `develop` are validated by the pull-request runs (feature PRs, and the release PR whose head is `develop`), so there is no separate develop push run. CodeQL code scanning (GitHub default setup: JavaScript/TypeScript and Actions workflows) runs independently on pushes and pull requests.
 
 ## Branching and releases
 
@@ -76,9 +81,29 @@ To ship a release:
 
 Merging the release PR triggers CI to tag `v{version}`, build the Chrome and Firefox zips, and publish a GitHub Release with generated notes and the zips attached.
 
+Store submission is a separate, manual step: publishing to the Chrome Web Store (or AMO) happens independently of the GitHub Release and on its own timing.
+
 One thing worth knowing:
 
 - Required status checks are bound to CI job names: `Lint, typecheck, test, build` (required on `develop` and `main`) and `Version bump check (release PRs)` (required on `main`). Renaming those jobs requires updating the branch rulesets to match.
+
+### Release notes and labels
+
+Release notes are generated from merged PRs and categorized by PR label (config in `.github/release.yml`). Labels are applied automatically from the conventional-commit title prefix by `label-pr.yml`:
+
+| Title prefix | Label | Notes category |
+|---|---|---|
+| `feat:` | `enhancement` | 🚀 Features |
+| `fix:` | `bug` | 🐛 Bug Fixes |
+| `docs:` | `documentation` | 📖 Documentation |
+| `ci:` / `build:` | `ci` | 🧰 Maintenance |
+| `chore:` / `refactor:` / `test:` / `perf:` / `style:` | `maintenance` | 🧰 Maintenance |
+
+Dependabot PRs keep Dependabot's own `dependencies` label (📦 Dependencies). PRs without a recognized prefix land under "Other Changes".
+
+### Rolling back a release
+
+Release tags are immutable — a tag ruleset blocks moving or deleting `v*` tags for everyone, including admins — so a bad release is rolled forward, not back: fix on `develop`, bump the version, and ship the next release. In a genuine emergency, an admin can temporarily disable the ruleset under Settings → Rules, operate, and re-enable it.
 
 ## Project layout
 
