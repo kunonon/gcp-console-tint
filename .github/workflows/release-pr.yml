@@ -1,0 +1,57 @@
+name: Release PR
+
+# workflow_dispatch: manual body refresh (e.g. after retro-labeling merged PRs)
+# without waiting for the next develop push.
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+# contents: write — the generate-notes API is a Releases endpoint and 403s with read-only.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Create or update release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="$(jq -r .version package.json)"
+
+          # On failure gh api prints the error response to stdout, so reset notes
+          # instead of letting the error JSON leak into the PR body.
+          if ! notes="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="v${version}" -f target_commitish=develop --jq .body)"; then
+            notes=""
+          fi
+
+          body="$(printf '%s\n\n---\n\nMerging this PR tags `v%s` and publishes a GitHub Release with the extension zips attached.\nMerge with **Create a merge commit** (the only method allowed on `main`).\n' "$notes" "$version")"
+
+          # Issuance-time bump guard: the required check on the PR is what
+          # enforces this; the title/body warning makes it visible without
+          # opening the checks tab.
+          title="Release v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" > /dev/null; then
+            title="Release v${version} ⚠️ version bump required"
+            body="$(printf '> [!WARNING]\n> `v%s` is already released. Merge a version bump PR into `develop` before merging this release PR.\n\n%s' "$version" "$body")"
+          fi
+
+          existing="$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // empty')"
+
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+          else
+            gh pr create --base main --head develop --title "$title" --body "$body"
+          fi

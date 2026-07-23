@@ -1,0 +1,29 @@
+name: Version bump check
+
+# A dedicated workflow (not a conditional job in ci.yml) so that push runs never
+# emit a skipped check run under the same name — a skipped duplicate on the same
+# commit could ambiguously satisfy the required check on the release PR.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    name: Version bump check (release PRs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check version was bumped
+        run: |
+          version="$(jq -r .version package.json)"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" > /dev/null; then
+            echo "::error::package.json is still ${version}, which is already released as v${version}. Merge a version bump PR into develop before releasing."
+            exit 1
+          fi
