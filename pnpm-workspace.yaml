@@ -1,3 +1,13 @@
 allowBuilds:
   esbuild: true
   spawn-sync: true
+
+# Security overrides for transitive deps of wxt's bundled web-ext-run (browser
+# auto-launch, disabled via webExt.disabled). Upstream pins exact vulnerable
+# versions, so in-range updates cannot pick these up. Drop each entry once
+# web-ext-run ships releases that satisfy it on its own.
+overrides:
+  shell-quote: '>=1.9.0' # GHSA: quote() newline escape (critical), parse() DoS (high)
+  tmp: '>=0.2.6' # GHSA: path traversal via unsanitized prefix/postfix (high)
+  adm-zip: '>=0.6.0' # GHSA: crafted ZIP triggers 4GB memory allocation (high)
+  uuid: '>=11.1.1' # GHSA: missing buffer bounds check in v3/v5/v6 (medium)
