@@ -313,7 +313,7 @@ describe('App', () => {
     const paletteCard = getCard('Color palette');
     const nameInputs = within(paletteCard).getAllByLabelText('Color name') as HTMLInputElement[];
     expect(nameInputs).toHaveLength(1);
-    expect(nameInputs[0].value).toBe('Primary');
+    expect(nameInputs[0]!.value).toBe('Primary');
 
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
     expect(screen.getByRole('button', { name: 'Platform Bar color' }).textContent).toContain('Primary');
@@ -329,7 +329,7 @@ describe('App', () => {
 
     const stored = await getStoredSettings();
     expect(stored.projectRules).toHaveLength(1);
-    const settings = stored.projectRules[0].settings;
+    const settings = stored.projectRules[0]!.settings;
     expect(settings.topBar.color.custom).toBe('#ff6d00');
     expect(settings.topBar.color.paletteId).toBe('default');
     expect(settings.topBar.height).toBe(4);
@@ -364,22 +364,22 @@ describe('App', () => {
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries).toHaveLength(2);
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries).toHaveLength(2);
     });
 
     const colorInputs = paletteCard.querySelectorAll('input[type="color"]');
-    fireEvent.change(colorInputs[1], { target: { value: '#00ff00' } });
+    fireEvent.change(colorInputs[1]!, { target: { value: '#00ff00' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries[1].color).toBe('#00ff00');
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries[1]!.color).toBe('#00ff00');
     });
-    const secondEntry = (await getStoredSettings()).projectRules[0].settings.palette.entries[1];
+    const secondEntry = (await getStoredSettings()).projectRules[0]!.settings.palette.entries[1]!;
 
     const dialog = await openPicker(user, 'Top bar color');
     fireEvent.click(getPaletteSwatch(dialog, secondEntry.name));
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.topBar.color.paletteId).toBe(secondEntry.id);
+      expect(stored.projectRules[0]!.settings.topBar.color.paletteId).toBe(secondEntry.id);
     });
 
     await closePicker(user);
@@ -398,8 +398,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.topBar.color.paletteId).toBeNull();
-      expect(stored.projectRules[0].settings.topBar.color.custom).toBe('#654321');
+      expect(stored.projectRules[0]!.settings.topBar.color.paletteId).toBeNull();
+      expect(stored.projectRules[0]!.settings.topBar.color.custom).toBe('#654321');
     });
 
     await closePicker(user);
@@ -418,8 +418,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.platformBar.color.paletteId).toBeNull();
-      expect(stored.projectRules[0].settings.platformBar.color.custom).toBe('#101010');
+      expect(stored.projectRules[0]!.settings.platformBar.color.paletteId).toBeNull();
+      expect(stored.projectRules[0]!.settings.platformBar.color.custom).toBe('#101010');
     });
   });
 
@@ -434,7 +434,7 @@ describe('App', () => {
     fireEvent.click(getPaletteSwatch(dialog, 'Primary'));
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBarText.color.paletteId).toBe('default');
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBarText.color.paletteId).toBe('default');
     });
 
     await closePicker(user);
@@ -458,8 +458,8 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
 
     const stored = await getStoredSettings();
-    expect(stored.projectRules[0].settings.topBar.color.custom).toBe('#ff6d00');
-    expect(stored.projectRules[0].settings.palette.entries[0].color).toBe('#123456');
+    expect(stored.projectRules[0]!.settings.topBar.color.custom).toBe('#ff6d00');
+    expect(stored.projectRules[0]!.settings.palette.entries[0]!.color).toBe('#123456');
   });
 
   it('adds a new palette entry via the "Add color" icon button and exposes it in the picker', async () => {
@@ -474,8 +474,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.palette.entries).toHaveLength(2);
-      expect(stored.projectRules[0].settings.palette.entries[1].name).toBe('Color 2');
+      expect(stored.projectRules[0]!.settings.palette.entries).toHaveLength(2);
+      expect(stored.projectRules[0]!.settings.palette.entries[1]!.name).toBe('Color 2');
     });
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -495,7 +495,7 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.palette.entries.map((e) => e.name)).toEqual([
+      expect(stored.projectRules[0]!.settings.palette.entries.map((e) => e.name)).toEqual([
         'Primary',
         'Color 2',
         'Color 3',
@@ -515,7 +515,7 @@ describe('App', () => {
     await user.click(addButton); // -> ['Primary', 'Color 2']
     await user.click(addButton); // -> ['Primary', 'Color 2', 'Color 3']
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries.map((e) => e.name)).toEqual([
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries.map((e) => e.name)).toEqual([
         'Primary',
         'Color 2',
         'Color 3',
@@ -524,9 +524,9 @@ describe('App', () => {
 
     // Remove the middle entry ("Color 2"), leaving ['Primary', 'Color 3'] (length 2).
     const removeButtons = within(getCard('Color palette')).getAllByRole('button', { name: 'Remove color' });
-    await confirmDelete(user, removeButtons[1], 'Remove');
+    await confirmDelete(user, removeButtons[1]!, 'Remove');
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries.map((e) => e.name)).toEqual([
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries.map((e) => e.name)).toEqual([
         'Primary',
         'Color 3',
       ]);
@@ -536,7 +536,7 @@ describe('App', () => {
     // with the "Color 3" that was already there.
     await user.click(within(getCard('Color palette')).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries.map((e) => e.name)).toEqual([
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries.map((e) => e.name)).toEqual([
         'Primary',
         'Color 3',
         'Color 3',
@@ -556,7 +556,7 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.palette.entries[0].name).toBe('Brand');
+      expect(stored.projectRules[0]!.settings.palette.entries[0]!.name).toBe('Brand');
     });
   });
 
@@ -571,7 +571,7 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.palette.entries[0].color).toBe('#a1b2c3');
+      expect(stored.projectRules[0]!.settings.palette.entries[0]!.color).toBe('#a1b2c3');
     });
   });
 
@@ -585,18 +585,18 @@ describe('App', () => {
     const paletteCard = getCard('Color palette');
     await user.click(within(paletteCard).getByRole('button', { name: 'Add color' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries).toHaveLength(2);
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries).toHaveLength(2);
     });
 
     // "default" (Primary) is referenced by Top bar and Platform Bar; remove the second, unreferenced entry.
     const removeButtons = within(paletteCard).getAllByRole('button', { name: 'Remove color' });
-    await confirmDelete(user, removeButtons[1], 'Remove');
+    await confirmDelete(user, removeButtons[1]!, 'Remove');
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      const settings = stored.projectRules[0].settings;
+      const settings = stored.projectRules[0]!.settings;
       expect(settings.palette.entries).toHaveLength(1);
-      expect(settings.palette.entries[0].id).toBe('default');
+      expect(settings.palette.entries[0]!.id).toBe('default');
       expect(settings.topBar.color.paletteId).toBe('default');
       expect(settings.platformBar.color.paletteId).toBe('default');
     });
@@ -629,7 +629,7 @@ describe('App', () => {
     const nameInput = within(getCard('Color palette')).getByLabelText('Color name') as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: '' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries[0].name).toBe('');
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries[0]!.name).toBe('');
     });
 
     const paletteCard = getCard('Color palette');
@@ -672,7 +672,7 @@ describe('App', () => {
     await confirmDelete(user, within(paletteCard).getByRole('button', { name: 'Remove color' }), 'Remove');
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries).toHaveLength(0);
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries).toHaveLength(0);
     });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -714,7 +714,7 @@ describe('App', () => {
     const textDialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getPaletteSwatch(textDialog, 'Primary'));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBarText.color.paletteId).toBe('default');
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBarText.color.paletteId).toBe('default');
     });
     await closePicker(user);
 
@@ -722,7 +722,7 @@ describe('App', () => {
     await confirmDelete(user, within(paletteCard).getByRole('button', { name: 'Remove color' }), 'Remove');
 
     await waitFor(async () => {
-      const settings = (await getStoredSettings()).projectRules[0].settings;
+      const settings = (await getStoredSettings()).projectRules[0]!.settings;
       expect(settings.platformBarText.color.paletteId).toBeNull();
       expect(settings.topBar.color.paletteId).toBeNull();
       expect(settings.platformBar.color.paletteId).toBeNull();
@@ -758,7 +758,7 @@ describe('App', () => {
     const nameInput = within(getCard('Color palette')).getByLabelText('Color name') as HTMLInputElement;
     fireEvent.change(nameInput, { target: { value: '' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.entries[0].name).toBe('');
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries[0]!.name).toBe('');
     });
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -776,7 +776,7 @@ describe('App', () => {
     await user.click(paletteSwitch);
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.enabled).toBe(false);
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.enabled).toBe(false);
     });
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#ff6d00');
 
@@ -796,14 +796,14 @@ describe('App', () => {
     await user.click(paletteSwitch);
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.palette.enabled).toBe(false);
-      expect(stored.projectRules[0].settings.palette.entries).toHaveLength(1);
-      expect(stored.projectRules[0].settings.topBar.color.paletteId).toBe('default');
+      expect(stored.projectRules[0]!.settings.palette.enabled).toBe(false);
+      expect(stored.projectRules[0]!.settings.palette.entries).toHaveLength(1);
+      expect(stored.projectRules[0]!.settings.topBar.color.paletteId).toBe('default');
     });
 
     await user.click(screen.getByRole('switch', { name: 'Color palette' }));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.palette.enabled).toBe(true);
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.enabled).toBe(true);
     });
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
   });
@@ -821,9 +821,9 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.topBar.color.paletteId).toBeNull();
-      expect(stored.projectRules[0].settings.platformBar.color.paletteId).toBeNull();
-      expect(stored.projectRules[0].settings.palette.entries).toHaveLength(0);
+      expect(stored.projectRules[0]!.settings.topBar.color.paletteId).toBeNull();
+      expect(stored.projectRules[0]!.settings.platformBar.color.paletteId).toBeNull();
+      expect(stored.projectRules[0]!.settings.palette.entries).toHaveLength(0);
     });
 
     const dialog = await openPicker(user, 'Top bar color');
@@ -833,7 +833,7 @@ describe('App', () => {
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#777777' } });
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.topBar.color.custom).toBe('#777777');
+      expect(stored.projectRules[0]!.settings.topBar.color.custom).toBe('#777777');
     });
   });
 
@@ -864,7 +864,7 @@ describe('App', () => {
     fireEvent.click(getAutoButton(dialog));
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBarText.auto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBarText.auto).toBe(true);
     });
 
     await closePicker(user);
@@ -881,14 +881,14 @@ describe('App', () => {
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBarText.auto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBarText.auto).toBe(true);
     });
     await closePicker(user);
 
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#000080' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBar.color.custom).toBe('#000080');
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBar.color.custom).toBe('#000080');
     });
     await closePicker(user);
 
@@ -899,7 +899,7 @@ describe('App', () => {
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#ffff00' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBar.color.custom).toBe('#ffff00');
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBar.color.custom).toBe('#ffff00');
     });
     await closePicker(user);
 
@@ -918,7 +918,7 @@ describe('App', () => {
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBarText.auto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBarText.auto).toBe(true);
     });
     await closePicker(user);
 
@@ -927,8 +927,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.platformBarText.auto).toBe(false);
-      expect(stored.projectRules[0].settings.platformBarText.color.paletteId).toBe('default');
+      expect(stored.projectRules[0]!.settings.platformBarText.auto).toBe(false);
+      expect(stored.projectRules[0]!.settings.platformBarText.color.paletteId).toBe('default');
     });
   });
 
@@ -942,7 +942,7 @@ describe('App', () => {
     let dialog = await openPicker(user, 'Platform Bar text color');
     fireEvent.click(getAutoButton(dialog));
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.platformBarText.auto).toBe(true);
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBarText.auto).toBe(true);
     });
     await closePicker(user);
 
@@ -951,9 +951,9 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.platformBarText.auto).toBe(false);
-      expect(stored.projectRules[0].settings.platformBarText.color.custom).toBe('#333333');
-      expect(stored.projectRules[0].settings.platformBarText.color.paletteId).toBeNull();
+      expect(stored.projectRules[0]!.settings.platformBarText.auto).toBe(false);
+      expect(stored.projectRules[0]!.settings.platformBarText.color.custom).toBe('#333333');
+      expect(stored.projectRules[0]!.settings.platformBarText.color.paletteId).toBeNull();
     });
   });
 
@@ -970,7 +970,7 @@ describe('App', () => {
     fireEvent.change(heightInput, { target: { value: '10' } });
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.topBar.height).toBe(10);
+      expect((await getStoredSettings()).projectRules[0]!.settings.topBar.height).toBe(10);
     });
   });
 
@@ -984,13 +984,13 @@ describe('App', () => {
     const heightInput = within(getCard('Top bar')).getByLabelText('Top bar height') as HTMLInputElement;
     fireEvent.change(heightInput, { target: { value: '15' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.topBar.height).toBe(15);
+      expect((await getStoredSettings()).projectRules[0]!.settings.topBar.height).toBe(15);
     });
 
     fireEvent.change(heightInput, { target: { value: '' } });
 
     // No save happens for the empty value, so the last valid value remains in storage.
-    expect((await getStoredSettings()).projectRules[0].settings.topBar.height).toBe(15);
+    expect((await getStoredSettings()).projectRules[0]!.settings.topBar.height).toBe(15);
   });
 
   it('Top bar: the Stripes switch toggles topBar.stripes in storage', async () => {
@@ -1006,7 +1006,7 @@ describe('App', () => {
     await user.click(stripesSwitch);
 
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.topBar.stripes).toBe(true);
+      expect((await getStoredSettings()).projectRules[0]!.settings.topBar.stripes).toBe(true);
     });
   });
 
@@ -1026,8 +1026,8 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0].settings.platformBar.stripes).toBe(true);
-      expect(stored.projectRules[0].settings.topBar.stripes).toBe(false);
+      expect(stored.projectRules[0]!.settings.platformBar.stripes).toBe(true);
+      expect(stored.projectRules[0]!.settings.topBar.stripes).toBe(false);
     });
   });
 
@@ -1228,14 +1228,14 @@ describe('App', () => {
     await openRuleDetail(user, 'my-project');
     fireEvent.change(within(getCard('Top bar')).getByLabelText('Top bar height'), { target: { value: '19' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0].settings.topBar.height).toBe(19);
+      expect((await getStoredSettings()).projectRules[0]!.settings.topBar.height).toBe(19);
     });
 
     const stored = await getStoredSettings();
     expect(stored.schemaVersion).toBe('0.1.5');
 
     const reloaded = loadSettings(stored, '0.1.5');
-    expect(reloaded.projectRules[0].settings.topBar.height).toBe(19);
+    expect(reloaded.projectRules[0]!.settings.topBar.height).toBe(19);
   });
 
   it('loads settings once on mount; external storage changes made afterward are not reflected in the UI (no live storage.onChanged listener, unlike content.ts)', async () => {
@@ -1289,7 +1289,7 @@ describe('App', () => {
 
       const stored = await getStoredSettings();
       expect(stored.projectRules.map((r) => r.pattern)).toEqual(['same-pattern', 'same-pattern']);
-      expect(stored.projectRules[0].id).not.toBe(stored.projectRules[1].id);
+      expect(stored.projectRules[0]!.id).not.toBe(stored.projectRules[1]!.id);
     });
 
     it("shows each rule's match type as a text hint next to its pattern in the list", async () => {
@@ -1318,7 +1318,7 @@ describe('App', () => {
       fireEvent.change(patternInput, { target: { value: 'proj-[' } });
 
       await waitFor(async () => {
-        expect((await getStoredSettings()).projectRules[0].pattern).toBe('proj-[');
+        expect((await getStoredSettings()).projectRules[0]!.pattern).toBe('proj-[');
       });
       expect(screen.getByText('Invalid regular expression')).toBeTruthy();
 
@@ -1339,7 +1339,7 @@ describe('App', () => {
       fireEvent.change(patternInput, { target: { value: '' } });
 
       await waitFor(async () => {
-        expect((await getStoredSettings()).projectRules[0].pattern).toBe('');
+        expect((await getStoredSettings()).projectRules[0]!.pattern).toBe('');
       });
       // An empty string is a valid regular expression (it matches the empty position), so no
       // "Invalid regular expression" warning is shown for it.
@@ -1364,7 +1364,7 @@ describe('App', () => {
       await user.click(await screen.findByRole('option', { name: 'Regex' }));
 
       await waitFor(async () => {
-        expect((await getStoredSettings()).projectRules[0].matchType).toBe('regex');
+        expect((await getStoredSettings()).projectRules[0]!.matchType).toBe('regex');
       });
       expect(screen.getByLabelText('Pattern')).toBeTruthy();
       expect(screen.queryByLabelText('Project ID')).toBeNull();
@@ -1381,7 +1381,7 @@ describe('App', () => {
       const valueInput = screen.getByLabelText('Project ID') as HTMLInputElement;
       fireEvent.change(valueInput, { target: { value: 'proj-[' } });
       await waitFor(async () => {
-        expect((await getStoredSettings()).projectRules[0].pattern).toBe('proj-[');
+        expect((await getStoredSettings()).projectRules[0]!.pattern).toBe('proj-[');
       });
       // The same text would be an invalid regex, but matchType isn't 'regex' here, so no warning.
       expect(screen.queryByText('Invalid regular expression')).toBeNull();
@@ -1393,7 +1393,7 @@ describe('App', () => {
       await user.click(await screen.findByRole('option', { name: 'Regex' }));
 
       await waitFor(async () => {
-        expect((await getStoredSettings()).projectRules[0].matchType).toBe('regex');
+        expect((await getStoredSettings()).projectRules[0]!.matchType).toBe('regex');
       });
       expect(screen.getByText('Invalid regular expression')).toBeTruthy();
     });
@@ -1412,7 +1412,9 @@ describe('App', () => {
         expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'alpha', 'beta']);
       });
 
-      const [original, duplicate] = (await getStoredSettings()).projectRules;
+      const duplicateRules = (await getStoredSettings()).projectRules;
+      const original = duplicateRules[0]!;
+      const duplicate = duplicateRules[1]!;
       expect(duplicate.id).not.toBe(original.id);
       expect(duplicate.matchType).toBe(original.matchType);
       expect(duplicate.settings).toEqual(original.settings);
@@ -1421,9 +1423,9 @@ describe('App', () => {
       await openRuleDetailAt(user, 1);
       fireEvent.change(within(getCard('Top bar')).getByLabelText('Top bar height'), { target: { value: '22' } });
       await waitFor(async () => {
-        expect((await getStoredSettings()).projectRules[1].settings.topBar.height).toBe(22);
+        expect((await getStoredSettings()).projectRules[1]!.settings.topBar.height).toBe(22);
       });
-      expect((await getStoredSettings()).projectRules[0].settings.topBar.height).toBe(4);
+      expect((await getStoredSettings()).projectRules[0]!.settings.topBar.height).toBe(4);
     });
 
     it("Duplicate copies a non-default matchType ('suffix') to the copy, shown in both rows' hints", async () => {
@@ -1457,12 +1459,12 @@ describe('App', () => {
       fireEvent.change(getColorInput(getCard('Color palette')), { target: { value: '#00ff00' } });
       await waitFor(async () => {
         const rules = (await getStoredSettings()).projectRules;
-        expect(rules[1].settings.palette.entries[0].color).toBe('#00ff00');
+        expect(rules[1]!.settings.palette.entries[0]!.color).toBe('#00ff00');
       });
 
       // The original (index 0) keeps its own, unaffected palette entry.
       const rules = (await getStoredSettings()).projectRules;
-      expect(rules[0].settings.palette.entries[0].color).toBe('#ff6d00');
+      expect(rules[0]!.settings.palette.entries[0]!.color).toBe('#ff6d00');
     });
 
     it('Delete opens a confirmation popover naming the rule pattern, without deleting yet', async () => {
