@@ -1,10 +1,10 @@
 export function contrastTextColor(bgHex: string): '#000000' | '#ffffff' {
-  const match = /^#([0-9a-fA-F]{6})$/.exec(bgHex);
-  if (!match) return '#ffffff';
+  const hex = /^#([0-9a-fA-F]{6})$/.exec(bgHex)?.[1];
+  if (!hex) return '#ffffff';
 
-  const r = parseInt(match[1].slice(0, 2), 16) / 255;
-  const g = parseInt(match[1].slice(2, 4), 16) / 255;
-  const b = parseInt(match[1].slice(4, 6), 16) / 255;
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
 
   const linearize = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 
