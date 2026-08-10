@@ -163,7 +163,7 @@ describe('loadSettings', () => {
         CURRENT_VERSION,
       );
       expect(atFloor.schemaVersion).toBe('0.1.0');
-      expect(atFloor.projectRules[0].settings.platformBarText.auto).toBe(true);
+      expect(atFloor.projectRules[0]!.settings.platformBarText.auto).toBe(true);
 
       const wellAbove = loadSettings(
         {
@@ -175,7 +175,7 @@ describe('loadSettings', () => {
         CURRENT_VERSION,
       );
       expect(wellAbove.schemaVersion).toBe('9.9.9');
-      expect(wellAbove.projectRules[0].settings.topBar.color.custom).toBe('#00ff00');
+      expect(wellAbove.projectRules[0]!.settings.topBar.color.custom).toBe('#00ff00');
     });
   });
 
@@ -224,7 +224,7 @@ describe('loadSettings', () => {
 
     const loaded = loadSettings(stored, CURRENT_VERSION);
 
-    expect(loaded.projectRules[0].settings.palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+    expect(loaded.projectRules[0]!.settings.palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
   });
 
   // Schema change: the old `projects: Record<projectId, ProjectSettings>` map has been replaced
@@ -335,8 +335,8 @@ describe('loadSettings', () => {
     );
 
     expect(loaded.projectRules).toHaveLength(1);
-    expect(typeof loaded.projectRules[0].id).toBe('string');
-    expect(loaded.projectRules[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(typeof loaded.projectRules[0]!.id).toBe('string');
+    expect(loaded.projectRules[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
   // Distinct from "missing from storage" above: the id key is PRESENT but wrong-typed. Zod's
@@ -349,8 +349,8 @@ describe('loadSettings', () => {
     );
 
     expect(loaded.projectRules).toHaveLength(1);
-    expect(loaded.projectRules[0].pattern).toBe('junk-id');
-    expect(loaded.projectRules[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(loaded.projectRules[0]!.pattern).toBe('junk-id');
+    expect(loaded.projectRules[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
   it('falls back to the default ProjectSettings when rule.settings is a string', () => {
@@ -359,7 +359,7 @@ describe('loadSettings', () => {
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
   });
 
   it('falls back to the default ProjectSettings when rule.settings is null', () => {
@@ -368,7 +368,7 @@ describe('loadSettings', () => {
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
   });
 
   // Arrays pass a bare `typeof value === 'object'` check, but Zod's z.object() distinguishes
@@ -380,7 +380,7 @@ describe('loadSettings', () => {
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
   });
 
   it('treats a non-empty array for rule.settings as invalid, falling back to defaults without extraneous keys', () => {
@@ -389,9 +389,9 @@ describe('loadSettings', () => {
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0].settings).toEqual(DEFAULT_PROJECT_SETTINGS);
-    expect(loaded.projectRules[0].settings).not.toHaveProperty('0');
-    expect(loaded.projectRules[0].settings).not.toHaveProperty('1');
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).not.toHaveProperty('0');
+    expect(loaded.projectRules[0]!.settings).not.toHaveProperty('1');
   });
 
   describe('matchType', () => {
@@ -401,7 +401,7 @@ describe('loadSettings', () => {
         CURRENT_VERSION,
       );
 
-      expect(loaded.projectRules[0].matchType).toBe('regex');
+      expect(loaded.projectRules[0]!.matchType).toBe('regex');
     });
 
     it('defaults matchType to "regex" when a stored rule has an invalid matchType value', () => {
@@ -416,8 +416,8 @@ describe('loadSettings', () => {
         CURRENT_VERSION,
       );
 
-      expect(loaded.projectRules[0].matchType).toBe('regex');
-      expect(loaded.projectRules[1].matchType).toBe('regex');
+      expect(loaded.projectRules[0]!.matchType).toBe('regex');
+      expect(loaded.projectRules[1]!.matchType).toBe('regex');
     });
 
     it('preserves each valid matchType value from storage', () => {
@@ -446,7 +446,7 @@ describe('loadSettings', () => {
           projectRules: [{ id: '1', matchType: 'exact', pattern: 'a', settings }],
         },
         CURRENT_VERSION,
-      ).projectRules[0].settings;
+      ).projectRules[0]!.settings;
 
     describe('palette', () => {
       it('defaults the whole section when missing', () => {
@@ -501,9 +501,9 @@ describe('loadSettings', () => {
         }).palette.entries;
 
         expect(entries).toHaveLength(1);
-        expect(entries[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-        expect(entries[0].name).toBe('');
-        expect(entries[0].color).toBe(DEFAULT_COLOR);
+        expect(entries[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        expect(entries[0]!.name).toBe('');
+        expect(entries[0]!.color).toBe(DEFAULT_COLOR);
       });
     });
 
@@ -707,7 +707,9 @@ describe('DEFAULT_PROJECT_SETTINGS derivation (Zod schema defaults)', () => {
     };
 
     const loaded = loadSettings(stored, CURRENT_VERSION);
-    const [first, second] = loaded.projectRules.map((rule) => rule.settings);
+    const settingsByRule = loaded.projectRules.map((rule) => rule.settings);
+    const first = settingsByRule[0]!;
+    const second = settingsByRule[1]!;
 
     expect(first).toEqual(second);
     expect(first).not.toBe(second);
@@ -717,9 +719,9 @@ describe('DEFAULT_PROJECT_SETTINGS derivation (Zod schema defaults)', () => {
     expect(first.platformBar.color).not.toBe(second.platformBar.color);
     expect(first.platformBarText.color).not.toBe(second.platformBarText.color);
 
-    first.palette.entries[0].color = '#000000';
+    first.palette.entries[0]!.color = '#000000';
     first.topBar.color.custom = '#000000';
-    expect(second.palette.entries[0].color).toBe(DEFAULT_COLOR);
+    expect(second.palette.entries[0]!.color).toBe(DEFAULT_COLOR);
     expect(second.topBar.color.custom).toBe(DEFAULT_COLOR);
   });
 });
@@ -730,10 +732,10 @@ describe('cloneProjectSettings', () => {
     const clone = cloneProjectSettings(original);
 
     clone.palette.entries.push({ id: 'extra', name: 'Extra', color: '#000000' });
-    clone.palette.entries[0].color = '#ffffff';
+    clone.palette.entries[0]!.color = '#ffffff';
 
     expect(original.palette.entries).toHaveLength(1);
-    expect(original.palette.entries[0].color).toBe(DEFAULT_PROJECT_SETTINGS.palette.entries[0].color);
+    expect(original.palette.entries[0]!.color).toBe(DEFAULT_PROJECT_SETTINGS.palette.entries[0]!.color);
   });
 
   it("deep-copies each surface's color selection so mutating the clone does not affect the original", () => {

@@ -11,13 +11,15 @@ describe('runMigrations', () => {
   // stays correct once real steps are added: it falls back to the empty-registry baseline only
   // while the registry is still empty.
   it("CURRENT_SCHEMA_VERSION equals the last migration step's `to` whenever steps exist, or the pre-release baseline while the registry is empty", () => {
-    const expected = SCHEMA_MIGRATIONS.length > 0 ? SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1].to : '0.1.0';
+    const expected = SCHEMA_MIGRATIONS.length > 0 ? SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]!.to : '0.1.0';
     expect(CURRENT_SCHEMA_VERSION).toBe(expected);
   });
 
   it('SCHEMA_MIGRATIONS is ordered ascending by `to` (vacuously true while the registry is empty)', () => {
     for (let i = 1; i < SCHEMA_MIGRATIONS.length; i++) {
-      expect(compareVersions(SCHEMA_MIGRATIONS[i - 1].to, SCHEMA_MIGRATIONS[i].to)).toBe(VersionComparisonResult.Older);
+      expect(compareVersions(SCHEMA_MIGRATIONS[i - 1]!.to, SCHEMA_MIGRATIONS[i]!.to)).toBe(
+        VersionComparisonResult.Older,
+      );
     }
   });
 

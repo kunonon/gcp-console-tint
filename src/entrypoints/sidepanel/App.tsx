@@ -260,8 +260,8 @@ function App() {
 
   const handleDuplicateRule = (id: string) => {
     const index = settings.projectRules.findIndex((r) => r.id === id);
-    if (index === -1) return;
     const original = settings.projectRules[index];
+    if (!original) return;
     const copy: ProjectRule = {
       id: crypto.randomUUID(),
       matchType: original.matchType,
@@ -311,8 +311,10 @@ function App() {
     }
     const reordered = [...settings.projectRules];
     const [moved] = reordered.splice(draggingIndex, 1);
-    reordered.splice(index, 0, moved);
-    save({ ...settings, projectRules: reordered });
+    if (moved) {
+      reordered.splice(index, 0, moved);
+      save({ ...settings, projectRules: reordered });
+    }
     setDraggingIndex(null);
   };
 
