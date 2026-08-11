@@ -1,5 +1,5 @@
 import { Popover } from '@heroui/react';
-import type { PaletteEntry } from '../../types';
+import type { PaletteEntry } from '../../../types';
 import ColorSwatchField from './ColorSwatchField';
 
 interface PaletteColorPickerProps {

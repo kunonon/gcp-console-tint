@@ -1,6 +1,6 @@
 import { Button, Input, Modal, Tooltip } from '@heroui/react';
 import { useEffect, useState } from 'react';
-import type { MatchType } from '../../types';
+import type { MatchType } from '../../../types';
 import MatchTypeSelect from './MatchTypeSelect';
 
 const valueInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';

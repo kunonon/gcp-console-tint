@@ -81,7 +81,7 @@ function freshDefaults(currentVersion: string): TintSettings {
 //   below and defaults fill in — destructive by design; rules' id/matchType/pattern still
 //   survive.
 // Pure: never writes storage. The background script persists the migrated form once via
-// migrateStoredSettings (infrastructure/settings-storage.ts).
+// migrateStoredSettings (port/out/settings-storage.ts).
 export function loadSettings(stored: unknown, currentVersion: string): TintSettings {
   if (!isRecord(stored)) {
     return freshDefaults(currentVersion);

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { effectiveSchemaVersion, loadSettings } from '../../../../utils/settings';
+import { effectiveSchemaVersion, loadSettings } from '../../../../../utils/settings';
 import { MATCH_TYPE_LABELS } from '../../../components/MatchTypeSelect';
 import App from '../App';
 

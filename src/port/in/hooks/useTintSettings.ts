@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
-import type { TintSettings } from '../../types';
-import { DEFAULT_SETTINGS, effectiveSchemaVersion, loadSettings } from '../../utils/settings';
+import type { TintSettings } from '../../../types';
+import { DEFAULT_SETTINGS, effectiveSchemaVersion, loadSettings } from '../../../utils/settings';
 
 // Owns the side panel's settings state and its persistence: reads (and in-memory migrates)
 // the stored settings once on mount, and writes every change back to storage via save().

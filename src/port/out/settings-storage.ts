@@ -1,8 +1,8 @@
 import { browser } from 'wxt/browser';
-import { UnknownRecordSchema } from '../types';
-import { CURRENT_SCHEMA_VERSION } from '../utils/migrations';
-import { effectiveSchemaVersion, loadSettings } from '../utils/settings';
-import { compareVersions, VersionComparisonResult } from '../utils/version';
+import { UnknownRecordSchema } from '../../types';
+import { CURRENT_SCHEMA_VERSION } from '../../utils/migrations';
+import { effectiveSchemaVersion, loadSettings } from '../../utils/settings';
+import { compareVersions, VersionComparisonResult } from '../../utils/version';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return UnknownRecordSchema.safeParse(value).success;

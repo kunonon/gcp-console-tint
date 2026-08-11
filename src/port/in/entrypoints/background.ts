@@ -1,4 +1,4 @@
-import { migrateStoredSettings } from '../../infrastructure/settings-storage';
+import { migrateStoredSettings } from '../../out/settings-storage';
 
 export default defineBackground(() => {
   // Single writer for schema migrations: persist stored settings in the newest shape as
