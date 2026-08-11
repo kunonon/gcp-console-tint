@@ -1,4 +1,3 @@
-import { browser } from 'wxt/browser';
 import type { ColorSelection, MatchType, PaletteSettings } from '../types';
 import {
   MatchTypeSchema,
@@ -82,7 +81,7 @@ function freshDefaults(currentVersion: string): TintSettings {
 //   below and defaults fill in — destructive by design; rules' id/matchType/pattern still
 //   survive.
 // Pure: never writes storage. The background script persists the migrated form once via
-// migrateStoredSettings.
+// migrateStoredSettings (infrastructure/settings-storage.ts).
 export function loadSettings(stored: unknown, currentVersion: string): TintSettings {
   if (!isRecord(stored)) {
     return freshDefaults(currentVersion);
@@ -109,29 +108,6 @@ export function loadSettings(stored: unknown, currentVersion: string): TintSetti
     schemaVersion: version,
     projectRules,
   };
-}
-
-// Persists storage in the newest shape, stamped with the running extension version. Called
-// from the background script only, so there is a single writer (content scripts and the
-// side panel migrate in memory via loadSettings and never write back). No-ops when storage
-// is empty — an unconfigured install stays unconfigured — or already current.
-export async function migrateStoredSettings(currentVersion: string): Promise<void> {
-  const result = await browser.storage.local.get('tintSettings');
-  const stored: unknown = result.tintSettings;
-  if (stored == null) return;
-  if (isRecord(stored)) {
-    const storedVersion = stored.schemaVersion;
-    if (
-      typeof storedVersion === 'string' &&
-      compareVersions(storedVersion, CURRENT_SCHEMA_VERSION) !== VersionComparisonResult.Older
-    ) {
-      return;
-    }
-  }
-  const migrated = loadSettings(stored, currentVersion);
-  await browser.storage.local.set({
-    tintSettings: { ...migrated, schemaVersion: effectiveSchemaVersion(currentVersion) },
-  });
 }
 
 function ruleMatches(rule: ProjectRule, projectId: string): boolean {
