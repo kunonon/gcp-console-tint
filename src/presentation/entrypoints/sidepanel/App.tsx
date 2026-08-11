@@ -1,20 +1,14 @@
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
+import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings } from '../../../types';
+import { contrastTextColor } from '../../../utils/color';
+import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, resolveSelectedColor } from '../../../utils/settings';
 import AddRuleModal from '../../components/AddRuleModal';
 import ColorSwatchField from '../../components/ColorSwatchField';
 import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
 import MatchTypeSelect from '../../components/MatchTypeSelect';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
-import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../../types';
-import { contrastTextColor } from '../../../utils/color';
-import {
-  cloneProjectSettings,
-  DEFAULT_PROJECT_SETTINGS,
-  DEFAULT_SETTINGS,
-  effectiveSchemaVersion,
-  loadSettings,
-  resolveSelectedColor,
-} from '../../../utils/settings';
+import { useTintSettings } from '../../hooks/useTintSettings';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -162,7 +156,7 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
 }
 
 function App() {
-  const [settings, setSettings] = useState<TintSettings>(DEFAULT_SETTINGS);
+  const { settings, save } = useTintSettings();
   const [view, setView] = useState<View>({ type: 'list' });
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -172,13 +166,6 @@ function App() {
   // otherwise.
   const dragHandleActiveRef = useRef(false);
 
-  useEffect(() => {
-    const currentVersion = browser.runtime.getManifest().version;
-    browser.storage.local.get('tintSettings').then((result) => {
-      setSettings(loadSettings(result.tintSettings, currentVersion));
-    });
-  }, []);
-
   // Defensive: if the rule currently open in detail view disappears (there is no UI path to
   // this today since Delete only acts from the list, but this keeps the view consistent
   // should that change), fall back to the list instead of rendering a phantom rule's page.
@@ -187,19 +174,6 @@ function App() {
       setView({ type: 'list' });
     }
   }, [view, settings.projectRules]);
-
-  const save = (next: TintSettings) => {
-    // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
-    // version here could label current-shape nested data with an older schemaVersion, causing
-    // the next load to re-run the flat->nested migration against already-nested data and
-    // silently reset the user's values to defaults.
-    const stamped: TintSettings = {
-      ...next,
-      schemaVersion: effectiveSchemaVersion(browser.runtime.getManifest().version),
-    };
-    setSettings(stamped);
-    browser.storage.local.set({ tintSettings: stamped });
-  };
 
   const updateCurrentSettings = (patch: Partial<ProjectSettings>) => {
     if (view.type !== 'detail') return;
