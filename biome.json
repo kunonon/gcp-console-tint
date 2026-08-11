@@ -36,7 +36,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/entrypoints/background.ts"],
+      "includes": ["src/presentation/entrypoints/background.ts"],
       "linter": {
         "rules": {
           "suspicious": {

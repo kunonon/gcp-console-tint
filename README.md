@@ -109,13 +109,16 @@ Release tags are immutable — a tag ruleset blocks moving or deleting `v*` tags
 
 ```
 src/
-  entrypoints/
-    content.ts    # applies the tint on console.cloud.google.com
-    background.ts # opens the side panel / sidebar on toolbar-icon click
-    sidepanel/    # React settings UI
-  components/     # shared UI (pickers, add-rule modal, confirm popover)
-  utils/          # settings schema/matching, color math, version compare
-  types.ts        # settings data model
+  presentation/
+    entrypoints/
+      content.ts    # applies the tint on console.cloud.google.com
+      background.ts # opens the side panel / sidebar on toolbar-icon click
+      sidepanel/    # React settings UI
+    components/     # shared UI (pickers, add-rule modal, confirm popover)
+    hooks/          # settings state + persistence for the side panel
+  infrastructure/   # browser.storage write-back (settings schema migration)
+  utils/            # pure logic: settings schema/matching, color math, version compare
+  types.ts          # settings data model
 ```
 
 Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated.

@@ -5,8 +5,8 @@ import ColorSwatchField from '../../components/ColorSwatchField';
 import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
 import MatchTypeSelect from '../../components/MatchTypeSelect';
 import PaletteColorPicker from '../../components/PaletteColorPicker';
-import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../types';
-import { contrastTextColor } from '../../utils/color';
+import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings, TintSettings } from '../../../types';
+import { contrastTextColor } from '../../../utils/color';
 import {
   cloneProjectSettings,
   DEFAULT_PROJECT_SETTINGS,
@@ -14,7 +14,7 @@ import {
   effectiveSchemaVersion,
   loadSettings,
   resolveSelectedColor,
-} from '../../utils/settings';
+} from '../../../utils/settings';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
