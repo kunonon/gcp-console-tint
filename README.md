@@ -109,7 +109,7 @@ Release tags are immutable — a tag ruleset blocks moving or deleting `v*` tags
 
 ```
 src/
-  port/
+  adapter/
     in/             # driving side: WXT entrypoints, React components, hooks
       entrypoints/
         content.ts    # applies the tint on console.cloud.google.com

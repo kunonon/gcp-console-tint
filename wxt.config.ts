@@ -3,7 +3,7 @@ import { defineConfig } from 'wxt';
 
 export default defineConfig({
   srcDir: 'src',
-  entrypointsDir: 'port/in/entrypoints',
+  entrypointsDir: 'adapter/in/entrypoints',
   modules: ['@wxt-dev/module-react'],
   webExt: {
     disabled: true,
