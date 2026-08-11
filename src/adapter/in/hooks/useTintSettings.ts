@@ -1,31 +1,20 @@
 import { useEffect, useState } from 'react';
-import { browser } from 'wxt/browser';
 import type { TintSettings } from '../../../types';
-import { DEFAULT_SETTINGS, effectiveSchemaVersion, loadSettings } from '../../../utils/settings';
+import { DEFAULT_SETTINGS } from '../../../utils/settings';
+import { settingsStore } from '../../out/browser-settings-store';
 
-// Owns the side panel's settings state and its persistence: reads (and in-memory migrates)
-// the stored settings once on mount, and writes every change back to storage via save().
+// Owns the side panel's settings state and its persistence via the SettingsStore port.
 export function useTintSettings() {
   const [settings, setSettings] = useState<TintSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
-    const currentVersion = browser.runtime.getManifest().version;
-    browser.storage.local.get('tintSettings').then((result) => {
-      setSettings(loadSettings(result.tintSettings, currentVersion));
-    });
+    settingsStore.load().then(setSettings);
   }, []);
 
+  // save() returns the stamped value; reflecting it into state keeps the UI in sync
+  // with exactly what will be persisted.
   const save = (next: TintSettings) => {
-    // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
-    // version here could label current-shape nested data with an older schemaVersion, causing
-    // the next load to re-run the flat->nested migration against already-nested data and
-    // silently reset the user's values to defaults.
-    const stamped: TintSettings = {
-      ...next,
-      schemaVersion: effectiveSchemaVersion(browser.runtime.getManifest().version),
-    };
-    setSettings(stamped);
-    browser.storage.local.set({ tintSettings: stamped });
+    setSettings(settingsStore.save(next));
   };
 
   return { settings, save };

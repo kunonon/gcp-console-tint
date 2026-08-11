@@ -3,10 +3,10 @@ import { contrastTextColor, stripeGradient } from '../../../utils/color';
 import {
   DEFAULT_PROJECT_SETTINGS,
   DEFAULT_SETTINGS,
-  loadSettings,
   resolveProjectSettings,
   resolveSelectedColor,
 } from '../../../utils/settings';
+import { settingsStore } from '../../out/browser-settings-store';
 
 export default defineContentScript({
   matches: ['https://console.cloud.google.com/*'],
@@ -91,18 +91,12 @@ export default defineContentScript({
 
     applySettings(DEFAULT_SETTINGS);
 
-    const currentVersion = browser.runtime.getManifest().version;
-
-    browser.storage.local.get('tintSettings').then((result) => {
-      applySettings(loadSettings(result.tintSettings, currentVersion));
+    settingsStore.load().then((settings) => {
+      applySettings(settings);
     });
 
-    browser.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== 'local' || !changes.tintSettings) return;
-      const newValue = changes.tintSettings.newValue;
-      if (newValue) {
-        applySettings(loadSettings(newValue, currentVersion));
-      }
+    settingsStore.watch((settings) => {
+      applySettings(settings);
     });
 
     // GCP Console is an SPA: the `?project=` query param can change without a full page

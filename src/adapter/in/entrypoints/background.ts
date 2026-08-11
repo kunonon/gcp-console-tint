@@ -1,4 +1,4 @@
-import { migrateStoredSettings } from '../../out/settings-storage';
+import { migrateStoredSettings } from '../../out/browser-settings-store';
 
 export default defineBackground(() => {
   // Single writer for schema migrations: persist stored settings in the newest shape as

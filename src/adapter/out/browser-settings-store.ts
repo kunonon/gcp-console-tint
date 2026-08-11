@@ -1,0 +1,69 @@
+import { browser } from 'wxt/browser';
+import type { SettingsStore } from '../../port/settings-store';
+import type { TintSettings } from '../../types';
+import { UnknownRecordSchema } from '../../types';
+import { CURRENT_SCHEMA_VERSION } from '../../utils/migrations';
+import { effectiveSchemaVersion, loadSettings } from '../../utils/settings';
+import { compareVersions, VersionComparisonResult } from '../../utils/version';
+
+const STORAGE_KEY = 'tintSettings';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return UnknownRecordSchema.safeParse(value).success;
+}
+
+function manifestVersion(): string {
+  return browser.runtime.getManifest().version;
+}
+
+// browser.storage.local implementation of the SettingsStore port.
+export const settingsStore: SettingsStore = {
+  async load() {
+    const result = await browser.storage.local.get(STORAGE_KEY);
+    return loadSettings(result[STORAGE_KEY], manifestVersion());
+  },
+
+  save(next: TintSettings): TintSettings {
+    // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
+    // version here could label current-shape nested data with an older schemaVersion, causing
+    // the next load to re-run migrations against already-migrated data and silently reset
+    // the user's values to defaults.
+    const stamped: TintSettings = {
+      ...next,
+      schemaVersion: effectiveSchemaVersion(manifestVersion()),
+    };
+    browser.storage.local.set({ [STORAGE_KEY]: stamped });
+    return stamped;
+  },
+
+  watch(onChange) {
+    browser.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !changes[STORAGE_KEY]) return;
+      const newValue = changes[STORAGE_KEY].newValue;
+      if (newValue) onChange(loadSettings(newValue, manifestVersion()));
+    });
+  },
+};
+
+// Persists storage in the newest shape, stamped with the running extension version. Called
+// from the background script only, so there is a single writer (content scripts and the side
+// panel migrate in memory via loadSettings and never write back). No-ops when storage is
+// empty — an unconfigured install stays unconfigured — or already current.
+export async function migrateStoredSettings(currentVersion: string): Promise<void> {
+  const result = await browser.storage.local.get(STORAGE_KEY);
+  const stored: unknown = result[STORAGE_KEY];
+  if (stored == null) return;
+  if (isRecord(stored)) {
+    const storedVersion = stored.schemaVersion;
+    if (
+      typeof storedVersion === 'string' &&
+      compareVersions(storedVersion, CURRENT_SCHEMA_VERSION) !== VersionComparisonResult.Older
+    ) {
+      return;
+    }
+  }
+  const migrated = loadSettings(stored, currentVersion);
+  await browser.storage.local.set({
+    [STORAGE_KEY]: { ...migrated, schemaVersion: effectiveSchemaVersion(currentVersion) },
+  });
+}
