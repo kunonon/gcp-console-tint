@@ -4,7 +4,8 @@ import { Palette, PaletteEntry } from './palette';
 
 // Product policy, not color theory: the canonical default colors for the tint surfaces. The
 // `?? Color.BLACK` branch is unreachable ('#ff6d00' is a valid '#rrggbb' literal) and only
-// exists to keep the type non-null; the settings tests assert the real value.
+// exists to keep the type as `Color` rather than `Color | undefined`; the settings tests
+// assert the real value.
 const DEFAULT_COLOR = Color.parse('#ff6d00') ?? Color.BLACK;
 const DEFAULT_TEXT_COLOR = Color.WHITE;
 const DEFAULT_TOP_BAR_HEIGHT = 4;
@@ -87,7 +88,7 @@ export class ProjectSettings {
     new Palette(true, [new PaletteEntry('default', 'Primary', DEFAULT_COLOR)]),
     new TopBarSettings(true, new ColorSelection('default', DEFAULT_COLOR), DEFAULT_TOP_BAR_HEIGHT, false),
     new PlatformBarSettings(true, new ColorSelection('default', DEFAULT_COLOR), false),
-    new PlatformBarTextSettings(true, new ColorSelection(null, DEFAULT_TEXT_COLOR), false),
+    new PlatformBarTextSettings(true, new ColorSelection(undefined, DEFAULT_TEXT_COLOR), false),
   );
 
   constructor(

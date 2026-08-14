@@ -10,14 +10,14 @@ export class TintSettings {
 
   // Rules are ordered by priority (top of the list first). The first rule that matches the
   // project id (per its matchType) wins; 'regex' rules with invalid patterns are skipped.
-  // Returns null when the URL has no project id or no rule matches — nothing is applied.
-  resolveProjectSettings(projectId: string | null): ProjectSettings | null {
+  // Returns undefined when the URL has no project id or no rule matches — nothing is applied.
+  resolveProjectSettings(projectId: string | undefined): ProjectSettings | undefined {
     if (projectId) {
       for (const rule of this.projectRules) {
         if (rule.matches(projectId)) return rule.settings;
       }
     }
-    return null;
+    return undefined;
   }
 
   withRuleAdded(rule: ProjectRule): TintSettings {

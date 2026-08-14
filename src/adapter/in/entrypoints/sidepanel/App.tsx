@@ -274,7 +274,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   };
 
   const handlePaletteColorChange = (id: string, color: string) => {
-    // input[type=color] can only ever emit '#rrggbb', so parse never returns null here.
+    // input[type=color] can only ever emit '#rrggbb', so parse never returns undefined here.
     const parsed = Color.parse(color);
     if (parsed) updateCurrent((ps) => ps.withPalette(ps.palette.recolorEntry(id, parsed)));
   };

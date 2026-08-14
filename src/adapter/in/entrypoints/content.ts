@@ -77,8 +77,8 @@ export default defineContentScript({
     const applySettings = (settings: TintSettings, url: URL = new URL(location.href)) => {
       lastSettings = settings;
       const projectId = url.searchParams.get('project');
-      const project = settings.resolveProjectSettings(projectId);
-      if (project === null) {
+      const project = settings.resolveProjectSettings(projectId ?? undefined);
+      if (project === undefined) {
         bar.style.display = 'none';
         platformBarStyle.textContent = '';
         return;

@@ -47,8 +47,8 @@ describe('Palette.resolve', () => {
     expect(palette.resolve(new ColorSelection('missing', custom)).toHex()).toBe('#999999');
   });
 
-  it('falls back to custom when paletteId is null', () => {
-    expect(palette.resolve(new ColorSelection(null, custom)).toHex()).toBe('#999999');
+  it('falls back to custom when paletteId is undefined', () => {
+    expect(palette.resolve(new ColorSelection(undefined, custom)).toHex()).toBe('#999999');
   });
 
   it('falls back to custom when the palette is disabled, even with a valid paletteId reference', () => {
@@ -57,15 +57,15 @@ describe('Palette.resolve', () => {
 });
 
 describe('TintSettings.resolveProjectSettings', () => {
-  // `custom` is the per-rule "marker" field (paletteId pinned to null so it always wins over
-  // the palette): each rule below gets a distinct — and, since Color validates, real — hex
-  // value, so an assertion names which rule won.
+  // `custom` is the per-rule "marker" field (paletteId pinned to undefined so it always wins
+  // over the palette): each rule below gets a distinct — and, since Color validates, real —
+  // hex value, so an assertion names which rule won.
   const rule = (id: string, matchType: MatchType, pattern: string, custom: string): ProjectRule =>
     new ProjectRule(
       id,
       matchType,
       pattern,
-      projectSettings({ topBar: DEFAULTS.topBar.withColor(new ColorSelection(null, color(custom))) }),
+      projectSettings({ topBar: DEFAULTS.topBar.withColor(new ColorSelection(undefined, color(custom))) }),
     );
 
   const noRules = (): TintSettings => new TintSettings([]);
@@ -73,23 +73,23 @@ describe('TintSettings.resolveProjectSettings', () => {
   const withRules = (...rules: ProjectRule[]): TintSettings =>
     rules.reduce((settings, r) => settings.withRuleAdded(r), noRules());
 
-  it('returns null when projectId is null', () => {
+  it('returns undefined when projectId is undefined', () => {
     const settings = withRules(rule('1', 'exact', 'my-app', '#c0ffee'));
-    expect(settings.resolveProjectSettings(null)).toBeNull();
+    expect(settings.resolveProjectSettings(undefined)).toBeUndefined();
   });
 
-  it('returns null when projectId does not match any rule', () => {
+  it('returns undefined when projectId does not match any rule', () => {
     const settings = withRules(rule('1', 'exact', 'my-app', '#c0ffee'));
-    expect(settings.resolveProjectSettings('unrelated-project')).toBeNull();
+    expect(settings.resolveProjectSettings('unrelated-project')).toBeUndefined();
   });
 
-  it('returns null when there are no rules at all', () => {
-    expect(noRules().resolveProjectSettings('anything')).toBeNull();
+  it('returns undefined when there are no rules at all', () => {
+    expect(noRules().resolveProjectSettings('anything')).toBeUndefined();
   });
 
-  it('returns null for an empty-string projectId (falsy, treated the same as no project id)', () => {
+  it('returns undefined for an empty-string projectId (falsy, treated the same as no project id)', () => {
     const settings = withRules(rule('catch-all', 'prefix', '', '#aaaaaa'));
-    expect(settings.resolveProjectSettings('')).toBeNull();
+    expect(settings.resolveProjectSettings('')).toBeUndefined();
   });
 
   it('gives priority to the earlier rule when multiple rules of different matchTypes match the same projectId', () => {
@@ -106,7 +106,7 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('does not match when the projectId does not start with the pattern', () => {
       const settings = withRules(rule('1', 'prefix', 'my-app', '#b0b0b0'));
-      expect(settings.resolveProjectSettings('other-my-app')).toBeNull();
+      expect(settings.resolveProjectSettings('other-my-app')).toBeUndefined();
     });
 
     it('treats a pattern containing regex metacharacters as a literal string', () => {
@@ -114,7 +114,7 @@ describe('TintSettings.resolveProjectSettings', () => {
       expect(openParen.resolveProjectSettings('(abc')?.topBar.color.custom.toHex()).toBe('#b0b0b0');
 
       const dot = withRules(rule('1', 'prefix', 'a.c', '#b0b0b0'));
-      expect(dot.resolveProjectSettings('abc')).toBeNull();
+      expect(dot.resolveProjectSettings('abc')).toBeUndefined();
     });
 
     it('treats an empty pattern as matching any projectId', () => {
@@ -131,7 +131,7 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('does not match when the projectId does not end with the pattern', () => {
       const settings = withRules(rule('1', 'suffix', '-prod', '#5a5a5a'));
-      expect(settings.resolveProjectSettings('my-app-prod-2')).toBeNull();
+      expect(settings.resolveProjectSettings('my-app-prod-2')).toBeUndefined();
     });
 
     it('treats a pattern containing regex metacharacters as a literal string', () => {
@@ -139,7 +139,7 @@ describe('TintSettings.resolveProjectSettings', () => {
       expect(closeParen.resolveProjectSettings('abc)')?.topBar.color.custom.toHex()).toBe('#5a5a5a');
 
       const dot = withRules(rule('1', 'suffix', 'a.c', '#5a5a5a'));
-      expect(dot.resolveProjectSettings('abc')).toBeNull();
+      expect(dot.resolveProjectSettings('abc')).toBeUndefined();
     });
 
     it('treats an empty pattern as matching any projectId', () => {
@@ -156,20 +156,20 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('does not match a projectId that merely contains the pattern as a substring', () => {
       const settings = withRules(rule('1', 'exact', 'my-app', '#e0e0e0'));
-      expect(settings.resolveProjectSettings('my-app-prod')).toBeNull();
-      expect(settings.resolveProjectSettings('not-my-app')).toBeNull();
+      expect(settings.resolveProjectSettings('my-app-prod')).toBeUndefined();
+      expect(settings.resolveProjectSettings('not-my-app')).toBeUndefined();
     });
 
     it('an empty pattern matches nothing, since no real projectId is an empty string', () => {
       const settings = withRules(rule('1', 'exact', '', '#e0e0e0'));
-      expect(settings.resolveProjectSettings('my-app')).toBeNull();
+      expect(settings.resolveProjectSettings('my-app')).toBeUndefined();
     });
   });
 
   describe('matchType "regex"', () => {
     it('requires a full match: an unanchored pattern no longer matches as a substring', () => {
       const settings = withRules(rule('1', 'regex', 'test', '#0e0e0e'));
-      expect(settings.resolveProjectSettings('test-project')).toBeNull();
+      expect(settings.resolveProjectSettings('test-project')).toBeUndefined();
     });
 
     it('matches when the pattern itself covers the entire projectId (e.g. via a trailing .*)', () => {
@@ -180,7 +180,7 @@ describe('TintSettings.resolveProjectSettings', () => {
     it('continues to work for patterns already anchored with ^...$', () => {
       const settings = withRules(rule('1', 'regex', '^abc$', '#0e0e0e'));
       expect(settings.resolveProjectSettings('abc')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
-      expect(settings.resolveProjectSettings('abcd')).toBeNull();
+      expect(settings.resolveProjectSettings('abcd')).toBeUndefined();
     });
 
     // The `^(?:...)$` wrapper wraps a non-capturing group around the whole pattern before
@@ -190,7 +190,7 @@ describe('TintSettings.resolveProjectSettings', () => {
       const settings = withRules(rule('1', 'regex', 'aaa|bbb', '#0e0e0e'));
       expect(settings.resolveProjectSettings('aaa')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
       expect(settings.resolveProjectSettings('bbb')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
-      expect(settings.resolveProjectSettings('xaaa')).toBeNull();
+      expect(settings.resolveProjectSettings('xaaa')).toBeUndefined();
     });
 
     it('skips a rule with an invalid regex pattern and evaluates the next rule', () => {
@@ -199,19 +199,19 @@ describe('TintSettings.resolveProjectSettings', () => {
       expect(settings.resolveProjectSettings('my-app')?.topBar.color.custom.toHex()).toBe('#222222');
     });
 
-    it('returns null when every rule has an invalid regex pattern (no fallback project)', () => {
+    it('returns undefined when every rule has an invalid regex pattern (no fallback project)', () => {
       const settings = withRules(
         rule('invalid-1', 'regex', '(', '#111111'),
         rule('invalid-2', 'regex', '[', '#222222'),
       );
 
-      expect(settings.resolveProjectSettings('my-app')).toBeNull();
+      expect(settings.resolveProjectSettings('my-app')).toBeUndefined();
     });
 
     it('an empty pattern only matches an empty projectId, so it never matches a real projectId', () => {
       const settings = withRules(rule('1', 'regex', '', '#0e0e0e'));
-      expect(settings.resolveProjectSettings('literally-anything')).toBeNull();
-      expect(settings.resolveProjectSettings('my-app')).toBeNull();
+      expect(settings.resolveProjectSettings('literally-anything')).toBeUndefined();
+      expect(settings.resolveProjectSettings('my-app')).toBeUndefined();
     });
   });
 });

@@ -35,13 +35,13 @@ describe('PaletteColorPicker', () => {
       expect(screen.getByRole('button', { name: 'Test color' }).textContent).toContain('Primary');
     });
 
-    it('shows the custom hex color when paletteId is null (no reference)', () => {
+    it('shows the custom hex color when paletteId is undefined (no reference)', () => {
       render(
         <PaletteColorPicker
           ariaLabel="Test color"
           paletteEnabled
           palette={palette}
-          paletteId={null}
+          paletteId={undefined}
           customColor="#123456"
           effectiveColor="#123456"
           onSelectPaletteEntry={() => {}}
@@ -114,7 +114,7 @@ describe('PaletteColorPicker', () => {
         ariaLabel="Test color"
         paletteEnabled={false}
         palette={palette}
-        paletteId={null}
+        paletteId={undefined}
         customColor="#123456"
         effectiveColor="#123456"
         onSelectPaletteEntry={() => {}}

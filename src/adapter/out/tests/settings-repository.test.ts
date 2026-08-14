@@ -167,7 +167,9 @@ describe('toDomain', () => {
         id: '1',
         matchType: 'exact',
         pattern: 'x',
-        settings: projectSettings({ topBar: DEFAULTS.topBar.withColor(new ColorSelection(null, color('#00ff00'))) }),
+        settings: projectSettings({
+          topBar: DEFAULTS.topBar.withColor(new ColorSelection(undefined, color('#00ff00'))),
+        }),
       },
     ]);
   });
@@ -476,9 +478,9 @@ describe('toDomain', () => {
         );
       });
 
-      it('preserves an explicit null paletteId in the color selection (distinct from "missing")', () => {
+      it('converts an explicit stored null paletteId to undefined in the color selection (distinct from "missing")', () => {
         expect(loadWithSettings({ topBar: { color: { paletteId: null } } }).topBar.color).toEqual(
-          new ColorSelection(null, DEFAULTS.topBar.color.custom),
+          new ColorSelection(undefined, DEFAULTS.topBar.color.custom),
         );
       });
 
@@ -508,7 +510,7 @@ describe('toDomain', () => {
 
       it('merges a partial color selection', () => {
         expect(loadWithSettings({ platformBar: { color: { paletteId: null } } }).platformBar.color).toEqual(
-          new ColorSelection(null, DEFAULTS.platformBar.color.custom),
+          new ColorSelection(undefined, DEFAULTS.platformBar.color.custom),
         );
       });
     });
@@ -642,7 +644,7 @@ describe('ProjectSettings.DEFAULT (the values this repository recovers to)', () 
       },
       platformBarText: {
         enabled: true,
-        color: { paletteId: null, custom: color(DEFAULT_TEXT_COLOR) },
+        color: { paletteId: undefined, custom: color(DEFAULT_TEXT_COLOR) },
         auto: false,
       },
     });

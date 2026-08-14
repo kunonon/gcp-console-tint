@@ -39,7 +39,7 @@ function colorField(fallback: Color) {
   return z
     .unknown()
     .optional()
-    .transform((value) => (typeof value === 'string' ? Color.parse(value) : null) ?? fallback);
+    .transform((value) => (typeof value === 'string' ? Color.parse(value) : undefined) ?? fallback);
 }
 
 // Parameterized by defaults because each surface falls back to a different selection: topBar
@@ -48,7 +48,12 @@ function colorField(fallback: Color) {
 function colorSelectionSchema(defaults: ColorSelection) {
   return z
     .object({
-      paletteId: z.string().nullable().catch(defaults.paletteId),
+      // JSON has no undefined: stored paletteId is null, the domain uses undefined.
+      paletteId: z
+        .string()
+        .nullable()
+        .transform((value) => value ?? undefined)
+        .catch(defaults.paletteId),
       custom: colorField(defaults.custom),
     })
     .transform((value) => new ColorSelection(value.paletteId, value.custom))
@@ -226,5 +231,5 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
 }
 
 function storedSelection(selection: ColorSelection) {
-  return { paletteId: selection.paletteId, custom: selection.custom.toHex() };
+  return { paletteId: selection.paletteId ?? null, custom: selection.custom.toHex() };
 }

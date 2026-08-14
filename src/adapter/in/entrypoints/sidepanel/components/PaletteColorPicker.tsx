@@ -7,7 +7,7 @@ interface PaletteColorPickerProps {
   ariaLabel: string;
   paletteEnabled: boolean;
   palette: readonly PaletteEntry[];
-  paletteId: string | null;
+  paletteId: string | undefined;
   customColor: string;
   effectiveColor: string;
   onSelectPaletteEntry: (id: string) => void;
@@ -30,8 +30,8 @@ export default function PaletteColorPicker({
   autoSelected,
   onSelectAuto,
 }: PaletteColorPickerProps) {
-  // input[type=color] can only ever emit '#rrggbb', so Color.parse never returns null here;
-  // the guard just avoids a cast at the boundary.
+  // input[type=color] can only ever emit '#rrggbb', so Color.parse never returns undefined
+  // here; the guard just avoids a cast at the boundary.
   const handleCustomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const color = Color.parse(e.target.value);
     if (color) onSelectCustomColor(color);

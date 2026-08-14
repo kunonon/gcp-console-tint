@@ -6,7 +6,7 @@ import type { Color } from './color';
 // hand-picked value.
 export class ColorSelection {
   constructor(
-    readonly paletteId: string | null,
+    readonly paletteId: string | undefined,
     readonly custom: Color,
   ) {}
 
@@ -17,12 +17,12 @@ export class ColorSelection {
 
   // Picking a custom color also drops the palette reference — the two are mutually exclusive.
   setCustomColor(color: Color): ColorSelection {
-    return new ColorSelection(null, color);
+    return new ColorSelection(undefined, color);
   }
 
   // Drops the palette reference, falling back to the kept custom color. Deciding WHICH
   // selections to clear (e.g. on palette-entry removal) is the caller's policy.
   clearPalette(): ColorSelection {
-    return new ColorSelection(null, this.custom);
+    return new ColorSelection(undefined, this.custom);
   }
 }

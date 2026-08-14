@@ -11,9 +11,9 @@ export class Color {
 
   private constructor(private readonly hex: string) {}
 
-  // Boundary constructor for untrusted input; null when the value is not '#rrggbb'.
-  static parse(value: string): Color | null {
-    return HEX_PATTERN.test(value) ? new Color(value.toLowerCase()) : null;
+  // Boundary constructor for untrusted input; undefined when the value is not '#rrggbb'.
+  static parse(value: string): Color | undefined {
+    return HEX_PATTERN.test(value) ? new Color(value.toLowerCase()) : undefined;
   }
 
   toHex(): string {

@@ -10,16 +10,16 @@ describe('Color.parse', () => {
     expect(Color.parse('#ABCDEF')?.toHex()).toBe('#abcdef');
   });
 
-  it('returns null for an invalid hex string', () => {
-    expect(Color.parse('not-a-color')).toBeNull();
+  it('returns undefined for an invalid hex string', () => {
+    expect(Color.parse('not-a-color')).toBeUndefined();
   });
 
-  it('returns null for a shorthand 3-digit hex (unsupported format)', () => {
-    expect(Color.parse('#fff')).toBeNull();
+  it('returns undefined for a shorthand 3-digit hex (unsupported format)', () => {
+    expect(Color.parse('#fff')).toBeUndefined();
   });
 
-  it('returns null for an empty string', () => {
-    expect(Color.parse('')).toBeNull();
+  it('returns undefined for an empty string', () => {
+    expect(Color.parse('')).toBeUndefined();
   });
 });
 
