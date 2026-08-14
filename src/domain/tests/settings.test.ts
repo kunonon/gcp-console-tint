@@ -14,6 +14,7 @@ import {
   resolveSelectedColor,
 } from '../settings';
 import type {
+  HexColor,
   MatchType,
   PaletteSettings,
   PlatformBarSettings,
@@ -25,6 +26,10 @@ import type {
 } from '../types';
 
 const CURRENT_VERSION = '0.1.0';
+
+// Test fixtures construct domain objects directly, bypassing schema validation on purpose —
+// marker strings like '#known' or '#p' are not real colors and never go through HexColorSchema.
+const hex = (value: string) => value as HexColor;
 
 // Shallow, section-by-section builder for expected/fixture ProjectSettings values. When
 // overriding a section's `color`, the full { paletteId, custom } pair must be given (this
@@ -186,7 +191,7 @@ describe('loadSettings', () => {
   it('ignores a legacy `defaultProject` key; only projectRules is read', () => {
     const stored = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      defaultProject: projectSettings({ topBar: { color: { paletteId: null, custom: '#654321' } } }),
+      defaultProject: projectSettings({ topBar: { color: { paletteId: null, custom: hex('#654321') } } }),
       projectRules: [
         {
           id: '1',
@@ -205,7 +210,7 @@ describe('loadSettings', () => {
         id: '1',
         matchType: 'exact',
         pattern: 'x',
-        settings: projectSettings({ topBar: { color: { paletteId: null, custom: '#00ff00' } } }),
+        settings: projectSettings({ topBar: { color: { paletteId: null, custom: hex('#00ff00') } } }),
       },
     ]);
   });
@@ -266,7 +271,7 @@ describe('loadSettings', () => {
         matchType: 'exact',
         pattern: 'my-app',
         settings: projectSettings({
-          topBar: { color: { paletteId: DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId, custom: '#00ff00' } },
+          topBar: { color: { paletteId: DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId, custom: hex('#00ff00') } },
         }),
       },
       {
@@ -635,6 +640,20 @@ describe('loadSettings', () => {
         );
       });
 
+      // HexColorSchema tightening: a color STRING that is not '#rrggbb' used to pass through
+      // verbatim (CSS would silently ignore it); it now recovers to the default like any other
+      // invalid value, and valid uppercase hex is normalized to lowercase.
+      it('recovers an invalid (non-#rrggbb) color string to its default and normalizes uppercase hex', () => {
+        expect(loadWithSettings({ topBar: { color: { custom: 'banana' } } }).topBar.color.custom).toBe(
+          DEFAULT_PROJECT_SETTINGS.topBar.color.custom,
+        );
+        expect(
+          loadWithSettings({ palette: { entries: [{ id: 'e1', name: 'X', color: 'banana' }] } }).palette.entries[0]!
+            .color,
+        ).toBe(DEFAULT_COLOR);
+        expect(loadWithSettings({ topBar: { color: { custom: '#ABCDEF' } } }).topBar.color.custom).toBe('#abcdef');
+      });
+
       it('recovers a nested color.paletteId to its default when the stored value is the wrong type', () => {
         expect(loadWithSettings({ topBar: { color: { paletteId: 42 } } }).topBar.color.paletteId).toBe(
           DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId,
@@ -719,8 +738,8 @@ describe('DEFAULT_PROJECT_SETTINGS derivation (Zod schema defaults)', () => {
     expect(first.platformBar.color).not.toBe(second.platformBar.color);
     expect(first.platformBarText.color).not.toBe(second.platformBarText.color);
 
-    first.palette.entries[0]!.color = '#000000';
-    first.topBar.color.custom = '#000000';
+    first.palette.entries[0]!.color = hex('#000000');
+    first.topBar.color.custom = hex('#000000');
     expect(second.palette.entries[0]!.color).toBe(DEFAULT_COLOR);
     expect(second.topBar.color.custom).toBe(DEFAULT_COLOR);
   });
@@ -731,8 +750,8 @@ describe('cloneProjectSettings', () => {
     const original = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
     const clone = cloneProjectSettings(original);
 
-    clone.palette.entries.push({ id: 'extra', name: 'Extra', color: '#000000' });
-    clone.palette.entries[0]!.color = '#ffffff';
+    clone.palette.entries.push({ id: 'extra', name: 'Extra', color: hex('#000000') });
+    clone.palette.entries[0]!.color = hex('#ffffff');
 
     expect(original.palette.entries).toHaveLength(1);
     expect(original.palette.entries[0]!.color).toBe(DEFAULT_PROJECT_SETTINGS.palette.entries[0]!.color);
@@ -742,9 +761,9 @@ describe('cloneProjectSettings', () => {
     const original = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
     const clone = cloneProjectSettings(original);
 
-    clone.topBar.color.custom = '#000000';
+    clone.topBar.color.custom = hex('#000000');
     clone.platformBar.color.paletteId = 'changed';
-    clone.platformBarText.color.custom = '#000000';
+    clone.platformBarText.color.custom = hex('#000000');
 
     expect(original.topBar.color.custom).toBe(DEFAULT_PROJECT_SETTINGS.topBar.color.custom);
     expect(original.platformBar.color.paletteId).toBe(DEFAULT_PROJECT_SETTINGS.platformBar.color.paletteId);
@@ -771,24 +790,24 @@ describe('effectiveSchemaVersion', () => {
 describe('resolveSelectedColor', () => {
   const palette: PaletteSettings = {
     enabled: true,
-    entries: [{ id: 'p1', name: 'One', color: '#111111' }],
+    entries: [{ id: 'p1', name: 'One', color: hex('#111111') }],
   };
 
   it('resolves to the palette entry color when enabled and paletteId references an existing entry', () => {
-    expect(resolveSelectedColor(palette, { paletteId: 'p1', custom: '#999999' })).toBe('#111111');
+    expect(resolveSelectedColor(palette, { paletteId: 'p1', custom: hex('#999999') })).toBe('#111111');
   });
 
   it('falls back to custom when paletteId does not reference any entry (dangling reference)', () => {
-    expect(resolveSelectedColor(palette, { paletteId: 'missing', custom: '#999999' })).toBe('#999999');
+    expect(resolveSelectedColor(palette, { paletteId: 'missing', custom: hex('#999999') })).toBe('#999999');
   });
 
   it('falls back to custom when paletteId is null', () => {
-    expect(resolveSelectedColor(palette, { paletteId: null, custom: '#999999' })).toBe('#999999');
+    expect(resolveSelectedColor(palette, { paletteId: null, custom: hex('#999999') })).toBe('#999999');
   });
 
   it('falls back to custom when the palette is disabled, even with a valid paletteId reference', () => {
     const disabled: PaletteSettings = { ...palette, enabled: false };
-    expect(resolveSelectedColor(disabled, { paletteId: 'p1', custom: '#999999' })).toBe('#999999');
+    expect(resolveSelectedColor(disabled, { paletteId: 'p1', custom: hex('#999999') })).toBe('#999999');
   });
 });
 
@@ -801,7 +820,7 @@ describe('resolveProjectSettings', () => {
     id,
     matchType,
     pattern,
-    settings: projectSettings({ topBar: { color: { paletteId: null, custom } } }),
+    settings: projectSettings({ topBar: { color: { paletteId: null, custom: hex(custom) } } }),
   });
 
   const withRules = (...rules: ProjectRule[]): TintSettings => ({ ...DEFAULT_SETTINGS, projectRules: rules });

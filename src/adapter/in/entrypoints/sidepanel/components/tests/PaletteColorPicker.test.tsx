@@ -1,13 +1,14 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
+import { HexColorSchema } from '../../../../../../domain/types';
 import PaletteColorPicker from '../PaletteColorPicker';
 
 afterEach(() => {
   cleanup();
 });
 
-const palette = [{ id: 'default', name: 'Primary', color: '#ff6d00' }];
+const palette = [{ id: 'default', name: 'Primary', color: HexColorSchema.parse('#ff6d00') }];
 
 async function openDialog(user: ReturnType<typeof userEvent.setup>, triggerLabel: string) {
   await user.click(screen.getByRole('button', { name: triggerLabel }));

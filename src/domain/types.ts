@@ -1,9 +1,18 @@
 import { z } from 'zod';
 
+// Validated hex color: '#rrggbb', normalized to lowercase. The brand makes this schema the
+// only source of HexColor values, so unvalidated strings cannot enter the settings model.
+export const HexColorSchema = z
+  .string()
+  .regex(/^#[0-9a-f]{6}$/i)
+  .transform((value) => value.toLowerCase())
+  .brand<'HexColor'>();
+export type HexColor = z.infer<typeof HexColorSchema>;
+
 // Primitive defaults the schemas below fall back to. Exported because settings.ts re-exports
 // them (its public API predates this file owning the values).
-export const DEFAULT_COLOR = '#ff6d00';
-export const DEFAULT_TEXT_COLOR = '#ffffff';
+export const DEFAULT_COLOR: HexColor = HexColorSchema.parse('#ff6d00');
+export const DEFAULT_TEXT_COLOR: HexColor = HexColorSchema.parse('#ffffff');
 export const DEFAULT_TOP_BAR_HEIGHT = 4;
 
 // Generic "is this a plain record" guard, used by settings.ts to sanity-check the raw value
@@ -14,7 +23,7 @@ export const UnknownRecordSchema = z.record(z.string(), z.unknown());
 export const PaletteEntrySchema = z.object({
   id: z.string().catch(() => crypto.randomUUID()),
   name: z.string().catch(''),
-  color: z.string().catch(DEFAULT_COLOR),
+  color: HexColorSchema.catch(DEFAULT_COLOR),
 });
 export type PaletteEntry = z.infer<typeof PaletteEntrySchema>;
 
@@ -26,11 +35,11 @@ export type PaletteEntry = z.infer<typeof PaletteEntrySchema>;
 // Parameterized by defaults because each surface falls back to a different selection: topBar
 // and platformBar point at the default palette entry, while platformBarText has no palette
 // reference and falls back to a plain custom color instead.
-function colorSelectionSchema(defaults: { paletteId: string | null; custom: string }) {
+function colorSelectionSchema(defaults: { paletteId: string | null; custom: HexColor }) {
   return z
     .object({
       paletteId: z.string().nullable().catch(defaults.paletteId),
-      custom: z.string().catch(defaults.custom),
+      custom: HexColorSchema.catch(defaults.custom),
     })
     .catch(() => ({ ...defaults }));
 }

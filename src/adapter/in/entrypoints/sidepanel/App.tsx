@@ -1,8 +1,9 @@
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
-import { contrastTextColor } from '../../../../domain/color';
+import { Color } from '../../../../domain/color';
 import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, resolveSelectedColor } from '../../../../domain/settings';
 import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings } from '../../../../domain/types';
+import { HexColorSchema } from '../../../../domain/types';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
@@ -331,10 +332,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   };
 
   const handlePaletteColorChange = (id: string, color: string) => {
+    const parsed = HexColorSchema.parse(color);
     updateCurrentSettings({
       palette: {
         ...currentSettings.palette,
-        entries: currentSettings.palette.entries.map((e) => (e.id === id ? { ...e, color } : e)),
+        entries: currentSettings.palette.entries.map((e) => (e.id === id ? { ...e, color: parsed } : e)),
       },
     });
   };
@@ -362,7 +364,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   const topBarEffectiveColor = resolveSelectedColor(currentSettings.palette, currentSettings.topBar.color);
   const platformBarEffectiveColor = resolveSelectedColor(currentSettings.palette, currentSettings.platformBar.color);
   const platformBarTextEffectiveColor = currentSettings.platformBarText.auto
-    ? contrastTextColor(platformBarEffectiveColor)
+    ? Color.fromHex(platformBarEffectiveColor).contrastingTextColor().toHex()
     : resolveSelectedColor(currentSettings.palette, currentSettings.platformBarText.color);
 
   if (view.type === 'detail') {

@@ -1,5 +1,6 @@
 import { Popover } from '@heroui/react';
-import type { PaletteEntry } from '../../../../../domain/types';
+import type { HexColor, PaletteEntry } from '../../../../../domain/types';
+import { HexColorSchema } from '../../../../../domain/types';
 import ColorSwatchField from './ColorSwatchField';
 
 interface PaletteColorPickerProps {
@@ -10,7 +11,7 @@ interface PaletteColorPickerProps {
   customColor: string;
   effectiveColor: string;
   onSelectPaletteEntry: (id: string) => void;
-  onSelectCustomColor: (color: string) => void;
+  onSelectCustomColor: (color: HexColor) => void;
   supportsAuto?: boolean;
   autoSelected?: boolean;
   onSelectAuto?: () => void;
@@ -90,7 +91,7 @@ export default function PaletteColorPicker({
             <ColorSwatchField
               ariaLabel="Custom color"
               value={customColor}
-              onChange={(e) => onSelectCustomColor(e.target.value)}
+              onChange={(e) => onSelectCustomColor(HexColorSchema.parse(e.target.value))}
               active={isCustomActive}
             />
           </div>

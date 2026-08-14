@@ -1,4 +1,4 @@
-import { contrastTextColor, stripeGradient } from '../../../domain/color';
+import { Color } from '../../../domain/color';
 import {
   DEFAULT_PROJECT_SETTINGS,
   DEFAULT_SETTINGS,
@@ -7,6 +7,7 @@ import {
 } from '../../../domain/settings';
 import type { ProjectSettings, TintSettings } from '../../../domain/types';
 import { SettingsStoreImpl } from '../../out/browser-settings-store';
+import { stripeGradient } from '../stripes';
 
 export default defineContentScript({
   matches: ['https://console.cloud.google.com/*'],
@@ -43,7 +44,7 @@ export default defineContentScript({
         bar.style.height = `${clampTopBarHeight(project.topBar.height)}px`;
         const topBarColor = resolveSelectedColor(palette, project.topBar.color);
         bar.style.backgroundColor = topBarColor;
-        bar.style.backgroundImage = project.topBar.stripes ? stripeGradient(topBarColor) : '';
+        bar.style.backgroundImage = project.topBar.stripes ? stripeGradient(Color.fromHex(topBarColor)) : '';
       } else {
         bar.style.display = 'none';
       }
@@ -53,7 +54,7 @@ export default defineContentScript({
         const platformBarColor = resolveSelectedColor(palette, project.platformBar.color);
         const declarations = [`background-color: ${platformBarColor} !important;`];
         if (project.platformBar.stripes) {
-          declarations.push(`background-image: ${stripeGradient(platformBarColor)} !important;`);
+          declarations.push(`background-image: ${stripeGradient(Color.fromHex(platformBarColor))} !important;`);
         }
         if (animate) {
           declarations.push('transition: background-color 300ms ease !important;');
@@ -62,7 +63,7 @@ export default defineContentScript({
       }
       if (project.platformBarText.enabled) {
         const textColor = project.platformBarText.auto
-          ? contrastTextColor(resolveSelectedColor(palette, project.platformBar.color))
+          ? Color.fromHex(resolveSelectedColor(palette, project.platformBar.color)).contrastingTextColor().toHex()
           : resolveSelectedColor(palette, project.platformBarText.color);
         const textDeclarations = [`color: ${textColor} !important;`];
         if (animate) {

@@ -1,23 +1,46 @@
-export function contrastTextColor(bgHex: string): '#000000' | '#ffffff' {
-  const hex = /^#([0-9a-fA-F]{6})$/.exec(bgHex)?.[1];
-  if (!hex) return '#ffffff';
+import { type HexColor, HexColorSchema } from './types';
 
-  const r = parseInt(hex.slice(0, 2), 16) / 255;
-  const g = parseInt(hex.slice(2, 4), 16) / 255;
-  const b = parseInt(hex.slice(4, 6), 16) / 255;
+// Value object for a color in the settings model. Instances only ever hold a validated,
+// lowercase '#rrggbb' value: fromHex() trusts the HexColorSchema brand and parse() is the
+// gate for untrusted input. CSS generation deliberately lives outside the domain (see
+// adapter/in/stripes.ts).
+export class Color {
+  static readonly BLACK = new Color(HexColorSchema.parse('#000000'));
+  static readonly WHITE = new Color(HexColorSchema.parse('#ffffff'));
 
-  const linearize = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  private constructor(private readonly hex: HexColor) {}
 
-  const luminance = 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+  // Total constructor for schema-validated values (the settings model only carries HexColor).
+  static fromHex(hex: HexColor): Color {
+    return new Color(hex);
+  }
 
-  const contrastWithWhite = 1.05 / (luminance + 0.05);
-  const contrastWithBlack = (luminance + 0.05) / 0.05;
+  // Boundary constructor for untrusted input; null when the value is not '#rrggbb'.
+  static parse(value: string): Color | null {
+    const result = HexColorSchema.safeParse(value);
+    return result.success ? new Color(result.data) : null;
+  }
 
-  return contrastWithBlack >= contrastWithWhite ? '#000000' : '#ffffff';
-}
+  toHex(): HexColor {
+    return this.hex;
+  }
 
-export function stripeGradient(bgHex: string): string {
-  const color = contrastTextColor(bgHex);
-  const rgba = color === '#000000' ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.3)';
-  return `repeating-linear-gradient(-45deg, ${rgba} 0 8px, transparent 8px 16px)`;
+  equals(other: Color): boolean {
+    return this.hex === other.hex;
+  }
+
+  // Picks black or white, whichever has the higher WCAG contrast ratio against this color.
+  contrastingTextColor(): Color {
+    const luminance = this.relativeLuminance();
+    const contrastWithWhite = 1.05 / (luminance + 0.05);
+    const contrastWithBlack = (luminance + 0.05) / 0.05;
+    return contrastWithBlack >= contrastWithWhite ? Color.BLACK : Color.WHITE;
+  }
+
+  // WCAG relative luminance (0 = black, 1 = white).
+  private relativeLuminance(): number {
+    const channel = (start: number) => Number.parseInt(this.hex.slice(start, start + 2), 16) / 255;
+    const linearize = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * linearize(channel(1)) + 0.7152 * linearize(channel(3)) + 0.0722 * linearize(channel(5));
+  }
 }

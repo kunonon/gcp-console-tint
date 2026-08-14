@@ -1,56 +1,60 @@
 import { describe, expect, it } from 'vitest';
-import { contrastTextColor, stripeGradient } from '../color';
+import { Color } from '../color';
+import { DEFAULT_COLOR } from '../types';
 
-describe('contrastTextColor', () => {
-  it('returns white text for a dark background', () => {
-    expect(contrastTextColor('#000080')).toBe('#ffffff');
+describe('Color.parse', () => {
+  it('accepts a #rrggbb hex string', () => {
+    expect(Color.parse('#000080')?.toHex()).toBe('#000080');
   });
 
-  it('returns black text for a bright background', () => {
-    expect(contrastTextColor('#ffff00')).toBe('#000000');
+  it('normalizes uppercase hex to lowercase', () => {
+    expect(Color.parse('#ABCDEF')?.toHex()).toBe('#abcdef');
   });
 
-  it('returns white text for pure black', () => {
-    expect(contrastTextColor('#000000')).toBe('#ffffff');
+  it('returns null for an invalid hex string', () => {
+    expect(Color.parse('not-a-color')).toBeNull();
   });
 
-  it('returns black text for pure white', () => {
-    expect(contrastTextColor('#ffffff')).toBe('#000000');
+  it('returns null for a shorthand 3-digit hex (unsupported format)', () => {
+    expect(Color.parse('#fff')).toBeNull();
   });
 
-  it('is case-insensitive for hex input', () => {
-    expect(contrastTextColor('#000080')).toBe(contrastTextColor('#000080'.toUpperCase()));
-  });
-
-  it('falls back to white for an invalid hex string', () => {
-    expect(contrastTextColor('not-a-color')).toBe('#ffffff');
-  });
-
-  it('falls back to white for a shorthand 3-digit hex (unsupported format)', () => {
-    expect(contrastTextColor('#fff')).toBe('#ffffff');
-  });
-
-  it('falls back to white for an empty string', () => {
-    expect(contrastTextColor('')).toBe('#ffffff');
+  it('returns null for an empty string', () => {
+    expect(Color.parse('')).toBeNull();
   });
 });
 
-describe('stripeGradient', () => {
-  it('uses white-tinted stripes for a dark background (matching contrastTextColor)', () => {
-    expect(stripeGradient('#000080')).toBe(
-      'repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.3) 0 8px, transparent 8px 16px)',
-    );
+describe('Color.fromHex', () => {
+  it('round-trips a schema-validated value', () => {
+    expect(Color.fromHex(DEFAULT_COLOR).toHex()).toBe(DEFAULT_COLOR);
+  });
+});
+
+describe('equals', () => {
+  it('compares by value, not identity', () => {
+    expect(Color.parse('#000080')?.equals(Color.parse('#000080')!)).toBe(true);
+    expect(Color.parse('#000080')?.equals(Color.parse('#000081')!)).toBe(false);
   });
 
-  it('uses black-tinted stripes for a bright background (matching contrastTextColor)', () => {
-    expect(stripeGradient('#ffff00')).toBe(
-      'repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.3) 0 8px, transparent 8px 16px)',
-    );
+  it('treats case-different inputs as the same color', () => {
+    expect(Color.parse('#ABCDEF')?.equals(Color.parse('#abcdef')!)).toBe(true);
+  });
+});
+
+describe('contrastingTextColor', () => {
+  it('returns white text for a dark background', () => {
+    expect(Color.parse('#000080')?.contrastingTextColor().equals(Color.WHITE)).toBe(true);
   });
 
-  it('falls back to white-tinted stripes for an invalid hex string', () => {
-    expect(stripeGradient('not-a-color')).toBe(
-      'repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.3) 0 8px, transparent 8px 16px)',
-    );
+  it('returns black text for a bright background', () => {
+    expect(Color.parse('#ffff00')?.contrastingTextColor().equals(Color.BLACK)).toBe(true);
+  });
+
+  it('returns white text for pure black', () => {
+    expect(Color.BLACK.contrastingTextColor().equals(Color.WHITE)).toBe(true);
+  });
+
+  it('returns black text for pure white', () => {
+    expect(Color.WHITE.contrastingTextColor().equals(Color.BLACK)).toBe(true);
   });
 });

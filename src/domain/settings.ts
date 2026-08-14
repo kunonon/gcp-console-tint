@@ -1,5 +1,5 @@
 import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
-import type { ColorSelection, MatchType, PaletteSettings } from './types';
+import type { ColorSelection, HexColor, MatchType, PaletteSettings } from './types';
 import {
   MatchTypeSchema,
   type ProjectRule,
@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS: TintSettings = {
 
 // Resolves a surface's effective color: the referenced palette entry when the palette is
 // enabled and the reference resolves, otherwise the surface's own custom color.
-export function resolveSelectedColor(palette: PaletteSettings, selection: ColorSelection): string {
+export function resolveSelectedColor(palette: PaletteSettings, selection: ColorSelection): HexColor {
   if (palette.enabled && selection.paletteId) {
     const entry = palette.entries.find((e) => e.id === selection.paletteId);
     if (entry) return entry.color;
