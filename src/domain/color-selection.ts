@@ -11,18 +11,18 @@ export class ColorSelection {
   ) {}
 
   // Points at a palette entry; the last hand-picked custom color is kept for the way back.
-  withPaletteRef(id: string): ColorSelection {
+  setPalette(id: string): ColorSelection {
     return new ColorSelection(id, this.custom);
   }
 
   // Picking a custom color also drops the palette reference — the two are mutually exclusive.
-  withCustom(color: Color): ColorSelection {
+  setCustomColor(color: Color): ColorSelection {
     return new ColorSelection(null, color);
   }
 
   // Drops a reference to `id` (used when that palette entry is removed); unrelated selections
   // are returned as-is.
-  withClearedRefIf(id: string): ColorSelection {
+  clearPaletteIf(id: string): ColorSelection {
     return this.paletteId === id ? new ColorSelection(null, this.custom) : this;
   }
 }

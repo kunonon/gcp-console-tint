@@ -422,10 +422,10 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     customColor={currentSettings.topBar.color.custom.toHex()}
                     effectiveColor={topBarEffectiveColor.toHex()}
                     onSelectPaletteEntry={(id) =>
-                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.withPaletteRef(id))))
+                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.setPalette(id))))
                     }
                     onSelectCustomColor={(color) =>
-                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.withCustom(color))))
+                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.setCustomColor(color))))
                     }
                   />
                 </div>
@@ -493,12 +493,12 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     effectiveColor={platformBarEffectiveColor.toHex()}
                     onSelectPaletteEntry={(id) =>
                       updateCurrent((ps) =>
-                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.withPaletteRef(id))),
+                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.setPalette(id))),
                       )
                     }
                     onSelectCustomColor={(color) =>
                       updateCurrent((ps) =>
-                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.withCustom(color))),
+                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.setCustomColor(color))),
                       )
                     }
                   />
@@ -554,14 +554,14 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     onSelectPaletteEntry={(id) =>
                       updateCurrent((ps) =>
                         ps.withPlatformBarText(
-                          ps.platformBarText.withColor(ps.platformBarText.color.withPaletteRef(id)).withAuto(false),
+                          ps.platformBarText.withColor(ps.platformBarText.color.setPalette(id)).withAuto(false),
                         ),
                       )
                     }
                     onSelectCustomColor={(color) =>
                       updateCurrent((ps) =>
                         ps.withPlatformBarText(
-                          ps.platformBarText.withColor(ps.platformBarText.color.withCustom(color)).withAuto(false),
+                          ps.platformBarText.withColor(ps.platformBarText.color.setCustomColor(color)).withAuto(false),
                         ),
                       )
                     }

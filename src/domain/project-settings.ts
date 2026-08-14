@@ -120,9 +120,9 @@ export class ProjectSettings {
   withPaletteEntryRemoved(id: string): ProjectSettings {
     return new ProjectSettings(
       this.palette.removeEntry(id),
-      this.topBar.withColor(this.topBar.color.withClearedRefIf(id)),
-      this.platformBar.withColor(this.platformBar.color.withClearedRefIf(id)),
-      this.platformBarText.withColor(this.platformBarText.color.withClearedRefIf(id)),
+      this.topBar.withColor(this.topBar.color.clearPaletteIf(id)),
+      this.platformBar.withColor(this.platformBar.color.clearPaletteIf(id)),
+      this.platformBarText.withColor(this.platformBarText.color.clearPaletteIf(id)),
     );
   }
 }
