@@ -45,8 +45,8 @@ interface ProjectSettings {
 }
 
 // Partial, section-by-section override shape for building test fixtures: every section (and
-// each section's nested `color`) is independently optional, since the real loadSettings() (Zod
-// schemas in types.ts, exercised inside content.ts and not re-implemented here) fills in
+// each section's nested `color`) is independently optional, since the real fromStored() (Zod
+// schemas in the domain, exercised inside content.ts and not re-implemented here) fills in
 // whatever is omitted, against the real ProjectSettings defaults.
 interface ProjectSettingsOverrides {
   palette?: Partial<PaletteSettings>;
@@ -124,7 +124,7 @@ function triggerLocationChange(newUrl: string = location.href) {
 
 // Defaults schemaVersion to a valid/current value so existing tests that seed storage
 // without thinking about schemaVersion keep exercising the "data accepted, no migration"
-// path rather than accidentally being discarded (or migrated as if flat) by loadSettings().
+// path rather than accidentally being discarded (or migrated as if flat) by fromStored().
 // Pass schemaVersion explicitly to override for tests that specifically probe the
 // discard/migrate boundary.
 function tintSettings(partial: {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Color, DEFAULT_COLOR } from '../color';
+import { Color } from '../color';
 
 describe('Color.parse', () => {
   it('accepts a #rrggbb hex string', () => {
@@ -23,9 +23,9 @@ describe('Color.parse', () => {
   });
 });
 
-describe('Color.fromHex', () => {
-  it('round-trips a schema-validated value', () => {
-    expect(Color.fromHex(DEFAULT_COLOR).toHex()).toBe(DEFAULT_COLOR);
+describe('round-trip', () => {
+  it('returns the same value it parsed', () => {
+    expect(Color.parse('#ff6d00')?.toHex()).toBe('#ff6d00');
   });
 });
 

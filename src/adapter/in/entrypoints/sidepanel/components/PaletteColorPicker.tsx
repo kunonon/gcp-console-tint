@@ -1,18 +1,17 @@
 import { Popover } from '@heroui/react';
-import type { HexColor } from '../../../../../domain/color';
-import { HexColorSchema } from '../../../../../domain/color';
+import { Color } from '../../../../../domain/color';
 import type { PaletteEntry } from '../../../../../domain/palette';
 import ColorSwatchField from './ColorSwatchField';
 
 interface PaletteColorPickerProps {
   ariaLabel: string;
   paletteEnabled: boolean;
-  palette: PaletteEntry[];
+  palette: readonly PaletteEntry[];
   paletteId: string | null;
   customColor: string;
   effectiveColor: string;
   onSelectPaletteEntry: (id: string) => void;
-  onSelectCustomColor: (color: HexColor) => void;
+  onSelectCustomColor: (color: Color) => void;
   supportsAuto?: boolean;
   autoSelected?: boolean;
   onSelectAuto?: () => void;
@@ -31,6 +30,13 @@ export default function PaletteColorPicker({
   autoSelected,
   onSelectAuto,
 }: PaletteColorPickerProps) {
+  // input[type=color] can only ever emit '#rrggbb', so Color.parse never returns null here;
+  // the guard just avoids a cast at the boundary.
+  const handleCustomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const color = Color.parse(e.target.value);
+    if (color) onSelectCustomColor(color);
+  };
+
   const referencedEntry = paletteEnabled && paletteId ? palette.find((e) => e.id === paletteId) : undefined;
   const isCustomActive = !autoSelected && !referencedEntry;
   const triggerLabel = autoSelected ? 'Auto' : referencedEntry ? referencedEntry.name || '(unnamed)' : effectiveColor;
@@ -81,7 +87,7 @@ export default function PaletteColorPicker({
                     className={`h-7 w-7 cursor-pointer rounded-full border border-border ${
                       !autoSelected && paletteId === entry.id ? 'ring-2 ring-focus' : ''
                     }`}
-                    style={{ backgroundColor: entry.color }}
+                    style={{ backgroundColor: entry.color.toHex() }}
                   />
                 ))}
               </div>
@@ -92,7 +98,7 @@ export default function PaletteColorPicker({
             <ColorSwatchField
               ariaLabel="Custom color"
               value={customColor}
-              onChange={(e) => onSelectCustomColor(HexColorSchema.parse(e.target.value))}
+              onChange={handleCustomChange}
               active={isCustomActive}
             />
           </div>

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { effectiveSchemaVersion, loadSettings } from '../../../../../domain/tint-settings';
+import { TintSettings } from '../../../../../domain/tint-settings';
 import { SettingsStoreImpl } from '../../../../out/browser-settings-store';
 import App from '../App';
 import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
@@ -321,7 +321,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Platform Bar text color' }).textContent).toContain('#ffffff');
   });
 
-  it("Add rule initializes the new rule's settings from the built-in DEFAULT_PROJECT_SETTINGS", async () => {
+  it("Add rule initializes the new rule's settings from the built-in ProjectSettings.DEFAULT", async () => {
     const user = userEvent.setup();
     render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
@@ -1149,7 +1149,7 @@ describe('App', () => {
 
     // The rule (id/pattern) is kept, but its flat-shape settings don't match any key
     // mergeProjectSettings looks for (it reads stored.topBar, not stored.topBarColor), so
-    // topBar falls back to DEFAULT_PROJECT_SETTINGS entirely: the old hex is gone, and the
+    // topBar falls back to ProjectSettings.DEFAULT entirely: the old hex is gone, and the
     // trigger shows the default palette entry's name instead.
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
   });
@@ -1206,11 +1206,11 @@ describe('App', () => {
     // dedicated regression test below exercises a manifest version that actually differs
     // from CURRENT_SCHEMA_VERSION.
     await waitFor(async () => {
-      expect((await getStoredSettings()).schemaVersion).toBe(effectiveSchemaVersion(CURRENT_VERSION));
+      expect((await getStoredSettings()).schemaVersion).toBe(TintSettings.effectiveSchemaVersion(CURRENT_VERSION));
     });
   });
 
-  it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a loadSettings round-trip unchanged', async () => {
+  it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a fromStored round-trip unchanged', async () => {
     // '0.1.5' is newer than CURRENT_SCHEMA_VERSION ('0.1.0'), so effectiveSchemaVersion
     // passes it through unfloored — this no longer exercises the floor itself (that only
     // triggers below '0.1.0', which is the floor value itself, so no realistic manifest
@@ -1235,7 +1235,7 @@ describe('App', () => {
     const stored = await getStoredSettings();
     expect(stored.schemaVersion).toBe('0.1.5');
 
-    const reloaded = loadSettings(stored, '0.1.5');
+    const reloaded = TintSettings.fromStored(stored, '0.1.5');
     expect(reloaded.projectRules[0]!.settings.topBar.height).toBe(19);
   });
 
@@ -1444,7 +1444,7 @@ describe('App', () => {
       expect(hints).toHaveLength(2);
     });
 
-    it("Duplicate deep-copies the palette array (cloneProjectSettings): editing the duplicate's palette does not affect the original's", async () => {
+    it("Duplicate shares the original's immutable settings: editing the duplicate's palette does not affect the original's", async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });

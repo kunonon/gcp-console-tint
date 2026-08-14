@@ -1,12 +1,9 @@
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
-import { Color, HexColorSchema } from '../../../../domain/color';
-import type { ColorSelection } from '../../../../domain/color-selection';
-import { resolveSelectedColor } from '../../../../domain/color-selection';
-import type { PaletteEntry } from '../../../../domain/palette';
-import type { MatchType, ProjectRule } from '../../../../domain/project-rule';
-import type { ProjectSettings } from '../../../../domain/project-settings';
-import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS } from '../../../../domain/project-settings';
+import { Color } from '../../../../domain/color';
+import { PaletteEntry } from '../../../../domain/palette';
+import { type MatchType, ProjectRule } from '../../../../domain/project-rule';
+import { ProjectSettings } from '../../../../domain/project-settings';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
@@ -20,11 +17,6 @@ const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border b
 // The sidepanel is a single-page app with two views: the project rule list (the default
 // landing page) and a detail page for editing one rule's settings.
 type View = { type: 'list' } | { type: 'detail'; ruleId: string };
-
-// The three tinted surfaces that share the {enabled, color, ...} shape (ColorSelection plus
-// surface-specific fields). Palette is deliberately excluded: it has no `color` field and its
-// entries array needs its own update path (see handleAddColor/handlePaletteNameChange/etc.).
-type ColorSurfaceKey = 'topBar' | 'platformBar' | 'platformBarText';
 
 function isValidPattern(pattern: string): boolean {
   try {
@@ -180,82 +172,40 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     }
   }, [view, settings.projectRules]);
 
-  const updateCurrentSettings = (patch: Partial<ProjectSettings>) => {
+  // Applies `update` to the currently-edited rule's settings and saves — every surface handler
+  // below funnels through here, so composite updates that must land in a single save (e.g.
+  // "pick a palette entry AND clear auto") are just a longer chain in one call.
+  const updateCurrent = (update: (ps: ProjectSettings) => ProjectSettings) => {
     if (view.type !== 'detail') return;
-    const ruleId = view.ruleId;
-    save({
-      ...settings,
-      projectRules: settings.projectRules.map((r) =>
-        r.id === ruleId ? { ...r, settings: { ...r.settings, ...patch } } : r,
-      ),
-    });
+    save(settings.withRuleUpdated(view.ruleId, (rule) => rule.withSettings(update(rule.settings))));
   };
 
-  // Merges `patch` over the current rule's surface object (topBar/platformBar/platformBarText)
-  // and saves it — the generic replacement for the old per-field handler zoo
-  // (handleTopBarEnabledChange, handleTopBarStripesChange, ...). `patch` may itself include a
-  // full replacement `color`, so composite updates that must land in a single save (e.g.
-  // "pick a palette entry AND clear auto") go through this directly rather than
-  // updateSurfaceColor.
-  function updateSurface<K extends ColorSurfaceKey>(key: K, patch: Partial<ProjectSettings[K]>) {
-    updateCurrentSettings({ [key]: { ...currentSettings[key], ...patch } } as Partial<ProjectSettings>);
-  }
-
-  // Merges `patch` over the current rule's surface.color (ColorSelection) — the common case of
-  // updateSurface where only the color changes.
-  function updateSurfaceColor(key: ColorSurfaceKey, patch: Partial<ColorSelection>) {
-    const surface = currentSettings[key];
-    updateCurrentSettings({ [key]: { ...surface, color: { ...surface.color, ...patch } } } as Partial<ProjectSettings>);
-  }
+  const updateCurrentRule = (update: (rule: ProjectRule) => ProjectRule) => {
+    if (view.type !== 'detail') return;
+    save(settings.withRuleUpdated(view.ruleId, update));
+  };
 
   const handleAddRule = (matchType: MatchType, pattern: string) => {
-    const rule: ProjectRule = {
-      id: crypto.randomUUID(),
-      matchType,
-      pattern,
-      settings: cloneProjectSettings(DEFAULT_PROJECT_SETTINGS),
-    };
-    save({ ...settings, projectRules: [...settings.projectRules, rule] });
+    save(settings.withRuleAdded(ProjectRule.create(matchType, pattern)));
   };
 
   const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (view.type !== 'detail') return;
     const pattern = e.target.value;
-    const ruleId = view.ruleId;
-    save({
-      ...settings,
-      projectRules: settings.projectRules.map((r) => (r.id === ruleId ? { ...r, pattern } : r)),
-    });
+    updateCurrentRule((rule) => rule.withPattern(pattern));
   };
 
   const handleMatchTypeChange = (matchType: MatchType) => {
-    if (view.type !== 'detail') return;
-    const ruleId = view.ruleId;
-    save({
-      ...settings,
-      projectRules: settings.projectRules.map((r) => (r.id === ruleId ? { ...r, matchType } : r)),
-    });
+    updateCurrentRule((rule) => rule.withMatchType(matchType));
   };
 
   const handleDuplicateRule = (id: string) => {
-    const index = settings.projectRules.findIndex((r) => r.id === id);
-    const original = settings.projectRules[index];
-    if (!original) return;
-    const copy: ProjectRule = {
-      id: crypto.randomUUID(),
-      matchType: original.matchType,
-      pattern: original.pattern,
-      settings: cloneProjectSettings(original.settings),
-    };
-    const next = [...settings.projectRules];
-    next.splice(index + 1, 0, copy);
-    save({ ...settings, projectRules: next });
+    save(settings.withRuleDuplicated(id));
   };
 
   // Delete is confirm-gated via DeleteConfirmPopover (anchored to the row's Delete button);
   // this handler is only ever invoked from that popover's confirm action.
   const handleDeleteRule = (id: string) => {
-    save({ ...settings, projectRules: settings.projectRules.filter((r) => r.id !== id) });
+    save(settings.withRuleRemoved(id));
   };
 
   const handleGripMouseDown = () => {
@@ -288,12 +238,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
       setDraggingIndex(null);
       return;
     }
-    const reordered = [...settings.projectRules];
-    const [moved] = reordered.splice(draggingIndex, 1);
-    if (moved) {
-      reordered.splice(index, 0, moved);
-      save({ ...settings, projectRules: reordered });
-    }
+    save(settings.withRuleMoved(draggingIndex, index));
     setDraggingIndex(null);
   };
 
@@ -315,60 +260,43 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   };
 
   const handleAddColor = () => {
-    const entry: PaletteEntry = {
-      id: crypto.randomUUID(),
-      name: `Color ${currentSettings.palette.entries.length + 1}`,
-      color: DEFAULT_PROJECT_SETTINGS.topBar.color.custom,
-    };
-    updateCurrentSettings({
-      palette: { ...currentSettings.palette, entries: [...currentSettings.palette.entries, entry] },
-    });
+    updateCurrent((ps) =>
+      ps.withPalette(
+        ps.palette.addEntry(
+          PaletteEntry.create(`Color ${ps.palette.entries.length + 1}`, ProjectSettings.DEFAULT.topBar.color.custom),
+        ),
+      ),
+    );
   };
 
   const handlePaletteNameChange = (id: string, name: string) => {
-    updateCurrentSettings({
-      palette: {
-        ...currentSettings.palette,
-        entries: currentSettings.palette.entries.map((e) => (e.id === id ? { ...e, name } : e)),
-      },
-    });
+    updateCurrent((ps) => ps.withPalette(ps.palette.renameEntry(id, name)));
   };
 
   const handlePaletteColorChange = (id: string, color: string) => {
-    const parsed = HexColorSchema.parse(color);
-    updateCurrentSettings({
-      palette: {
-        ...currentSettings.palette,
-        entries: currentSettings.palette.entries.map((e) => (e.id === id ? { ...e, color: parsed } : e)),
-      },
-    });
+    // input[type=color] can only ever emit '#rrggbb', so parse never returns null here.
+    const parsed = Color.parse(color);
+    if (parsed) updateCurrent((ps) => ps.withPalette(ps.palette.recolorEntry(id, parsed)));
   };
 
   // Palette entries and their references are scoped to the currently-edited rule only;
-  // removing an entry here does not touch any other rule's palette/references. All three
-  // surfaces' color references are cleared atomically alongside the entry removal, in the
-  // same save, so storage never passes through an intermediate state with a dangling paletteId.
+  // removing an entry here does not touch any other rule's palette/references. Clearing the
+  // surfaces' now-dangling references happens inside withPaletteEntryRemoved, in the same save,
+  // so storage never passes through an intermediate state with a dangling paletteId.
   const handleRemoveColor = (id: string) => {
-    const clearRef = (color: ColorSelection): ColorSelection =>
-      color.paletteId === id ? { ...color, paletteId: null } : color;
-    updateCurrentSettings({
-      palette: { ...currentSettings.palette, entries: currentSettings.palette.entries.filter((e) => e.id !== id) },
-      topBar: { ...currentSettings.topBar, color: clearRef(currentSettings.topBar.color) },
-      platformBar: { ...currentSettings.platformBar, color: clearRef(currentSettings.platformBar.color) },
-      platformBarText: { ...currentSettings.platformBarText, color: clearRef(currentSettings.platformBarText.color) },
-    });
+    updateCurrent((ps) => ps.withPaletteEntryRemoved(id));
   };
 
   const currentRule = view.type === 'detail' ? settings.projectRules.find((r) => r.id === view.ruleId) : undefined;
   // Falls back to the built-in defaults only for the transient frame before the "rule
   // disappeared" effect above navigates back to the list.
-  const currentSettings: ProjectSettings = currentRule ? currentRule.settings : DEFAULT_PROJECT_SETTINGS;
+  const currentSettings: ProjectSettings = currentRule ? currentRule.settings : ProjectSettings.DEFAULT;
 
-  const topBarEffectiveColor = resolveSelectedColor(currentSettings.palette, currentSettings.topBar.color);
-  const platformBarEffectiveColor = resolveSelectedColor(currentSettings.palette, currentSettings.platformBar.color);
+  const topBarEffectiveColor = currentSettings.palette.resolve(currentSettings.topBar.color);
+  const platformBarEffectiveColor = currentSettings.palette.resolve(currentSettings.platformBar.color);
   const platformBarTextEffectiveColor = currentSettings.platformBarText.auto
-    ? Color.fromHex(platformBarEffectiveColor).contrastingTextColor().toHex()
-    : resolveSelectedColor(currentSettings.palette, currentSettings.platformBarText.color);
+    ? platformBarEffectiveColor.contrastingTextColor()
+    : currentSettings.palette.resolve(currentSettings.platformBarText.color);
 
   if (view.type === 'detail') {
     const detailTitle = currentRule?.pattern ?? '';
@@ -419,9 +347,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
             <Switch
               className="w-full"
               isSelected={currentSettings.palette.enabled}
-              onChange={(isSelected) =>
-                updateCurrentSettings({ palette: { ...currentSettings.palette, enabled: isSelected } })
-              }
+              onChange={(isSelected) => updateCurrent((ps) => ps.withPalette(ps.palette.withEnabled(isSelected)))}
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Color palette
@@ -443,7 +369,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     />
                     <ColorSwatchField
                       ariaLabel={`${entry.name || '(unnamed)'} color`}
-                      value={entry.color}
+                      value={entry.color.toHex()}
                       onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
                       hexHidableOnNarrow
                     />
@@ -475,7 +401,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
             <Switch
               className="w-full"
               isSelected={currentSettings.topBar.enabled}
-              onChange={(isSelected) => updateSurface('topBar', { enabled: isSelected })}
+              onChange={(isSelected) => updateCurrent((ps) => ps.withTopBar(ps.topBar.withEnabled(isSelected)))}
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Top bar
@@ -493,10 +419,14 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     paletteEnabled={currentSettings.palette.enabled}
                     palette={currentSettings.palette.entries}
                     paletteId={currentSettings.topBar.color.paletteId}
-                    customColor={currentSettings.topBar.color.custom}
-                    effectiveColor={topBarEffectiveColor}
-                    onSelectPaletteEntry={(id) => updateSurfaceColor('topBar', { paletteId: id })}
-                    onSelectCustomColor={(color) => updateSurfaceColor('topBar', { paletteId: null, custom: color })}
+                    customColor={currentSettings.topBar.color.custom.toHex()}
+                    effectiveColor={topBarEffectiveColor.toHex()}
+                    onSelectPaletteEntry={(id) =>
+                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.withPaletteRef(id))))
+                    }
+                    onSelectCustomColor={(color) =>
+                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.withCustom(color))))
+                    }
                   />
                 </div>
                 <div className="flex min-h-8 items-center justify-between">
@@ -510,7 +440,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                       value={currentSettings.topBar.height}
                       onChange={(e) => {
                         const value = e.target.valueAsNumber;
-                        if (Number.isFinite(value)) updateSurface('topBar', { height: value });
+                        if (Number.isFinite(value)) updateCurrent((ps) => ps.withTopBar(ps.topBar.withHeight(value)));
                       }}
                       className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                     />
@@ -520,7 +450,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                 <Switch
                   className="min-h-8 w-full"
                   isSelected={currentSettings.topBar.stripes}
-                  onChange={(isSelected) => updateSurface('topBar', { stripes: isSelected })}
+                  onChange={(isSelected) => updateCurrent((ps) => ps.withTopBar(ps.topBar.withStripes(isSelected)))}
                 >
                   <Switch.Content className="flex w-full items-center justify-between">
                     <span className="text-sm font-normal">Stripes</span>
@@ -539,7 +469,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
             <Switch
               className="w-full"
               isSelected={currentSettings.platformBar.enabled}
-              onChange={(isSelected) => updateSurface('platformBar', { enabled: isSelected })}
+              onChange={(isSelected) =>
+                updateCurrent((ps) => ps.withPlatformBar(ps.platformBar.withEnabled(isSelected)))
+              }
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Platform Bar
@@ -557,18 +489,26 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     paletteEnabled={currentSettings.palette.enabled}
                     palette={currentSettings.palette.entries}
                     paletteId={currentSettings.platformBar.color.paletteId}
-                    customColor={currentSettings.platformBar.color.custom}
-                    effectiveColor={platformBarEffectiveColor}
-                    onSelectPaletteEntry={(id) => updateSurfaceColor('platformBar', { paletteId: id })}
+                    customColor={currentSettings.platformBar.color.custom.toHex()}
+                    effectiveColor={platformBarEffectiveColor.toHex()}
+                    onSelectPaletteEntry={(id) =>
+                      updateCurrent((ps) =>
+                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.withPaletteRef(id))),
+                      )
+                    }
                     onSelectCustomColor={(color) =>
-                      updateSurfaceColor('platformBar', { paletteId: null, custom: color })
+                      updateCurrent((ps) =>
+                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.withCustom(color))),
+                      )
                     }
                   />
                 </div>
                 <Switch
                   className="min-h-8 w-full"
                   isSelected={currentSettings.platformBar.stripes}
-                  onChange={(isSelected) => updateSurface('platformBar', { stripes: isSelected })}
+                  onChange={(isSelected) =>
+                    updateCurrent((ps) => ps.withPlatformBar(ps.platformBar.withStripes(isSelected)))
+                  }
                 >
                   <Switch.Content className="flex w-full items-center justify-between">
                     <span className="text-sm font-normal">Stripes</span>
@@ -587,7 +527,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
             <Switch
               className="w-full"
               isSelected={currentSettings.platformBarText.enabled}
-              onChange={(isSelected) => updateSurface('platformBarText', { enabled: isSelected })}
+              onChange={(isSelected) =>
+                updateCurrent((ps) => ps.withPlatformBarText(ps.platformBarText.withEnabled(isSelected)))
+              }
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Platform Bar text color
@@ -605,23 +547,29 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     paletteEnabled={currentSettings.palette.enabled}
                     palette={currentSettings.palette.entries}
                     paletteId={currentSettings.platformBarText.color.paletteId}
-                    customColor={currentSettings.platformBarText.color.custom}
-                    effectiveColor={platformBarTextEffectiveColor}
+                    customColor={currentSettings.platformBarText.color.custom.toHex()}
+                    effectiveColor={platformBarTextEffectiveColor.toHex()}
+                    // Picking any explicit color also leaves Auto, in the same save: the two
+                    // are mutually exclusive states of this surface.
                     onSelectPaletteEntry={(id) =>
-                      updateSurface('platformBarText', {
-                        color: { ...currentSettings.platformBarText.color, paletteId: id },
-                        auto: false,
-                      })
+                      updateCurrent((ps) =>
+                        ps.withPlatformBarText(
+                          ps.platformBarText.withColor(ps.platformBarText.color.withPaletteRef(id)).withAuto(false),
+                        ),
+                      )
                     }
                     onSelectCustomColor={(color) =>
-                      updateSurface('platformBarText', {
-                        color: { ...currentSettings.platformBarText.color, paletteId: null, custom: color },
-                        auto: false,
-                      })
+                      updateCurrent((ps) =>
+                        ps.withPlatformBarText(
+                          ps.platformBarText.withColor(ps.platformBarText.color.withCustom(color)).withAuto(false),
+                        ),
+                      )
                     }
                     supportsAuto
                     autoSelected={currentSettings.platformBarText.auto}
-                    onSelectAuto={() => updateSurface('platformBarText', { auto: true })}
+                    onSelectAuto={() =>
+                      updateCurrent((ps) => ps.withPlatformBarText(ps.platformBarText.withAuto(true)))
+                    }
                   />
                 </div>
               </div>

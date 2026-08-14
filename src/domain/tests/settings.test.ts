@@ -1,66 +1,64 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COLOR, DEFAULT_TEXT_COLOR, type HexColor } from '../color';
-import { resolveSelectedColor } from '../color-selection';
+import { Color } from '../color';
+import { ColorSelection } from '../color-selection';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
-import type { PaletteSettings } from '../palette';
-import { MATCH_TYPES, type MatchType, type ProjectRule } from '../project-rule';
+import { Palette, PaletteEntry } from '../palette';
+import { MATCH_TYPES, type MatchType, ProjectRule } from '../project-rule';
 import {
-  cloneProjectSettings,
-  DEFAULT_PROJECT_SETTINGS,
-  DEFAULT_TOP_BAR_HEIGHT,
   type PlatformBarSettings,
   type PlatformBarTextSettings,
-  type ProjectSettings,
+  ProjectSettings,
   type TopBarSettings,
 } from '../project-settings';
-import {
-  DEFAULT_SETTINGS,
-  effectiveSchemaVersion,
-  loadSettings,
-  resolveProjectSettings,
-  type TintSettings,
-} from '../tint-settings';
+import { TintSettings } from '../tint-settings';
 
 const CURRENT_VERSION = '0.1.0';
 
-// Test fixtures construct domain objects directly, bypassing schema validation on purpose —
-// marker strings like '#known' or '#p' are not real colors and never go through HexColorSchema.
-const hex = (value: string) => value as HexColor;
+// The product defaults now live private to project-settings.ts; asserting the literals here is
+// deliberate — these tests are what pins them down.
+const DEFAULT_COLOR = '#ff6d00';
+const DEFAULT_TEXT_COLOR = '#ffffff';
+const DEFAULT_TOP_BAR_HEIGHT = 4;
 
-// Shallow, section-by-section builder for expected/fixture ProjectSettings values. When
-// overriding a section's `color`, the full { paletteId, custom } pair must be given (this
-// helper does not deep-merge into color) — every call site below does that explicitly.
+const DEFAULTS = ProjectSettings.DEFAULT;
+
+// Every test color here is a real '#rrggbb' value: Color has no other way in.
+const color = (value: string): Color => Color.parse(value)!;
+
+// Section-by-section builder for expected ProjectSettings values; sections not overridden come
+// from ProjectSettings.DEFAULT.
 function projectSettings(
   overrides: {
-    palette?: Partial<PaletteSettings>;
-    topBar?: Partial<TopBarSettings>;
-    platformBar?: Partial<PlatformBarSettings>;
-    platformBarText?: Partial<PlatformBarTextSettings>;
+    palette?: Palette;
+    topBar?: TopBarSettings;
+    platformBar?: PlatformBarSettings;
+    platformBarText?: PlatformBarTextSettings;
   } = {},
 ): ProjectSettings {
-  return {
-    palette: { ...DEFAULT_PROJECT_SETTINGS.palette, ...overrides.palette },
-    topBar: { ...DEFAULT_PROJECT_SETTINGS.topBar, ...overrides.topBar },
-    platformBar: { ...DEFAULT_PROJECT_SETTINGS.platformBar, ...overrides.platformBar },
-    platformBarText: { ...DEFAULT_PROJECT_SETTINGS.platformBarText, ...overrides.platformBarText },
-  };
+  return new ProjectSettings(
+    overrides.palette ?? DEFAULTS.palette,
+    overrides.topBar ?? DEFAULTS.topBar,
+    overrides.platformBar ?? DEFAULTS.platformBar,
+    overrides.platformBarText ?? DEFAULTS.platformBarText,
+  );
 }
 
-describe('loadSettings', () => {
+// Fresh defaults are exactly "no rules, stamped with the effective version" — asserted
+// field by field now that there is no DEFAULT_SETTINGS object to spread.
+function expectFreshDefaults(loaded: TintSettings, schemaVersion: string) {
+  expect(loaded.schemaVersion).toBe(schemaVersion);
+  expect(loaded.projectRules).toEqual([]);
+}
+
+describe('TintSettings.fromStored', () => {
   it('returns fresh defaults stamped with the current version for null/undefined input', () => {
-    expect(loadSettings(null, CURRENT_VERSION)).toEqual({ ...DEFAULT_SETTINGS, schemaVersion: CURRENT_VERSION });
-    expect(loadSettings(undefined, CURRENT_VERSION)).toEqual({
-      ...DEFAULT_SETTINGS,
-      schemaVersion: CURRENT_VERSION,
-    });
+    expectFreshDefaults(TintSettings.fromStored(null, CURRENT_VERSION), CURRENT_VERSION);
+    expectFreshDefaults(TintSettings.fromStored(undefined, CURRENT_VERSION), CURRENT_VERSION);
   });
 
   it('returns fresh defaults for non-object input', () => {
-    expect(loadSettings('a string', CURRENT_VERSION)).toEqual({
-      ...DEFAULT_SETTINGS,
-      schemaVersion: CURRENT_VERSION,
-    });
-    expect(loadSettings(42, CURRENT_VERSION)).toEqual({ ...DEFAULT_SETTINGS, schemaVersion: CURRENT_VERSION });
+    expectFreshDefaults(TintSettings.fromStored('a string', CURRENT_VERSION), CURRENT_VERSION);
+    expectFreshDefaults(TintSettings.fromStored(42, CURRENT_VERSION), CURRENT_VERSION);
   });
 
   it('discards data with no schemaVersion (pre-release shape) and returns defaults', () => {
@@ -70,49 +68,46 @@ describe('loadSettings', () => {
       paletteEnabled: false,
     };
 
-    const loaded = loadSettings(oldFlatShape, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored(oldFlatShape, CURRENT_VERSION);
 
-    expect(loaded).toEqual({ ...DEFAULT_SETTINGS, schemaVersion: CURRENT_VERSION });
+    expectFreshDefaults(loaded, CURRENT_VERSION);
   });
 
   it('discards data whose schemaVersion is below SCHEMA_MIN_VERSION', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: '0.0.9', projectRules: [{ id: '1', pattern: 'x', settings: { topBarColor: '#123456' } }] },
       CURRENT_VERSION,
     );
 
-    expect(loaded).toEqual({ ...DEFAULT_SETTINGS, schemaVersion: CURRENT_VERSION });
+    expectFreshDefaults(loaded, CURRENT_VERSION);
   });
 
   it('discards data whose schemaVersion is missing or not a string', () => {
-    expect(loadSettings({ schemaVersion: 123, projectRules: [] }, CURRENT_VERSION)).toEqual({
-      ...DEFAULT_SETTINGS,
-      schemaVersion: CURRENT_VERSION,
-    });
-    expect(loadSettings({ projectRules: [] }, CURRENT_VERSION)).toEqual({
-      ...DEFAULT_SETTINGS,
-      schemaVersion: CURRENT_VERSION,
-    });
+    expectFreshDefaults(
+      TintSettings.fromStored({ schemaVersion: 123, projectRules: [] }, CURRENT_VERSION),
+      CURRENT_VERSION,
+    );
+    expectFreshDefaults(TintSettings.fromStored({ projectRules: [] }, CURRENT_VERSION), CURRENT_VERSION);
   });
 
   // Regression: freshDefaults() used to stamp the raw currentVersion verbatim. If currentVersion
   // (the manifest version) ever lags behind CURRENT_SCHEMA_VERSION, that wrote a schemaVersion
   // BELOW the nested shape's own version, which the next load would treat as "still needs the
   // flat->nested migration" and silently reset every value to defaults. freshDefaults() now goes
-  // through effectiveSchemaVersion() to floor at CURRENT_SCHEMA_VERSION.
+  // through TintSettings.effectiveSchemaVersion() to floor at CURRENT_SCHEMA_VERSION.
   it('floors the stamped schemaVersion at CURRENT_SCHEMA_VERSION when currentVersion is below it (freshDefaults path)', () => {
     const laggingVersion = '0.0.5';
 
-    expect(loadSettings(null, laggingVersion).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(loadSettings('not-an-object', laggingVersion).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(loadSettings({ schemaVersion: '0.0.9', projectRules: [] }, laggingVersion).schemaVersion).toBe(
+    expect(TintSettings.fromStored(null, laggingVersion).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(TintSettings.fromStored('not-an-object', laggingVersion).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(TintSettings.fromStored({ schemaVersion: '0.0.9', projectRules: [] }, laggingVersion).schemaVersion).toBe(
       CURRENT_SCHEMA_VERSION,
     );
   });
 
   // Pre-release policy: SCHEMA_MIGRATIONS (migrations.ts) is currently EMPTY. Schema changes
   // before the first release are destructive by design instead of being migrated -- old-shaped
-  // fields are simply not recognized by the Zod schemas (types.ts) and every section falls back
+  // fields are simply not recognized by the domain's Zod schemas and every section falls back
   // to its default. The migration service itself (runMigrations, the injectable `steps` param) is
   // still exercised directly in migrations.test.ts against a synthetic chain, proving it's ready
   // for the first real post-release step.
@@ -136,7 +131,7 @@ describe('loadSettings', () => {
         platformBarTextAuto: true,
       };
 
-      const loaded = loadSettings(
+      const loaded = TintSettings.fromStored(
         {
           schemaVersion: '0.1.0',
           projectRules: [
@@ -150,13 +145,13 @@ describe('loadSettings', () => {
 
       expect(loaded.schemaVersion).toBe('0.1.0');
       expect(loaded.projectRules).toEqual([
-        { id: 'r1', matchType: 'exact', pattern: 'my-app', settings: DEFAULT_PROJECT_SETTINGS },
-        { id: 'r2', matchType: 'regex', pattern: 'other-app', settings: DEFAULT_PROJECT_SETTINGS },
+        { id: 'r1', matchType: 'exact', pattern: 'my-app', settings: DEFAULTS },
+        { id: 'r2', matchType: 'regex', pattern: 'other-app', settings: DEFAULTS },
       ]);
     });
 
     it('merges nested-shaped settings directly (no migration step runs) at any valid schemaVersion, from the floor up through arbitrarily newer versions', () => {
-      const atFloor = loadSettings(
+      const atFloor = TintSettings.fromStored(
         {
           schemaVersion: '0.1.0',
           projectRules: [{ id: '1', matchType: 'exact', pattern: 'x', settings: { platformBarText: { auto: true } } }],
@@ -166,7 +161,7 @@ describe('loadSettings', () => {
       expect(atFloor.schemaVersion).toBe('0.1.0');
       expect(atFloor.projectRules[0]!.settings.platformBarText.auto).toBe(true);
 
-      const wellAbove = loadSettings(
+      const wellAbove = TintSettings.fromStored(
         {
           schemaVersion: '9.9.9',
           projectRules: [
@@ -176,18 +171,18 @@ describe('loadSettings', () => {
         CURRENT_VERSION,
       );
       expect(wellAbove.schemaVersion).toBe('9.9.9');
-      expect(wellAbove.projectRules[0]!.settings.topBar.color.custom).toBe('#00ff00');
+      expect(wellAbove.projectRules[0]!.settings.topBar.color.custom.toHex()).toBe('#00ff00');
     });
   });
 
   // Schema change: `defaultProject` has been removed from TintSettings entirely — there is no
-  // longer a fallback project when no rule matches. loadSettings() never reads a
+  // longer a fallback project when no rule matches. TintSettings.fromStored() never reads a
   // `defaultProject` key, so data still carrying one (even at a valid schemaVersion) simply has
   // it ignored; only `projectRules` is read. This is the intended breaking change.
   it('ignores a legacy `defaultProject` key; only projectRules is read', () => {
     const stored = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      defaultProject: projectSettings({ topBar: { color: { paletteId: null, custom: hex('#654321') } } }),
+      defaultProject: { topBar: { color: { paletteId: null, custom: '#654321' } } },
       projectRules: [
         {
           id: '1',
@@ -198,7 +193,7 @@ describe('loadSettings', () => {
       ],
     };
 
-    const loaded = loadSettings(stored, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored(stored, CURRENT_VERSION);
 
     expect(loaded).not.toHaveProperty('defaultProject');
     expect(loaded.projectRules).toEqual([
@@ -206,13 +201,13 @@ describe('loadSettings', () => {
         id: '1',
         matchType: 'exact',
         pattern: 'x',
-        settings: projectSettings({ topBar: { color: { paletteId: null, custom: hex('#00ff00') } } }),
+        settings: projectSettings({ topBar: DEFAULTS.topBar.withColor(new ColorSelection(null, color('#00ff00'))) }),
       },
     ]);
   });
 
   // Schema change: a legacy top-level `paletteEnabled`/`palette` on TintSettings (pre-dating
-  // even the per-rule flat shape) is not read anywhere in loadSettings — only each rule's own
+  // even the per-rule flat shape) is not read anywhere in fromStored — only each rule's own
   // `settings.palette` matters. Junk top-level keys are ignored; the rule falls back to its own
   // default palette.
   it('ignores a legacy top-level palette/paletteEnabled; rules get the default palette', () => {
@@ -223,13 +218,13 @@ describe('loadSettings', () => {
       projectRules: [{ id: '1', matchType: 'exact', pattern: 'x', settings: {} }],
     };
 
-    const loaded = loadSettings(stored, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored(stored, CURRENT_VERSION);
 
-    expect(loaded.projectRules[0]!.settings.palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+    expect(loaded.projectRules[0]!.settings.palette).toEqual(DEFAULTS.palette);
   });
 
   // Schema change: the old `projects: Record<projectId, ProjectSettings>` map has been replaced
-  // by the ordered `projectRules` array. loadSettings() only reads `projectRules`, so data still
+  // by the ordered `projectRules` array. TintSettings.fromStored() only reads `projectRules`, so data still
   // carrying the legacy `projects` key (even at a valid schemaVersion) ends up with an empty
   // projectRules — this is the intended breaking change, not a migration.
   it('ignores a legacy `projects` map (pre-array schema), leaving projectRules empty', () => {
@@ -240,7 +235,7 @@ describe('loadSettings', () => {
       },
     };
 
-    const loaded = loadSettings(stored, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored(stored, CURRENT_VERSION);
 
     expect(loaded.projectRules).toEqual([]);
   });
@@ -259,7 +254,7 @@ describe('loadSettings', () => {
       ],
     };
 
-    const loaded = loadSettings(stored, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored(stored, CURRENT_VERSION);
 
     expect(loaded.projectRules).toEqual([
       {
@@ -267,14 +262,14 @@ describe('loadSettings', () => {
         matchType: 'exact',
         pattern: 'my-app',
         settings: projectSettings({
-          topBar: { color: { paletteId: DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId, custom: hex('#00ff00') } },
+          topBar: DEFAULTS.topBar.withColor(new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#00ff00'))),
         }),
       },
       {
         id: 'rule-2',
         matchType: 'prefix',
         pattern: 'other-app',
-        settings: projectSettings({ platformBar: { stripes: true } }),
+        settings: projectSettings({ platformBar: DEFAULTS.platformBar.withStripes(true) }),
       },
     ]);
   });
@@ -288,19 +283,19 @@ describe('loadSettings', () => {
       ],
     };
 
-    const loaded = loadSettings(stored, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored(stored, CURRENT_VERSION);
 
     expect(loaded.projectRules.map((rule) => rule.id)).toEqual(['b', 'a']);
   });
 
   it('defaults to an empty projectRules array when absent from otherwise-valid data', () => {
-    const loaded = loadSettings({ schemaVersion: CURRENT_SCHEMA_VERSION }, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored({ schemaVersion: CURRENT_SCHEMA_VERSION }, CURRENT_VERSION);
 
     expect(loaded.projectRules).toEqual([]);
   });
 
   it('treats a non-array projectRules value as an empty array', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: { notAnArray: true } },
       CURRENT_VERSION,
     );
@@ -309,7 +304,7 @@ describe('loadSettings', () => {
   });
 
   it('excludes non-object entries and entries whose pattern is not a string', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       {
         schemaVersion: CURRENT_SCHEMA_VERSION,
         projectRules: [
@@ -324,13 +319,11 @@ describe('loadSettings', () => {
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules).toEqual([
-      { id: 'valid', matchType: 'exact', pattern: 'ok', settings: DEFAULT_PROJECT_SETTINGS },
-    ]);
+    expect(loaded.projectRules).toEqual([{ id: 'valid', matchType: 'exact', pattern: 'ok', settings: DEFAULTS }]);
   });
 
   it('generates a UUID for a rule id when missing from storage', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ pattern: 'no-id', settings: {} }] },
       CURRENT_VERSION,
     );
@@ -344,7 +337,7 @@ describe('loadSettings', () => {
   // `.catch()` fires on any parse failure, not just a missing key, so this recovers the same way
   // (rather than e.g. coercing 42 to "42" or dropping the whole rule).
   it('generates a UUID for a rule id that is present but the wrong type (not just missing)', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: 42, pattern: 'junk-id', settings: {} }] },
       CURRENT_VERSION,
     );
@@ -355,49 +348,49 @@ describe('loadSettings', () => {
   });
 
   it('falls back to the default ProjectSettings when rule.settings is a string', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: '1', pattern: 'a', settings: 'not-an-object' }] },
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULTS);
   });
 
   it('falls back to the default ProjectSettings when rule.settings is null', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: '1', pattern: 'a', settings: null }] },
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULTS);
   });
 
   // Arrays pass a bare `typeof value === 'object'` check, but Zod's z.object() distinguishes
   // arrays from plain records and rejects them outright, so ProjectSettingsSchema's outer
   // .catch() recovers to full defaults instead of spreading numeric indices onto the result.
   it('treats an empty array for rule.settings as invalid, falling back to defaults', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: '1', pattern: 'a', settings: [] }] },
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULTS);
   });
 
   it('treats a non-empty array for rule.settings as invalid, falling back to defaults without extraneous keys', () => {
-    const loaded = loadSettings(
+    const loaded = TintSettings.fromStored(
       { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: '1', pattern: 'a', settings: ['x', 'y'] }] },
       CURRENT_VERSION,
     );
 
-    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULT_PROJECT_SETTINGS);
+    expect(loaded.projectRules[0]!.settings).toEqual(DEFAULTS);
     expect(loaded.projectRules[0]!.settings).not.toHaveProperty('0');
     expect(loaded.projectRules[0]!.settings).not.toHaveProperty('1');
   });
 
   describe('matchType', () => {
     it('defaults matchType to "regex" when missing from a stored rule (pre-matchType 0.1.0 data)', () => {
-      const loaded = loadSettings(
+      const loaded = TintSettings.fromStored(
         { schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [{ id: '1', pattern: 'x', settings: {} }] },
         CURRENT_VERSION,
       );
@@ -406,7 +399,7 @@ describe('loadSettings', () => {
     });
 
     it('defaults matchType to "regex" when a stored rule has an invalid matchType value', () => {
-      const loaded = loadSettings(
+      const loaded = TintSettings.fromStored(
         {
           schemaVersion: CURRENT_SCHEMA_VERSION,
           projectRules: [
@@ -422,7 +415,7 @@ describe('loadSettings', () => {
     });
 
     it('preserves each valid matchType value from storage', () => {
-      const loaded = loadSettings(
+      const loaded = TintSettings.fromStored(
         {
           schemaVersion: CURRENT_SCHEMA_VERSION,
           projectRules: MATCH_TYPES.map((matchType, index) => ({
@@ -441,7 +434,7 @@ describe('loadSettings', () => {
 
   describe('deep merge of ProjectSettings sections', () => {
     const loadWithSettings = (settings: unknown): ProjectSettings =>
-      loadSettings(
+      TintSettings.fromStored(
         {
           schemaVersion: CURRENT_SCHEMA_VERSION,
           projectRules: [{ id: '1', matchType: 'exact', pattern: 'a', settings }],
@@ -451,37 +444,39 @@ describe('loadSettings', () => {
 
     describe('palette', () => {
       it('defaults the whole section when missing', () => {
-        expect(loadWithSettings({}).palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+        expect(loadWithSettings({}).palette).toEqual(DEFAULTS.palette);
       });
 
       it('defaults the whole section when it is not an object (junk value)', () => {
-        expect(loadWithSettings({ palette: 'not-an-object' }).palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+        expect(loadWithSettings({ palette: 'not-an-object' }).palette).toEqual(DEFAULTS.palette);
       });
 
       it('defaults the whole section when it is an array', () => {
-        expect(loadWithSettings({ palette: [] }).palette).toEqual(DEFAULT_PROJECT_SETTINGS.palette);
+        expect(loadWithSettings({ palette: [] }).palette).toEqual(DEFAULTS.palette);
       });
 
       it('merges a partial section, keeping the default for fields not provided', () => {
         expect(loadWithSettings({ palette: { enabled: false } }).palette).toEqual({
           enabled: false,
-          entries: DEFAULT_PROJECT_SETTINGS.palette.entries,
+          entries: DEFAULTS.palette.entries,
         });
       });
 
       it('keeps a valid entries array as-is', () => {
         const customEntries = [{ id: 'custom', name: 'Custom', color: '#123123' }];
-        expect(loadWithSettings({ palette: { entries: customEntries } }).palette.entries).toEqual(customEntries);
+        expect(loadWithSettings({ palette: { entries: customEntries } }).palette.entries).toEqual([
+          new PaletteEntry('custom', 'Custom', color('#123123')),
+        ]);
       });
 
       it('falls back to the default entries when entries is present but not an array', () => {
         expect(loadWithSettings({ palette: { enabled: false, entries: 'not-an-array' } }).palette).toEqual({
           enabled: false,
-          entries: DEFAULT_PROJECT_SETTINGS.palette.entries,
+          entries: DEFAULTS.palette.entries,
         });
       });
 
-      // Per-element policy (types.ts's parsePaletteEntries): a non-record element can't be
+      // Per-element policy (palette.ts's parseEntries): a non-record element can't be
       // coerced into a PaletteEntry at all, so it's dropped -- one bad item never nukes its
       // valid siblings' positions in the array.
       it('drops non-record entries elements (null, string, number, array) while valid siblings survive', () => {
@@ -489,13 +484,13 @@ describe('loadSettings', () => {
           palette: { entries: [null, 'x', 42, [], { id: 'valid', name: 'Valid', color: '#123456' }] },
         }).palette.entries;
 
-        expect(entries).toEqual([{ id: 'valid', name: 'Valid', color: '#123456' }]);
+        expect(entries).toEqual([new PaletteEntry('valid', 'Valid', color('#123456'))]);
       });
 
       // Contrast with the above: once an element clears the "is it a record" bar, it is NEVER
       // dropped for having junk fields -- each field recovers independently via its own .catch
       // (id -> a generated uuid, name -> '', color -> DEFAULT_COLOR), same per-field policy as
-      // every other schema in types.ts.
+      // every other schema in the domain.
       it('always keeps a record entries element, recovering each junk field independently instead of dropping it', () => {
         const entries = loadWithSettings({
           palette: { entries: [{ id: 42, name: 99, color: true }] },
@@ -504,43 +499,41 @@ describe('loadSettings', () => {
         expect(entries).toHaveLength(1);
         expect(entries[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
         expect(entries[0]!.name).toBe('');
-        expect(entries[0]!.color).toBe(DEFAULT_COLOR);
+        expect(entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
       });
     });
 
     describe('topBar', () => {
       it('defaults the whole section when missing', () => {
-        expect(loadWithSettings({}).topBar).toEqual(DEFAULT_PROJECT_SETTINGS.topBar);
+        expect(loadWithSettings({}).topBar).toEqual(DEFAULTS.topBar);
       });
 
       it('defaults the whole section (including color) when it is not an object', () => {
-        expect(loadWithSettings({ topBar: 'not-an-object' }).topBar).toEqual(DEFAULT_PROJECT_SETTINGS.topBar);
+        expect(loadWithSettings({ topBar: 'not-an-object' }).topBar).toEqual(DEFAULTS.topBar);
       });
 
       it('merges a partial section (non-color fields), keeping defaults for the rest', () => {
         expect(loadWithSettings({ topBar: { height: 20 } }).topBar).toEqual({
-          ...DEFAULT_PROJECT_SETTINGS.topBar,
+          ...DEFAULTS.topBar,
           height: 20,
         });
       });
 
       it('merges a partial color selection, keeping the default for the field not provided', () => {
-        expect(loadWithSettings({ topBar: { color: { custom: '#123456' } } }).topBar.color).toEqual({
-          paletteId: DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId,
-          custom: '#123456',
-        });
+        expect(loadWithSettings({ topBar: { color: { custom: '#123456' } } }).topBar.color).toEqual(
+          new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#123456')),
+        );
       });
 
       it('preserves an explicit null paletteId in the color selection (distinct from "missing")', () => {
-        expect(loadWithSettings({ topBar: { color: { paletteId: null } } }).topBar.color).toEqual({
-          paletteId: null,
-          custom: DEFAULT_PROJECT_SETTINGS.topBar.color.custom,
-        });
+        expect(loadWithSettings({ topBar: { color: { paletteId: null } } }).topBar.color).toEqual(
+          new ColorSelection(null, DEFAULTS.topBar.color.custom),
+        );
       });
 
       it('defaults the color selection entirely when it is not an object', () => {
         expect(loadWithSettings({ topBar: { color: 'not-an-object', height: 20 } }).topBar).toEqual({
-          ...DEFAULT_PROJECT_SETTINGS.topBar,
+          ...DEFAULTS.topBar,
           height: 20,
         });
       });
@@ -548,51 +541,47 @@ describe('loadSettings', () => {
 
     describe('platformBar', () => {
       it('defaults the whole section when missing', () => {
-        expect(loadWithSettings({}).platformBar).toEqual(DEFAULT_PROJECT_SETTINGS.platformBar);
+        expect(loadWithSettings({}).platformBar).toEqual(DEFAULTS.platformBar);
       });
 
       it('defaults the whole section when it is not an object', () => {
-        expect(loadWithSettings({ platformBar: 42 }).platformBar).toEqual(DEFAULT_PROJECT_SETTINGS.platformBar);
+        expect(loadWithSettings({ platformBar: 42 }).platformBar).toEqual(DEFAULTS.platformBar);
       });
 
       it('merges a partial section, keeping defaults for the rest', () => {
         expect(loadWithSettings({ platformBar: { stripes: true } }).platformBar).toEqual({
-          ...DEFAULT_PROJECT_SETTINGS.platformBar,
+          ...DEFAULTS.platformBar,
           stripes: true,
         });
       });
 
       it('merges a partial color selection', () => {
-        expect(loadWithSettings({ platformBar: { color: { paletteId: null } } }).platformBar.color).toEqual({
-          paletteId: null,
-          custom: DEFAULT_PROJECT_SETTINGS.platformBar.color.custom,
-        });
+        expect(loadWithSettings({ platformBar: { color: { paletteId: null } } }).platformBar.color).toEqual(
+          new ColorSelection(null, DEFAULTS.platformBar.color.custom),
+        );
       });
     });
 
     describe('platformBarText', () => {
       it('defaults the whole section when missing', () => {
-        expect(loadWithSettings({}).platformBarText).toEqual(DEFAULT_PROJECT_SETTINGS.platformBarText);
+        expect(loadWithSettings({}).platformBarText).toEqual(DEFAULTS.platformBarText);
       });
 
       it('defaults the whole section when it is not an object', () => {
-        expect(loadWithSettings({ platformBarText: [] }).platformBarText).toEqual(
-          DEFAULT_PROJECT_SETTINGS.platformBarText,
-        );
+        expect(loadWithSettings({ platformBarText: [] }).platformBarText).toEqual(DEFAULTS.platformBarText);
       });
 
       it('merges a partial section, keeping defaults for the rest', () => {
         expect(loadWithSettings({ platformBarText: { auto: true } }).platformBarText).toEqual({
-          ...DEFAULT_PROJECT_SETTINGS.platformBarText,
+          ...DEFAULTS.platformBarText,
           auto: true,
         });
       });
 
       it('merges a partial color selection', () => {
-        expect(loadWithSettings({ platformBarText: { color: { custom: '#abcdef' } } }).platformBarText.color).toEqual({
-          paletteId: DEFAULT_PROJECT_SETTINGS.platformBarText.color.paletteId,
-          custom: '#abcdef',
-        });
+        expect(loadWithSettings({ platformBarText: { color: { custom: '#abcdef' } } }).platformBarText.color).toEqual(
+          new ColorSelection(DEFAULTS.platformBarText.color.paletteId, color('#abcdef')),
+        );
       });
     });
 
@@ -606,9 +595,9 @@ describe('loadSettings', () => {
       });
 
       expect(settings.topBar).toEqual({
-        ...DEFAULT_PROJECT_SETTINGS.topBar,
+        ...DEFAULTS.topBar,
         height: 30,
-        color: { paletteId: DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId, custom: '#fedcba' },
+        color: new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#fedcba')),
       });
     });
 
@@ -625,34 +614,35 @@ describe('loadSettings', () => {
       });
 
       it('recovers a number field to its default when the stored value is the wrong type', () => {
-        expect(loadWithSettings({ topBar: { height: 'abc' } }).topBar.height).toBe(
-          DEFAULT_PROJECT_SETTINGS.topBar.height,
-        );
+        expect(loadWithSettings({ topBar: { height: 'abc' } }).topBar.height).toBe(DEFAULTS.topBar.height);
       });
 
       it('recovers a string field to its default when the stored value is the wrong type', () => {
-        expect(loadWithSettings({ topBar: { color: { custom: 42 } } }).topBar.color.custom).toBe(
-          DEFAULT_PROJECT_SETTINGS.topBar.color.custom,
+        expect(loadWithSettings({ topBar: { color: { custom: 42 } } }).topBar.color.custom.toHex()).toBe(
+          DEFAULTS.topBar.color.custom.toHex(),
         );
       });
 
-      // HexColorSchema tightening: a color STRING that is not '#rrggbb' used to pass through
+      // Color parsing tightening: a color STRING that is not '#rrggbb' used to pass through
       // verbatim (CSS would silently ignore it); it now recovers to the default like any other
       // invalid value, and valid uppercase hex is normalized to lowercase.
       it('recovers an invalid (non-#rrggbb) color string to its default and normalizes uppercase hex', () => {
-        expect(loadWithSettings({ topBar: { color: { custom: 'banana' } } }).topBar.color.custom).toBe(
-          DEFAULT_PROJECT_SETTINGS.topBar.color.custom,
+        expect(loadWithSettings({ topBar: { color: { custom: 'banana' } } }).topBar.color.custom.toHex()).toBe(
+          DEFAULTS.topBar.color.custom.toHex(),
         );
         expect(
-          loadWithSettings({ palette: { entries: [{ id: 'e1', name: 'X', color: 'banana' }] } }).palette.entries[0]!
-            .color,
+          loadWithSettings({
+            palette: { entries: [{ id: 'e1', name: 'X', color: 'banana' }] },
+          }).palette.entries[0]!.color.toHex(),
         ).toBe(DEFAULT_COLOR);
-        expect(loadWithSettings({ topBar: { color: { custom: '#ABCDEF' } } }).topBar.color.custom).toBe('#abcdef');
+        expect(loadWithSettings({ topBar: { color: { custom: '#ABCDEF' } } }).topBar.color.custom.toHex()).toBe(
+          '#abcdef',
+        );
       });
 
       it('recovers a nested color.paletteId to its default when the stored value is the wrong type', () => {
         expect(loadWithSettings({ topBar: { color: { paletteId: 42 } } }).topBar.color.paletteId).toBe(
-          DEFAULT_PROJECT_SETTINGS.topBar.color.paletteId,
+          DEFAULTS.topBar.color.paletteId,
         );
       });
 
@@ -670,48 +660,48 @@ describe('loadSettings', () => {
         });
 
         expect(settings.topBar).toEqual({
-          ...DEFAULT_PROJECT_SETTINGS.topBar,
-          color: { ...DEFAULT_PROJECT_SETTINGS.topBar.color, custom: '#123456' },
+          ...DEFAULTS.topBar,
+          color: new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#123456')),
         });
       });
     });
   });
 });
 
-// DEFAULT_PROJECT_SETTINGS is `ProjectSettingsSchema.parse({})` (settings.ts), not a hand-written
-// literal -- these tests guard the schema's derived defaults directly, independent of loadSettings.
-describe('DEFAULT_PROJECT_SETTINGS derivation (Zod schema defaults)', () => {
+// ProjectSettings.DEFAULT is built from the section schemas' own defaults, not from a
+// hand-written literal -- these tests guard those derived defaults directly, independent of
+// fromStored.
+describe('ProjectSettings.DEFAULT derivation (Zod schema defaults)', () => {
   it('parse({}) deep-equals the documented default shape (guards against schema-default drift)', () => {
-    expect(DEFAULT_PROJECT_SETTINGS).toEqual({
+    expect(DEFAULTS).toEqual({
       palette: {
         enabled: true,
-        entries: [{ id: 'default', name: 'Primary', color: DEFAULT_COLOR }],
+        entries: [{ id: 'default', name: 'Primary', color: color(DEFAULT_COLOR) }],
       },
       topBar: {
         enabled: true,
-        color: { paletteId: 'default', custom: DEFAULT_COLOR },
+        color: { paletteId: 'default', custom: color(DEFAULT_COLOR) },
         height: DEFAULT_TOP_BAR_HEIGHT,
         stripes: false,
       },
       platformBar: {
         enabled: true,
-        color: { paletteId: 'default', custom: DEFAULT_COLOR },
+        color: { paletteId: 'default', custom: color(DEFAULT_COLOR) },
         stripes: false,
       },
       platformBarText: {
         enabled: true,
-        color: { paletteId: null, custom: DEFAULT_TEXT_COLOR },
+        color: { paletteId: null, custom: color(DEFAULT_TEXT_COLOR) },
         auto: false,
       },
     });
   });
 
   // Zod 4 pitfall: a `.catch()` fallback given as a static value (object/array) is returned by
-  // shared reference on every parse call; types.ts avoids this by using the function form
-  // (`.catch(() => ...)`) everywhere a mutable default is produced. This proves that guarantee
-  // end-to-end: two independently-defaulted ProjectSettings must not alias each other anywhere,
-  // or mutating one rule's settings in the side panel would silently corrupt every other rule
-  // still sitting on its defaults.
+  // shared reference on every parse call; the domain schemas avoid this by using the function
+  // form (`.catch(() => ...)`) everywhere a container is produced. Scoped to the fromStored
+  // recovery path, where per-rule freshness still holds: ProjectSettings.DEFAULT itself is
+  // deliberately shared (it is immutable), and so are Color values, which are values.
   it('does not share object references between two independently-defaulted ProjectSettings (the .catch function-form guarantee)', () => {
     const stored = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -721,7 +711,7 @@ describe('DEFAULT_PROJECT_SETTINGS derivation (Zod schema defaults)', () => {
       ],
     };
 
-    const loaded = loadSettings(stored, CURRENT_VERSION);
+    const loaded = TintSettings.fromStored(stored, CURRENT_VERSION);
     const settingsByRule = loaded.projectRules.map((rule) => rule.settings);
     const first = settingsByRule[0]!;
     const second = settingsByRule[1]!;
@@ -734,232 +724,208 @@ describe('DEFAULT_PROJECT_SETTINGS derivation (Zod schema defaults)', () => {
     expect(first.platformBar.color).not.toBe(second.platformBar.color);
     expect(first.platformBarText.color).not.toBe(second.platformBarText.color);
 
-    first.palette.entries[0]!.color = hex('#000000');
-    first.topBar.color.custom = hex('#000000');
-    expect(second.palette.entries[0]!.color).toBe(DEFAULT_COLOR);
-    expect(second.topBar.color.custom).toBe(DEFAULT_COLOR);
-  });
-});
-
-describe('cloneProjectSettings', () => {
-  it('deep-copies palette.entries so mutating the clone does not affect the original', () => {
-    const original = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
-    const clone = cloneProjectSettings(original);
-
-    clone.palette.entries.push({ id: 'extra', name: 'Extra', color: hex('#000000') });
-    clone.palette.entries[0]!.color = hex('#ffffff');
-
-    expect(original.palette.entries).toHaveLength(1);
-    expect(original.palette.entries[0]!.color).toBe(DEFAULT_PROJECT_SETTINGS.palette.entries[0]!.color);
-  });
-
-  it("deep-copies each surface's color selection so mutating the clone does not affect the original", () => {
-    const original = cloneProjectSettings(DEFAULT_PROJECT_SETTINGS);
-    const clone = cloneProjectSettings(original);
-
-    clone.topBar.color.custom = hex('#000000');
-    clone.platformBar.color.paletteId = 'changed';
-    clone.platformBarText.color.custom = hex('#000000');
-
-    expect(original.topBar.color.custom).toBe(DEFAULT_PROJECT_SETTINGS.topBar.color.custom);
-    expect(original.platformBar.color.paletteId).toBe(DEFAULT_PROJECT_SETTINGS.platformBar.color.paletteId);
-    expect(original.platformBarText.color.custom).toBe(DEFAULT_PROJECT_SETTINGS.platformBarText.color.custom);
+    // Immutability replaces the old "mutate one and watch the other change" probe: an update
+    // returns a new instance and leaves every other holder of the old value untouched.
+    const recolored = first.withPalette(first.palette.recolorEntry('default', Color.BLACK));
+    expect(recolored.palette.entries[0]!.color.toHex()).toBe('#000000');
+    expect(first.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
+    expect(second.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
   });
 });
 
 describe('effectiveSchemaVersion', () => {
   it('floors a currentVersion below CURRENT_SCHEMA_VERSION up to CURRENT_SCHEMA_VERSION', () => {
-    expect(effectiveSchemaVersion('0.0.5')).toBe(CURRENT_SCHEMA_VERSION);
-    expect(effectiveSchemaVersion('0.0.1')).toBe(CURRENT_SCHEMA_VERSION);
+    expect(TintSettings.effectiveSchemaVersion('0.0.5')).toBe(CURRENT_SCHEMA_VERSION);
+    expect(TintSettings.effectiveSchemaVersion('0.0.1')).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it('returns currentVersion unchanged when it equals CURRENT_SCHEMA_VERSION', () => {
-    expect(effectiveSchemaVersion(CURRENT_SCHEMA_VERSION)).toBe(CURRENT_SCHEMA_VERSION);
+    expect(TintSettings.effectiveSchemaVersion(CURRENT_SCHEMA_VERSION)).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it('returns currentVersion unchanged when it is above CURRENT_SCHEMA_VERSION', () => {
-    expect(effectiveSchemaVersion('0.3.1')).toBe('0.3.1');
-    expect(effectiveSchemaVersion('9.9.9')).toBe('9.9.9');
+    expect(TintSettings.effectiveSchemaVersion('0.3.1')).toBe('0.3.1');
+    expect(TintSettings.effectiveSchemaVersion('9.9.9')).toBe('9.9.9');
   });
 });
 
-describe('resolveSelectedColor', () => {
-  const palette: PaletteSettings = {
-    enabled: true,
-    entries: [{ id: 'p1', name: 'One', color: hex('#111111') }],
-  };
+describe('Palette.resolve', () => {
+  const palette = new Palette(true, [new PaletteEntry('p1', 'One', color('#111111'))]);
+  const custom = color('#999999');
 
   it('resolves to the palette entry color when enabled and paletteId references an existing entry', () => {
-    expect(resolveSelectedColor(palette, { paletteId: 'p1', custom: hex('#999999') })).toBe('#111111');
+    expect(palette.resolve(new ColorSelection('p1', custom)).toHex()).toBe('#111111');
   });
 
   it('falls back to custom when paletteId does not reference any entry (dangling reference)', () => {
-    expect(resolveSelectedColor(palette, { paletteId: 'missing', custom: hex('#999999') })).toBe('#999999');
+    expect(palette.resolve(new ColorSelection('missing', custom)).toHex()).toBe('#999999');
   });
 
   it('falls back to custom when paletteId is null', () => {
-    expect(resolveSelectedColor(palette, { paletteId: null, custom: hex('#999999') })).toBe('#999999');
+    expect(palette.resolve(new ColorSelection(null, custom)).toHex()).toBe('#999999');
   });
 
   it('falls back to custom when the palette is disabled, even with a valid paletteId reference', () => {
-    const disabled: PaletteSettings = { ...palette, enabled: false };
-    expect(resolveSelectedColor(disabled, { paletteId: 'p1', custom: hex('#999999') })).toBe('#999999');
+    expect(palette.withEnabled(false).resolve(new ColorSelection('p1', custom)).toHex()).toBe('#999999');
   });
 });
 
-describe('resolveProjectSettings', () => {
-  // Explicit `ProjectRule`/`TintSettings` return types on these two builders are load-bearing:
-  // without them, the `matchType` string literals below would widen to `string` and no longer
-  // satisfy the `MatchType` union when passed into resolveProjectSettings(). `custom` is used as
-  // the per-rule "marker" field (paletteId pinned to null so it always wins over the palette).
-  const rule = (id: string, matchType: MatchType, pattern: string, custom: string): ProjectRule => ({
-    id,
-    matchType,
-    pattern,
-    settings: projectSettings({ topBar: { color: { paletteId: null, custom: hex(custom) } } }),
-  });
+describe('TintSettings.resolveProjectSettings', () => {
+  // `custom` is the per-rule "marker" field (paletteId pinned to null so it always wins over
+  // the palette): each rule below gets a distinct — and, since Color validates, real — hex
+  // value, so an assertion names which rule won.
+  const rule = (id: string, matchType: MatchType, pattern: string, custom: string): ProjectRule =>
+    new ProjectRule(
+      id,
+      matchType,
+      pattern,
+      projectSettings({ topBar: DEFAULTS.topBar.withColor(new ColorSelection(null, color(custom))) }),
+    );
 
-  const withRules = (...rules: ProjectRule[]): TintSettings => ({ ...DEFAULT_SETTINGS, projectRules: rules });
+  const noRules = (): TintSettings => TintSettings.fromStored(null, CURRENT_VERSION);
+
+  const withRules = (...rules: ProjectRule[]): TintSettings =>
+    rules.reduce((settings, r) => settings.withRuleAdded(r), noRules());
 
   it('returns null when projectId is null', () => {
-    const settings = withRules(rule('1', 'exact', 'my-app', '#known'));
-    expect(resolveProjectSettings(settings, null)).toBeNull();
+    const settings = withRules(rule('1', 'exact', 'my-app', '#c0ffee'));
+    expect(settings.resolveProjectSettings(null)).toBeNull();
   });
 
   it('returns null when projectId does not match any rule', () => {
-    const settings = withRules(rule('1', 'exact', 'my-app', '#known'));
-    expect(resolveProjectSettings(settings, 'unrelated-project')).toBeNull();
+    const settings = withRules(rule('1', 'exact', 'my-app', '#c0ffee'));
+    expect(settings.resolveProjectSettings('unrelated-project')).toBeNull();
   });
 
   it('returns null when there are no rules at all', () => {
-    expect(resolveProjectSettings(DEFAULT_SETTINGS, 'anything')).toBeNull();
+    expect(noRules().resolveProjectSettings('anything')).toBeNull();
   });
 
   it('returns null for an empty-string projectId (falsy, treated the same as no project id)', () => {
-    const settings = withRules(rule('catch-all', 'prefix', '', '#any'));
-    expect(resolveProjectSettings(settings, '')).toBeNull();
+    const settings = withRules(rule('catch-all', 'prefix', '', '#aaaaaa'));
+    expect(settings.resolveProjectSettings('')).toBeNull();
   });
 
   it('gives priority to the earlier rule when multiple rules of different matchTypes match the same projectId', () => {
-    const settings = withRules(rule('first', 'exact', 'my-app', '#first'), rule('second', 'prefix', 'my', '#second'));
+    const settings = withRules(rule('first', 'exact', 'my-app', '#f11111'), rule('second', 'prefix', 'my', '#522222'));
 
-    expect(resolveProjectSettings(settings, 'my-app')?.topBar.color.custom).toBe('#first');
+    expect(settings.resolveProjectSettings('my-app')?.topBar.color.custom.toHex()).toBe('#f11111');
   });
 
   describe('matchType "prefix"', () => {
     it('matches when the projectId starts with the pattern', () => {
-      const settings = withRules(rule('1', 'prefix', 'my-app', '#p'));
-      expect(resolveProjectSettings(settings, 'my-app-prod')?.topBar.color.custom).toBe('#p');
+      const settings = withRules(rule('1', 'prefix', 'my-app', '#b0b0b0'));
+      expect(settings.resolveProjectSettings('my-app-prod')?.topBar.color.custom.toHex()).toBe('#b0b0b0');
     });
 
     it('does not match when the projectId does not start with the pattern', () => {
-      const settings = withRules(rule('1', 'prefix', 'my-app', '#p'));
-      expect(resolveProjectSettings(settings, 'other-my-app')).toBeNull();
+      const settings = withRules(rule('1', 'prefix', 'my-app', '#b0b0b0'));
+      expect(settings.resolveProjectSettings('other-my-app')).toBeNull();
     });
 
     it('treats a pattern containing regex metacharacters as a literal string', () => {
-      const openParen = withRules(rule('1', 'prefix', '(', '#p'));
-      expect(resolveProjectSettings(openParen, '(abc')?.topBar.color.custom).toBe('#p');
+      const openParen = withRules(rule('1', 'prefix', '(', '#b0b0b0'));
+      expect(openParen.resolveProjectSettings('(abc')?.topBar.color.custom.toHex()).toBe('#b0b0b0');
 
-      const dot = withRules(rule('1', 'prefix', 'a.c', '#p'));
-      expect(resolveProjectSettings(dot, 'abc')).toBeNull();
+      const dot = withRules(rule('1', 'prefix', 'a.c', '#b0b0b0'));
+      expect(dot.resolveProjectSettings('abc')).toBeNull();
     });
 
     it('treats an empty pattern as matching any projectId', () => {
-      const settings = withRules(rule('1', 'prefix', '', '#p'));
-      expect(resolveProjectSettings(settings, 'literally-anything')?.topBar.color.custom).toBe('#p');
+      const settings = withRules(rule('1', 'prefix', '', '#b0b0b0'));
+      expect(settings.resolveProjectSettings('literally-anything')?.topBar.color.custom.toHex()).toBe('#b0b0b0');
     });
   });
 
   describe('matchType "suffix"', () => {
     it('matches when the projectId ends with the pattern', () => {
-      const settings = withRules(rule('1', 'suffix', '-prod', '#s'));
-      expect(resolveProjectSettings(settings, 'my-app-prod')?.topBar.color.custom).toBe('#s');
+      const settings = withRules(rule('1', 'suffix', '-prod', '#5a5a5a'));
+      expect(settings.resolveProjectSettings('my-app-prod')?.topBar.color.custom.toHex()).toBe('#5a5a5a');
     });
 
     it('does not match when the projectId does not end with the pattern', () => {
-      const settings = withRules(rule('1', 'suffix', '-prod', '#s'));
-      expect(resolveProjectSettings(settings, 'my-app-prod-2')).toBeNull();
+      const settings = withRules(rule('1', 'suffix', '-prod', '#5a5a5a'));
+      expect(settings.resolveProjectSettings('my-app-prod-2')).toBeNull();
     });
 
     it('treats a pattern containing regex metacharacters as a literal string', () => {
-      const closeParen = withRules(rule('1', 'suffix', ')', '#s'));
-      expect(resolveProjectSettings(closeParen, 'abc)')?.topBar.color.custom).toBe('#s');
+      const closeParen = withRules(rule('1', 'suffix', ')', '#5a5a5a'));
+      expect(closeParen.resolveProjectSettings('abc)')?.topBar.color.custom.toHex()).toBe('#5a5a5a');
 
-      const dot = withRules(rule('1', 'suffix', 'a.c', '#s'));
-      expect(resolveProjectSettings(dot, 'abc')).toBeNull();
+      const dot = withRules(rule('1', 'suffix', 'a.c', '#5a5a5a'));
+      expect(dot.resolveProjectSettings('abc')).toBeNull();
     });
 
     it('treats an empty pattern as matching any projectId', () => {
-      const settings = withRules(rule('1', 'suffix', '', '#s'));
-      expect(resolveProjectSettings(settings, 'literally-anything')?.topBar.color.custom).toBe('#s');
+      const settings = withRules(rule('1', 'suffix', '', '#5a5a5a'));
+      expect(settings.resolveProjectSettings('literally-anything')?.topBar.color.custom.toHex()).toBe('#5a5a5a');
     });
   });
 
   describe('matchType "exact"', () => {
     it('matches only when the projectId equals the pattern exactly', () => {
-      const settings = withRules(rule('1', 'exact', 'my-app', '#e'));
-      expect(resolveProjectSettings(settings, 'my-app')?.topBar.color.custom).toBe('#e');
+      const settings = withRules(rule('1', 'exact', 'my-app', '#e0e0e0'));
+      expect(settings.resolveProjectSettings('my-app')?.topBar.color.custom.toHex()).toBe('#e0e0e0');
     });
 
     it('does not match a projectId that merely contains the pattern as a substring', () => {
-      const settings = withRules(rule('1', 'exact', 'my-app', '#e'));
-      expect(resolveProjectSettings(settings, 'my-app-prod')).toBeNull();
-      expect(resolveProjectSettings(settings, 'not-my-app')).toBeNull();
+      const settings = withRules(rule('1', 'exact', 'my-app', '#e0e0e0'));
+      expect(settings.resolveProjectSettings('my-app-prod')).toBeNull();
+      expect(settings.resolveProjectSettings('not-my-app')).toBeNull();
     });
 
     it('an empty pattern matches nothing, since no real projectId is an empty string', () => {
-      const settings = withRules(rule('1', 'exact', '', '#e'));
-      expect(resolveProjectSettings(settings, 'my-app')).toBeNull();
+      const settings = withRules(rule('1', 'exact', '', '#e0e0e0'));
+      expect(settings.resolveProjectSettings('my-app')).toBeNull();
     });
   });
 
   describe('matchType "regex"', () => {
     it('requires a full match: an unanchored pattern no longer matches as a substring', () => {
-      const settings = withRules(rule('1', 'regex', 'test', '#r'));
-      expect(resolveProjectSettings(settings, 'test-project')).toBeNull();
+      const settings = withRules(rule('1', 'regex', 'test', '#0e0e0e'));
+      expect(settings.resolveProjectSettings('test-project')).toBeNull();
     });
 
     it('matches when the pattern itself covers the entire projectId (e.g. via a trailing .*)', () => {
-      const settings = withRules(rule('1', 'regex', '^test-project.*', '#r'));
-      expect(resolveProjectSettings(settings, 'test-project-123')?.topBar.color.custom).toBe('#r');
+      const settings = withRules(rule('1', 'regex', '^test-project.*', '#0e0e0e'));
+      expect(settings.resolveProjectSettings('test-project-123')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
     });
 
     it('continues to work for patterns already anchored with ^...$', () => {
-      const settings = withRules(rule('1', 'regex', '^abc$', '#r'));
-      expect(resolveProjectSettings(settings, 'abc')?.topBar.color.custom).toBe('#r');
-      expect(resolveProjectSettings(settings, 'abcd')).toBeNull();
+      const settings = withRules(rule('1', 'regex', '^abc$', '#0e0e0e'));
+      expect(settings.resolveProjectSettings('abc')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
+      expect(settings.resolveProjectSettings('abcd')).toBeNull();
     });
 
     // The `^(?:...)$` wrapper wraps a non-capturing group around the whole pattern before
     // anchoring, so a top-level `|` stays scoped inside it instead of splitting the anchors
     // themselves (which would let e.g. "bbb" alone escape the leading `^`).
     it('keeps top-level alternation scoped inside the full-match wrapper', () => {
-      const settings = withRules(rule('1', 'regex', 'aaa|bbb', '#r'));
-      expect(resolveProjectSettings(settings, 'aaa')?.topBar.color.custom).toBe('#r');
-      expect(resolveProjectSettings(settings, 'bbb')?.topBar.color.custom).toBe('#r');
-      expect(resolveProjectSettings(settings, 'xaaa')).toBeNull();
+      const settings = withRules(rule('1', 'regex', 'aaa|bbb', '#0e0e0e'));
+      expect(settings.resolveProjectSettings('aaa')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
+      expect(settings.resolveProjectSettings('bbb')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
+      expect(settings.resolveProjectSettings('xaaa')).toBeNull();
     });
 
     it('skips a rule with an invalid regex pattern and evaluates the next rule', () => {
-      const settings = withRules(rule('invalid', 'regex', '(', '#invalid'), rule('valid', 'regex', 'my-app', '#valid'));
+      const settings = withRules(rule('invalid', 'regex', '(', '#111111'), rule('valid', 'regex', 'my-app', '#222222'));
 
-      expect(resolveProjectSettings(settings, 'my-app')?.topBar.color.custom).toBe('#valid');
+      expect(settings.resolveProjectSettings('my-app')?.topBar.color.custom.toHex()).toBe('#222222');
     });
 
     it('returns null when every rule has an invalid regex pattern (no fallback project)', () => {
       const settings = withRules(
-        rule('invalid-1', 'regex', '(', '#invalid1'),
-        rule('invalid-2', 'regex', '[', '#invalid2'),
+        rule('invalid-1', 'regex', '(', '#111111'),
+        rule('invalid-2', 'regex', '[', '#222222'),
       );
 
-      expect(resolveProjectSettings(settings, 'my-app')).toBeNull();
+      expect(settings.resolveProjectSettings('my-app')).toBeNull();
     });
 
     it('an empty pattern only matches an empty projectId, so it never matches a real projectId', () => {
-      const settings = withRules(rule('1', 'regex', '', '#r'));
-      expect(resolveProjectSettings(settings, 'literally-anything')).toBeNull();
-      expect(resolveProjectSettings(settings, 'my-app')).toBeNull();
+      const settings = withRules(rule('1', 'regex', '', '#0e0e0e'));
+      expect(settings.resolveProjectSettings('literally-anything')).toBeNull();
+      expect(settings.resolveProjectSettings('my-app')).toBeNull();
     });
   });
 });

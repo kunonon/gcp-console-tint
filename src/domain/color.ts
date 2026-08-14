@@ -1,41 +1,22 @@
-import { z } from 'zod';
-
-// Validated hex color: '#rrggbb', normalized to lowercase. The brand makes this schema the
-// only source of HexColor values, so unvalidated strings cannot enter the settings model.
-export const HexColorSchema = z
-  .string()
-  .regex(/^#[0-9a-f]{6}$/i)
-  .transform((value) => value.toLowerCase())
-  .brand<'HexColor'>();
-export type HexColor = z.infer<typeof HexColorSchema>;
-
-// Primitive defaults the schemas below fall back to. Canonical default colors for the tint
-// surfaces.
-export const DEFAULT_COLOR: HexColor = HexColorSchema.parse('#ff6d00');
-export const DEFAULT_TEXT_COLOR: HexColor = HexColorSchema.parse('#ffffff');
+// Validated hex color: '#rrggbb', case-insensitive on input, normalized to lowercase.
+const HEX_PATTERN = /^#[0-9a-f]{6}$/i;
 
 // Value object for a color in the settings model. Instances only ever hold a validated,
-// lowercase '#rrggbb' value: fromHex() trusts the HexColorSchema brand and parse() is the
-// gate for untrusted input. CSS generation deliberately lives outside the domain (see
+// lowercase '#rrggbb' value: the private constructor makes parse() the single gate for
+// untrusted input. CSS generation deliberately lives outside the domain (see
 // adapter/in/stripes.ts).
 export class Color {
-  static readonly BLACK = new Color(HexColorSchema.parse('#000000'));
-  static readonly WHITE = new Color(HexColorSchema.parse('#ffffff'));
+  static readonly BLACK = new Color('#000000');
+  static readonly WHITE = new Color('#ffffff');
 
-  private constructor(private readonly hex: HexColor) {}
-
-  // Total constructor for schema-validated values (the settings model only carries HexColor).
-  static fromHex(hex: HexColor): Color {
-    return new Color(hex);
-  }
+  private constructor(private readonly hex: string) {}
 
   // Boundary constructor for untrusted input; null when the value is not '#rrggbb'.
   static parse(value: string): Color | null {
-    const result = HexColorSchema.safeParse(value);
-    return result.success ? new Color(result.data) : null;
+    return HEX_PATTERN.test(value) ? new Color(value.toLowerCase()) : null;
   }
 
-  toHex(): HexColor {
+  toHex(): string {
     return this.hex;
   }
 

@@ -118,7 +118,9 @@ src/
         sidepanel/    # React settings UI, incl. its components/
       hooks/          # settings state + persistence for the side panel
     out/            # driven side: browser.storage implementation of the port
-  domain/           # pure core: settings model (Zod), rule matching, migrations, color/version math
+  domain/           # pure core: immutable entities/VOs per concept (Color, Palette,
+                    # ProjectSettings, ProjectRule, TintSettings); Zod stays internal as
+                    # the recovery machinery behind fromStored/toStored
 ```
 
 Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated.
