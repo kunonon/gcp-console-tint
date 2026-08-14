@@ -1,8 +1,9 @@
 import { browser } from 'wxt/browser';
-import { CURRENT_SCHEMA_VERSION } from '../../domain/migrations';
-import { TintSettings } from '../../domain/tint-settings';
-import { compareVersions, VersionComparisonResult } from '../../domain/version';
+import type { TintSettings } from '../../domain/tint-settings';
 import type { SettingsStore } from '../../port/settings-store';
+import { CURRENT_SCHEMA_VERSION } from './migrations';
+import { effectiveSchemaVersion, toDomain, toStored } from './settings-repository';
+import { compareVersions, VersionComparisonResult } from './version';
 
 const STORAGE_KEY = 'tintSettings';
 
@@ -19,32 +20,30 @@ function manifestVersion(): string {
 export class SettingsStoreImpl implements SettingsStore {
   async load(): Promise<TintSettings> {
     const result = await browser.storage.local.get(STORAGE_KEY);
-    return TintSettings.fromStored(result[STORAGE_KEY], manifestVersion());
+    return toDomain(result[STORAGE_KEY]);
   }
 
-  save(next: TintSettings): TintSettings {
-    // Floor at CURRENT_SCHEMA_VERSION (see TintSettings.effectiveSchemaVersion): stamping the
-    // raw manifest version here could label current-shape nested data with an older
-    // schemaVersion, causing the next load to re-run migrations against already-migrated data
-    // and silently reset the user's values to defaults.
-    const stamped = next.withEffectiveVersion(manifestVersion());
-    browser.storage.local.set({ [STORAGE_KEY]: stamped.toStored() });
-    return stamped;
+  save(next: TintSettings): void {
+    // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
+    // version here could label current-shape nested data with an older schemaVersion, causing
+    // the next load to re-run migrations against already-migrated data and silently reset the
+    // user's values to defaults.
+    browser.storage.local.set({ [STORAGE_KEY]: toStored(next, effectiveSchemaVersion(manifestVersion())) });
   }
 
   watch(onChange: (settings: TintSettings) => void): void {
     browser.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local' || !changes[STORAGE_KEY]) return;
       const newValue = changes[STORAGE_KEY].newValue;
-      if (newValue) onChange(TintSettings.fromStored(newValue, manifestVersion()));
+      if (newValue) onChange(toDomain(newValue));
     });
   }
 }
 
 // Persists storage in the newest shape, stamped with the running extension version. Called
 // from the background script only, so there is a single writer (content scripts and the side
-// panel migrate in memory on read via TintSettings.fromStored and never write back). No-ops
-// when storage is empty — an unconfigured install stays unconfigured — or already current.
+// panel migrate in memory on read via toDomain and never write back). No-ops when storage is
+// empty — an unconfigured install stays unconfigured — or already current.
 export async function migrateStoredSettings(currentVersion: string): Promise<void> {
   const result = await browser.storage.local.get(STORAGE_KEY);
   const stored: unknown = result[STORAGE_KEY];
@@ -58,6 +57,7 @@ export async function migrateStoredSettings(currentVersion: string): Promise<voi
       return;
     }
   }
-  const migrated = TintSettings.fromStored(stored, currentVersion).withEffectiveVersion(currentVersion);
-  await browser.storage.local.set({ [STORAGE_KEY]: migrated.toStored() });
+  await browser.storage.local.set({
+    [STORAGE_KEY]: toStored(toDomain(stored), effectiveSchemaVersion(currentVersion)),
+  });
 }

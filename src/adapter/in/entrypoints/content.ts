@@ -1,4 +1,3 @@
-import { CURRENT_SCHEMA_VERSION } from '../../../domain/migrations';
 import { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
 import { SettingsStoreImpl } from '../../out/browser-settings-store';
@@ -72,9 +71,7 @@ export default defineContentScript({
     };
 
     // Empty settings until the store's load() resolves: no rules, so nothing is tinted.
-    // Seeded from CURRENT_SCHEMA_VERSION rather than the manifest version because this value
-    // is never written back — only its (empty) rule list is read.
-    const emptySettings = TintSettings.fromStored(null, CURRENT_SCHEMA_VERSION);
+    const emptySettings = new TintSettings([]);
     let lastSettings: TintSettings = emptySettings;
 
     const applySettings = (settings: TintSettings, url: URL = new URL(location.href)) => {

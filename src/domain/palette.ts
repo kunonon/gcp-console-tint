@@ -1,6 +1,5 @@
 // Palette: a project's named color entries plus the enabled flag.
-import { z } from 'zod';
-import { Color } from './color';
+import type { Color } from './color';
 import type { ColorSelection } from './color-selection';
 
 export class PaletteEntry {
@@ -70,45 +69,4 @@ export class Palette {
       this.entries.map((entry) => (entry.id === id ? update(entry) : entry)),
     );
   }
-}
-
-// Parameterized by injected defaults: which entries a palette falls back to (and which color a
-// junk entry color falls back to) is product policy and lives in project-settings.ts.
-/** @internal — domain modules only */
-export function paletteSchema(defaults: { entries: () => PaletteEntry[]; entryColor: Color }) {
-  const entrySchema = z
-    .object({
-      id: z.string().catch(() => crypto.randomUUID()),
-      name: z.string().catch(''),
-      color: z
-        .unknown()
-        .optional()
-        .transform((value) => (typeof value === 'string' ? Color.parse(value) : null) ?? defaults.entryColor),
-    })
-    .transform((value) => new PaletteEntry(value.id, value.name, value.color));
-
-  // Parses `value` as a PaletteEntry[]: a non-array value (missing or junk) falls back to the
-  // default entries wholesale, otherwise each element is parsed independently and invalid
-  // elements are dropped (not substituted) so one bad entry can't nuke its valid siblings.
-  const parseEntries = (value: unknown): PaletteEntry[] => {
-    if (!Array.isArray(value)) return defaults.entries();
-    return value.reduce<PaletteEntry[]>((kept, item) => {
-      const parsed = entrySchema.safeParse(item);
-      if (parsed.success) kept.push(parsed.data);
-      return kept;
-    }, []);
-  };
-
-  const objectSchema = z
-    .object({
-      enabled: z.boolean().catch(true),
-      // `.optional()` is required (not just cosmetic) even though parseEntries already handles
-      // `undefined`: without it, Zod treats an entirely-absent `entries` key as an error
-      // ("expected nonoptional") before the transform ever runs, regardless of what the
-      // transform itself would accept.
-      entries: z.unknown().optional().transform(parseEntries),
-    })
-    .transform((value) => new Palette(value.enabled, value.entries));
-
-  return objectSchema.catch(() => objectSchema.parse({}));
 }

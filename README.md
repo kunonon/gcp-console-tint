@@ -117,10 +117,10 @@ src/
         background.ts # opens the side panel / sidebar on toolbar-icon click
         sidepanel/    # React settings UI, incl. its components/
       hooks/          # settings state + persistence for the side panel
-    out/            # driven side: browser.storage implementation of the port
+    out/            # driven side: browser.storage store + settings repository
+                    # (Zod schemas of the persisted JSON, toDomain/toStored mapping)
   domain/           # pure core: immutable entities/VOs per concept (Color, Palette,
-                    # ProjectSettings, ProjectRule, TintSettings); Zod stays internal as
-                    # the recovery machinery behind fromStored/toStored
+                    # ProjectSettings, ProjectRule, TintSettings) — dependency-free
 ```
 
 Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated.

@@ -2,7 +2,8 @@ import { compareVersions, VersionComparisonResult } from './version';
 
 // One schema upgrade step. `migrate` receives settings data in the shape that immediately
 // precedes `to` and returns data in the `to` shape. Steps only reshape the data — they may
-// leave fields missing; TintSettings.fromStored validates and fills defaults after the chain runs.
+// leave fields missing; settings-repository's toDomain validates and fills defaults after the
+// chain runs.
 export interface SchemaMigration {
   to: string;
   migrate(data: Record<string, unknown>): Record<string, unknown>;

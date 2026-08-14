@@ -1,7 +1,6 @@
-import { z } from 'zod';
 import { Color } from './color';
-import { type ColorSelection, colorSelectionSchema } from './color-selection';
-import { type Palette, PaletteEntry, paletteSchema } from './palette';
+import { ColorSelection } from './color-selection';
+import { Palette, PaletteEntry } from './palette';
 
 // Product policy, not color theory: the canonical default colors for the tint surfaces. The
 // `?? Color.BLACK` branch is unreachable ('#ff6d00' is a valid '#rrggbb' literal) and only
@@ -9,16 +8,6 @@ import { type Palette, PaletteEntry, paletteSchema } from './palette';
 const DEFAULT_COLOR = Color.parse('#ff6d00') ?? Color.BLACK;
 const DEFAULT_TEXT_COLOR = Color.WHITE;
 const DEFAULT_TOP_BAR_HEIGHT = 4;
-
-// The palette's own default entries (a single "Primary" swatch). Its id is the stable literal
-// 'default' — not a generated one — because topBar/platformBar's default color selection
-// (below) references it by that id; Palette.resolve() would fail to resolve it otherwise.
-// Returns a fresh array on every call so callers never share mutable state.
-function defaultPaletteEntries(): PaletteEntry[] {
-  return [new PaletteEntry('default', 'Primary', DEFAULT_COLOR)];
-}
-
-const PaletteSchema = paletteSchema({ entries: defaultPaletteEntries, entryColor: DEFAULT_COLOR });
 
 export class TopBarSettings {
   constructor(
@@ -45,16 +34,6 @@ export class TopBarSettings {
   }
 }
 
-const TopBarObjectSchema = z
-  .object({
-    enabled: z.boolean().catch(true),
-    color: colorSelectionSchema({ paletteId: 'default', custom: DEFAULT_COLOR }),
-    height: z.number().catch(DEFAULT_TOP_BAR_HEIGHT),
-    stripes: z.boolean().catch(false),
-  })
-  .transform((value) => new TopBarSettings(value.enabled, value.color, value.height, value.stripes));
-const TopBarSchema = TopBarObjectSchema.catch(() => TopBarObjectSchema.parse({}));
-
 export class PlatformBarSettings {
   constructor(
     readonly enabled: boolean,
@@ -74,15 +53,6 @@ export class PlatformBarSettings {
     return new PlatformBarSettings(this.enabled, this.color, stripes);
   }
 }
-
-const PlatformBarObjectSchema = z
-  .object({
-    enabled: z.boolean().catch(true),
-    color: colorSelectionSchema({ paletteId: 'default', custom: DEFAULT_COLOR }),
-    stripes: z.boolean().catch(false),
-  })
-  .transform((value) => new PlatformBarSettings(value.enabled, value.color, value.stripes));
-const PlatformBarSchema = PlatformBarObjectSchema.catch(() => PlatformBarObjectSchema.parse({}));
 
 export class PlatformBarTextSettings {
   constructor(
@@ -105,24 +75,19 @@ export class PlatformBarTextSettings {
   }
 }
 
-const PlatformBarTextObjectSchema = z
-  .object({
-    enabled: z.boolean().catch(true),
-    color: colorSelectionSchema({ paletteId: null, custom: DEFAULT_TEXT_COLOR }),
-    auto: z.boolean().catch(false),
-  })
-  .transform((value) => new PlatformBarTextSettings(value.enabled, value.color, value.auto));
-const PlatformBarTextSchema = PlatformBarTextObjectSchema.catch(() => PlatformBarTextObjectSchema.parse({}));
-
 // One object per tinted surface, mirroring the settings UI's cards.
 export class ProjectSettings {
-  // The schemas stay the single source of defaults: every section's own `.catch()` produces
-  // its default, exactly as it does when reading partial data from storage.
+  // The domain owns the default VALUES; recovering junk storage back to them is the settings
+  // repository's job (adapter/out), which sources its `.catch()` fallbacks from here.
   static readonly DEFAULT: ProjectSettings = new ProjectSettings(
-    PaletteSchema.parse({}),
-    TopBarSchema.parse({}),
-    PlatformBarSchema.parse({}),
-    PlatformBarTextSchema.parse({}),
+    // The palette's own default entries (a single "Primary" swatch). Its id is the stable
+    // literal 'default' — not a generated one — because topBar/platformBar's default color
+    // selection below references it by that id; Palette.resolve() would fail to resolve it
+    // otherwise.
+    new Palette(true, [new PaletteEntry('default', 'Primary', DEFAULT_COLOR)]),
+    new TopBarSettings(true, new ColorSelection('default', DEFAULT_COLOR), DEFAULT_TOP_BAR_HEIGHT, false),
+    new PlatformBarSettings(true, new ColorSelection('default', DEFAULT_COLOR), false),
+    new PlatformBarTextSettings(true, new ColorSelection(null, DEFAULT_TEXT_COLOR), false),
   );
 
   constructor(
@@ -161,15 +126,3 @@ export class ProjectSettings {
     );
   }
 }
-
-/** @internal — domain modules only */
-export const ProjectSettingsSchema = z
-  .object({
-    palette: PaletteSchema,
-    topBar: TopBarSchema,
-    platformBar: PlatformBarSchema,
-    platformBarText: PlatformBarTextSchema,
-  })
-  .transform((value) => new ProjectSettings(value.palette, value.topBar, value.platformBar, value.platformBarText))
-  // Sharing the immutable DEFAULT instance is safe: nothing in the model mutates in place.
-  .catch(() => ProjectSettings.DEFAULT);

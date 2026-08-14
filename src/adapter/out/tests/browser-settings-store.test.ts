@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { CURRENT_SCHEMA_VERSION } from '../../../domain/migrations';
 import { migrateStoredSettings } from '../browser-settings-store';
+import { CURRENT_SCHEMA_VERSION } from '../migrations';
 
 describe('migrateStoredSettings', () => {
   beforeEach(() => {

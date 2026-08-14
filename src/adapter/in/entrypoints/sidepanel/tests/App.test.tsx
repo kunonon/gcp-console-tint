@@ -2,8 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
-import { TintSettings } from '../../../../../domain/tint-settings';
 import { SettingsStoreImpl } from '../../../../out/browser-settings-store';
+import { effectiveSchemaVersion, toDomain } from '../../../../out/settings-repository';
 import App from '../App';
 import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 
@@ -1206,11 +1206,11 @@ describe('App', () => {
     // dedicated regression test below exercises a manifest version that actually differs
     // from CURRENT_SCHEMA_VERSION.
     await waitFor(async () => {
-      expect((await getStoredSettings()).schemaVersion).toBe(TintSettings.effectiveSchemaVersion(CURRENT_VERSION));
+      expect((await getStoredSettings()).schemaVersion).toBe(effectiveSchemaVersion(CURRENT_VERSION));
     });
   });
 
-  it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a fromStored round-trip unchanged', async () => {
+  it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a toDomain round-trip unchanged', async () => {
     // '0.1.5' is newer than CURRENT_SCHEMA_VERSION ('0.1.0'), so effectiveSchemaVersion
     // passes it through unfloored — this no longer exercises the floor itself (that only
     // triggers below '0.1.0', which is the floor value itself, so no realistic manifest
@@ -1235,7 +1235,7 @@ describe('App', () => {
     const stored = await getStoredSettings();
     expect(stored.schemaVersion).toBe('0.1.5');
 
-    const reloaded = TintSettings.fromStored(stored, '0.1.5');
+    const reloaded = toDomain(stored);
     expect(reloaded.projectRules[0]!.settings.topBar.height).toBe(19);
   });
 

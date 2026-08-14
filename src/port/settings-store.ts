@@ -7,9 +7,8 @@ export interface SettingsStore {
   // Reads whatever is stored and returns it folded to the current schema shape
   // (in-memory migration; never writes).
   load(): Promise<TintSettings>;
-  // Stamps the effective schema version, persists asynchronously (fire-and-forget),
-  // and returns the stamped value so callers can reflect it in local state.
-  save(settings: TintSettings): TintSettings;
+  // Stamps the effective schema version and persists asynchronously (fire-and-forget).
+  save(settings: TintSettings): void;
   // Invokes onChange with current-shape settings whenever the stored value changes.
   // Deletions are ignored. Listeners live for the lifetime of the context.
   watch(onChange: (settings: TintSettings) => void): void;

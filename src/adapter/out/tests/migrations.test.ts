@@ -4,7 +4,8 @@ import { compareVersions, VersionComparisonResult } from '../version';
 
 describe('runMigrations', () => {
   // SCHEMA_MIGRATIONS is currently EMPTY (see migrations.ts): the extension is unreleased, so
-  // pre-release schema changes are destructive-read instead of migrated (see settings.test.ts's
+  // pre-release schema changes are destructive-read instead of migrated (see the settings
+  // repository tests'
   // "destructive pre-release read" tests). This assertion documents that invariant directly and
   // stays correct once real steps are added: it falls back to the empty-registry baseline only
   // while the registry is still empty.

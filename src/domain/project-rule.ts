@@ -1,11 +1,8 @@
-import { z } from 'zod';
-import { ProjectSettings, ProjectSettingsSchema } from './project-settings';
+import { ProjectSettings } from './project-settings';
 
 // How a ProjectRule's pattern is compared against the console URL's ?project= param.
-const MatchTypeSchema = z.enum(['prefix', 'suffix', 'exact', 'regex']);
-export type MatchType = z.infer<typeof MatchTypeSchema>;
-
-export const MATCH_TYPES: readonly MatchType[] = MatchTypeSchema.options;
+export const MATCH_TYPES = ['prefix', 'suffix', 'exact', 'regex'] as const;
+export type MatchType = (typeof MATCH_TYPES)[number];
 
 export class ProjectRule {
   constructor(
@@ -59,16 +56,3 @@ export class ProjectRule {
     return new ProjectRule(crypto.randomUUID(), this.matchType, this.pattern, this.settings);
   }
 }
-
-// A rule is only ever dropped for having a non-string `pattern` (see TintSettings.fromStored,
-// which parses projectRules per-element and drops whichever fail this schema) — every other
-// field recovers via its own default instead of invalidating the whole rule.
-/** @internal — domain modules only */
-export const ProjectRuleSchema = z
-  .object({
-    id: z.string().catch(() => crypto.randomUUID()),
-    matchType: MatchTypeSchema.catch('regex'),
-    pattern: z.string(),
-    settings: ProjectSettingsSchema,
-  })
-  .transform((value) => new ProjectRule(value.id, value.matchType, value.pattern, value.settings));
