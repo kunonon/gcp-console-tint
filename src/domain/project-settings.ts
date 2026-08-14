@@ -118,11 +118,13 @@ export class ProjectSettings {
   // references are cleared atomically alongside the entry removal, so storage never sees an
   // intermediate state with a dangling paletteId.
   withPaletteEntryRemoved(id: string): ProjectSettings {
+    const withoutRef = (selection: ColorSelection) =>
+      selection.paletteId === id ? selection.clearPalette() : selection;
     return new ProjectSettings(
       this.palette.removeEntry(id),
-      this.topBar.withColor(this.topBar.color.clearPaletteIf(id)),
-      this.platformBar.withColor(this.platformBar.color.clearPaletteIf(id)),
-      this.platformBarText.withColor(this.platformBarText.color.clearPaletteIf(id)),
+      this.topBar.withColor(withoutRef(this.topBar.color)),
+      this.platformBar.withColor(withoutRef(this.platformBar.color)),
+      this.platformBarText.withColor(withoutRef(this.platformBarText.color)),
     );
   }
 }

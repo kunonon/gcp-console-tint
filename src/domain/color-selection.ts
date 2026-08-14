@@ -20,9 +20,9 @@ export class ColorSelection {
     return new ColorSelection(null, color);
   }
 
-  // Drops a reference to `id` (used when that palette entry is removed); unrelated selections
-  // are returned as-is.
-  clearPaletteIf(id: string): ColorSelection {
-    return this.paletteId === id ? new ColorSelection(null, this.custom) : this;
+  // Drops the palette reference, falling back to the kept custom color. Deciding WHICH
+  // selections to clear (e.g. on palette-entry removal) is the caller's policy.
+  clearPalette(): ColorSelection {
+    return new ColorSelection(null, this.custom);
   }
 }
