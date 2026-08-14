@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { effectiveSchemaVersion, loadSettings } from '../../../../../utils/settings';
-import { MATCH_TYPE_LABELS } from '../../../components/MatchTypeSelect';
 import App from '../App';
+import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 

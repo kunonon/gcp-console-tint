@@ -3,12 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings } from '../../../../types';
 import { contrastTextColor } from '../../../../utils/color';
 import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, resolveSelectedColor } from '../../../../utils/settings';
-import AddRuleModal from '../../components/AddRuleModal';
-import ColorSwatchField from '../../components/ColorSwatchField';
-import DeleteConfirmPopover from '../../components/DeleteConfirmPopover';
-import MatchTypeSelect from '../../components/MatchTypeSelect';
-import PaletteColorPicker from '../../components/PaletteColorPicker';
 import { useTintSettings } from '../../hooks/useTintSettings';
+import AddRuleModal from './components/AddRuleModal';
+import ColorSwatchField from './components/ColorSwatchField';
+import DeleteConfirmPopover from './components/DeleteConfirmPopover';
+import MatchTypeSelect from './components/MatchTypeSelect';
+import PaletteColorPicker from './components/PaletteColorPicker';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
