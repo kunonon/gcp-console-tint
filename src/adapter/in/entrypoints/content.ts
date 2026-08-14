@@ -6,7 +6,7 @@ import {
   resolveProjectSettings,
   resolveSelectedColor,
 } from '../../../utils/settings';
-import { settingsStore } from '../../out/browser-settings-store';
+import { SettingsStoreImpl } from '../../out/browser-settings-store';
 
 export default defineContentScript({
   matches: ['https://console.cloud.google.com/*'],
@@ -90,6 +90,9 @@ export default defineContentScript({
     };
 
     applySettings(DEFAULT_SETTINGS);
+
+    // Composition root for this entrypoint: the content script owns its store instance.
+    const settingsStore = new SettingsStoreImpl();
 
     settingsStore.load().then((settings) => {
       applySettings(settings);

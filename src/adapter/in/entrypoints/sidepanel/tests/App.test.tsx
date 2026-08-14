@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { effectiveSchemaVersion, loadSettings } from '../../../../../utils/settings';
+import { SettingsStoreImpl } from '../../../../out/browser-settings-store';
 import App from '../App';
 import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 
@@ -271,7 +272,7 @@ afterEach(() => {
 
 describe('App', () => {
   it('shows an empty rule list with just the Projects header (Add rule button) by default (no Default row)', async () => {
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     expect(getAllRuleRows()).toHaveLength(0);
@@ -282,7 +283,7 @@ describe('App', () => {
 
   it('places the Projects header row before the rule list, with a divider between them that is hidden while the list is empty and appears once a rule exists', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     const addButton = await screen.findByRole('button', { name: 'Add rule' });
 
     // With zero rules there is nothing to separate, so no divider (border-t) container is
@@ -301,7 +302,7 @@ describe('App', () => {
 
   it('a freshly-added rule shows the palette entry and Top bar/Platform Bar triggers referencing it by default', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
@@ -322,7 +323,7 @@ describe('App', () => {
 
   it("Add rule initializes the new rule's settings from the built-in DEFAULT_PROJECT_SETTINGS", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
@@ -339,7 +340,7 @@ describe('App', () => {
 
   it('opens the Top bar picker showing the referenced palette entry active and Custom inactive', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -356,7 +357,7 @@ describe('App', () => {
 
   it('Top bar: selecting a different palette swatch saves the reference and shows its name on the trigger', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -388,7 +389,7 @@ describe('App', () => {
 
   it('Top bar: changing the Custom color in the picker clears the palette reference and shows the hex on the trigger', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -408,7 +409,7 @@ describe('App', () => {
 
   it('Platform Bar: changing the Custom color in the picker clears the palette reference', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -425,7 +426,7 @@ describe('App', () => {
 
   it('Platform Bar text color: selecting a palette entry via the picker saves the reference and shows its name on the trigger', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -443,7 +444,7 @@ describe('App', () => {
 
   it('a palette entry color change is reflected in the effective color of the same rule (not a one-shot copy)', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -464,7 +465,7 @@ describe('App', () => {
 
   it('adds a new palette entry via the "Add color" icon button and exposes it in the picker', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -484,7 +485,7 @@ describe('App', () => {
 
   it('adds multiple palette entries with sequential default names', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -506,7 +507,7 @@ describe('App', () => {
   // biome-ignore lint/suspicious/noTemplateCurlyInString: prose describing App.tsx's `Color ${length+1}` naming pattern, not a template literal
   it('names new entries as "Color ${length+1}" based on the current array length; this is current, not-a-bug-fix-target behavior, and it can produce a duplicate name after a middle entry is removed and a new one added', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -546,7 +547,7 @@ describe('App', () => {
 
   it("saves a palette entry's name edit to storage", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -562,7 +563,7 @@ describe('App', () => {
 
   it("saves a palette entry's color edit to storage", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -577,7 +578,7 @@ describe('App', () => {
 
   it('removing a non-referenced palette entry (icon button) does not affect other entries or references', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -604,7 +605,7 @@ describe('App', () => {
 
   it('Remove color opens a confirmation popover naming the entry, without deleting yet (falls back to "(unnamed)")', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -621,7 +622,7 @@ describe('App', () => {
 
   it('Remove color popover falls back to "(unnamed)" in its target line when the entry has an empty name', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -640,7 +641,7 @@ describe('App', () => {
 
   it('clicking outside the Remove color confirmation popover leaves the entry and storage unchanged and closes it', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -663,7 +664,7 @@ describe('App', () => {
 
   it('confirming Remove color deletes the palette entry and closes the popover', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -679,7 +680,7 @@ describe('App', () => {
 
   it('removing a palette entry clears its reference within the same rule only, leaving other rules unaffected', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'alpha');
@@ -705,7 +706,7 @@ describe('App', () => {
 
   it('removing a palette entry also clears its reference from platformBarText.color.paletteId (the third referencing field, alongside topBar.color.paletteId and platformBar.color.paletteId)', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -731,7 +732,7 @@ describe('App', () => {
 
   it("a rule's palette is independent: adding a palette entry to one rule does not affect another rule's palette", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'alpha');
@@ -750,7 +751,7 @@ describe('App', () => {
 
   it('shows "(unnamed)" as the swatch label in the picker for a palette entry with an empty name', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -767,7 +768,7 @@ describe('App', () => {
 
   it('hides the Palette section and shows the own hex on the trigger when Color palette is turned off', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -787,7 +788,7 @@ describe('App', () => {
 
   it('keeps palette data and references in storage when turned off, and restores the trigger name when turned back on', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -810,7 +811,7 @@ describe('App', () => {
 
   it('falls back a referencing item to Custom when its referenced palette entry is removed', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -839,7 +840,7 @@ describe('App', () => {
 
   it('Platform Bar text color: the picker shows an Auto option, inactive, with Custom active by default', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -855,7 +856,7 @@ describe('App', () => {
 
   it('Platform Bar text color: selecting Auto saves platformBarText.auto and the trigger shows "Auto"', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -873,7 +874,7 @@ describe('App', () => {
 
   it('Platform Bar text color: the auto-computed swatch color follows the Platform Bar background (not one-shot)', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -910,7 +911,7 @@ describe('App', () => {
 
   it('Platform Bar text color: selecting a palette entry clears Auto', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -934,7 +935,7 @@ describe('App', () => {
 
   it('Platform Bar text color: changing the Custom color clears Auto', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -959,7 +960,7 @@ describe('App', () => {
 
   it('Top bar: Height input shows the default value and saves changes to storage', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -976,7 +977,7 @@ describe('App', () => {
 
   it('emptying the Top bar Height input is ignored: the previous valid value is kept in storage (valueAsNumber is NaN for an empty number input, which fails the Number.isFinite guard)', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -995,7 +996,7 @@ describe('App', () => {
 
   it('Top bar: the Stripes switch toggles topBar.stripes in storage', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -1012,7 +1013,7 @@ describe('App', () => {
 
   it('Platform Bar: the Stripes switch toggles platformBar.stripes independently of Top bar Stripes', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
@@ -1033,7 +1034,7 @@ describe('App', () => {
 
   it('wraps every icon-only button (Edit/Duplicate/Delete/Add rule/Back/Remove color/Add color) in a HeroUI Tooltip.Trigger with a single Tab stop (the button itself, not the trigger wrapper)', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
@@ -1081,7 +1082,7 @@ describe('App', () => {
   });
 
   it('does not render a "Reset to defaults" button', async () => {
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     expect(screen.queryByRole('button', { name: 'Reset to defaults' })).toBeNull();
@@ -1106,7 +1107,7 @@ describe('App', () => {
     });
 
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByText('my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -1124,7 +1125,7 @@ describe('App', () => {
       },
     });
 
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await flush();
 
     expect(screen.queryByText('should-not-appear')).toBeNull();
@@ -1142,7 +1143,7 @@ describe('App', () => {
     });
 
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByText('my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -1170,7 +1171,7 @@ describe('App', () => {
     });
 
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByText('my-project');
     await openRuleDetail(user, 'my-project');
 
@@ -1185,7 +1186,7 @@ describe('App', () => {
       },
     });
 
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await flush();
 
     expect(screen.queryByText('should-not-appear')).toBeNull();
@@ -1194,7 +1195,7 @@ describe('App', () => {
 
   it('stamps the current version as schemaVersion whenever settings are saved', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
@@ -1221,7 +1222,7 @@ describe('App', () => {
     });
 
     const user = userEvent.setup();
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     await addRule(user, 'my-project');
@@ -1239,7 +1240,7 @@ describe('App', () => {
   });
 
   it('loads settings once on mount; external storage changes made afterward are not reflected in the UI (no live storage.onChanged listener, unlike content.ts)', async () => {
-    render(<App />);
+    render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
 
     // Simulate another tab/window (or content.ts's own writes) changing storage after this
@@ -1261,7 +1262,7 @@ describe('App', () => {
   describe('Rules', () => {
     it('ignores adding an empty or whitespace-only pattern: the Add button stays disabled', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'existing-rule');
@@ -1281,7 +1282,7 @@ describe('App', () => {
 
     it('allows adding multiple rules with the same pattern text, each with its own id (regex duplicates may be intentional)', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'same-pattern');
@@ -1294,7 +1295,7 @@ describe('App', () => {
 
     it("shows each rule's match type as a text hint next to its pattern in the list", async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRuleWithMatchType(user, 'prefix', 'my-project');
@@ -1305,7 +1306,7 @@ describe('App', () => {
 
     it('Edit navigates to a rule detail page with a Pattern field; editing it saves and flags an invalid regex', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRuleWithMatchType(user, 'regex', 'my-project');
@@ -1329,7 +1330,7 @@ describe('App', () => {
 
     it('the Pattern field can be edited down to an empty string and saves it as-is, unlike Add rule which guards against empty (current behavior: no guard on edits, so an in-progress clear-and-retype is never blocked)', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRuleWithMatchType(user, 'regex', 'my-project');
@@ -1348,7 +1349,7 @@ describe('App', () => {
 
     it('Detail page: the Match type Select changes matchType and adapts the value field label between Project ID and Pattern', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'my-project'); // default match type is 'exact'
@@ -1372,7 +1373,7 @@ describe('App', () => {
 
     it('Detail page: the Invalid regular expression warning only appears when Match type is Regex', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRuleWithMatchType(user, 'prefix', 'my-project');
@@ -1400,7 +1401,7 @@ describe('App', () => {
 
     it('Duplicate inserts a copy directly below the original with a new id, editable independently', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1430,7 +1431,7 @@ describe('App', () => {
 
     it("Duplicate copies a non-default matchType ('suffix') to the copy, shown in both rows' hints", async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRuleWithMatchType(user, 'suffix', 'alpha');
@@ -1445,7 +1446,7 @@ describe('App', () => {
 
     it("Duplicate deep-copies the palette array (cloneProjectSettings): editing the duplicate's palette does not affect the original's", async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1469,7 +1470,7 @@ describe('App', () => {
 
     it('Delete opens a confirmation popover naming the rule pattern, without deleting yet', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'my-project');
@@ -1493,7 +1494,7 @@ describe('App', () => {
 
     it('clicking outside the delete confirmation popover leaves the rule and storage unchanged and closes it (no Cancel button; dismissal is cancel)', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'my-project');
@@ -1515,7 +1516,7 @@ describe('App', () => {
 
     it('pressing Escape in the delete confirmation popover closes it without deleting', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'my-project');
@@ -1533,7 +1534,7 @@ describe('App', () => {
 
     it('confirming Delete in the popover removes the rule from the list and storage, and closes the popover', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1550,7 +1551,7 @@ describe('App', () => {
 
     it('reorders rules via drag-and-drop from the grip handle, and persists the new order to storage', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1575,7 +1576,7 @@ describe('App', () => {
 
     it('does not start a drag when the gesture does not originate on the grip handle', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1595,7 +1596,7 @@ describe('App', () => {
 
     it('dropping a row onto itself is a no-op: order and storage stay unchanged, and no drop indicator is shown', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1620,7 +1621,7 @@ describe('App', () => {
 
     it('shows a bottom-edge drop indicator on the target row when dragging downward (dragOverIndex > draggingIndex)', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1643,7 +1644,7 @@ describe('App', () => {
 
     it('shows a top-edge drop indicator on the target row when dragging upward (dragOverIndex < draggingIndex)', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1665,7 +1666,7 @@ describe('App', () => {
 
     it('clears the drop indicator once the drop is handled', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1692,7 +1693,7 @@ describe('App', () => {
 
     it('clears the drop indicator on dragEnd even when the drag ends outside any row (e.g. dropped outside the list)', async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1719,7 +1720,7 @@ describe('App', () => {
 
     it("editing a rule's settings in detail saves to that rule only, without affecting other rules", async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
@@ -1747,7 +1748,7 @@ describe('App', () => {
 
     it("a Top bar Custom color change while editing a rule saves to that rule's settings only", async () => {
       const user = userEvent.setup();
-      render(<App />);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');

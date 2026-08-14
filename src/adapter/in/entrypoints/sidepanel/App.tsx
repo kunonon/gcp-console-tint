@@ -1,5 +1,6 @@
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
+import type { SettingsStore } from '../../../../port/settings-store';
 import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings } from '../../../../types';
 import { contrastTextColor } from '../../../../utils/color';
 import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, resolveSelectedColor } from '../../../../utils/settings';
@@ -155,8 +156,8 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
   );
 }
 
-function App() {
-  const { settings, save } = useTintSettings();
+function App({ settingsStore }: { settingsStore: SettingsStore }) {
+  const { settings, save } = useTintSettings(settingsStore);
   const [view, setView] = useState<View>({ type: 'list' });
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);

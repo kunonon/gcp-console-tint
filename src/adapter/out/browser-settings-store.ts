@@ -16,12 +16,13 @@ function manifestVersion(): string {
   return browser.runtime.getManifest().version;
 }
 
-// browser.storage.local implementation of the SettingsStore port.
-export const settingsStore: SettingsStore = {
-  async load() {
+// browser.storage.local implementation of the SettingsStore port. Instantiated by the
+// composition roots (sidepanel main.tsx, content script) and injected into consumers.
+export class SettingsStoreImpl implements SettingsStore {
+  async load(): Promise<TintSettings> {
     const result = await browser.storage.local.get(STORAGE_KEY);
     return loadSettings(result[STORAGE_KEY], manifestVersion());
-  },
+  }
 
   save(next: TintSettings): TintSettings {
     // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
@@ -34,16 +35,16 @@ export const settingsStore: SettingsStore = {
     };
     browser.storage.local.set({ [STORAGE_KEY]: stamped });
     return stamped;
-  },
+  }
 
-  watch(onChange) {
+  watch(onChange: (settings: TintSettings) => void): void {
     browser.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local' || !changes[STORAGE_KEY]) return;
       const newValue = changes[STORAGE_KEY].newValue;
       if (newValue) onChange(loadSettings(newValue, manifestVersion()));
     });
-  },
-};
+  }
+}
 
 // Persists storage in the newest shape, stamped with the running extension version. Called
 // from the background script only, so there is a single writer (content scripts and the side
