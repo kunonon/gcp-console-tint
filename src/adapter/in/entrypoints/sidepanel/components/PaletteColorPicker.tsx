@@ -1,6 +1,7 @@
 import { Popover } from '@heroui/react';
-import type { HexColor, PaletteEntry } from '../../../../../domain/types';
-import { HexColorSchema } from '../../../../../domain/types';
+import type { HexColor } from '../../../../../domain/color';
+import { HexColorSchema } from '../../../../../domain/color';
+import type { PaletteEntry } from '../../../../../domain/palette';
 import ColorSwatchField from './ColorSwatchField';
 
 interface PaletteColorPickerProps {

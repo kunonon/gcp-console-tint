@@ -1,29 +1,25 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_COLOR, DEFAULT_TEXT_COLOR, type HexColor } from '../color';
+import { resolveSelectedColor } from '../color-selection';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
+import type { PaletteSettings } from '../palette';
+import { MATCH_TYPES, type MatchType, type ProjectRule } from '../project-rule';
 import {
   cloneProjectSettings,
-  DEFAULT_COLOR,
   DEFAULT_PROJECT_SETTINGS,
-  DEFAULT_SETTINGS,
-  DEFAULT_TEXT_COLOR,
   DEFAULT_TOP_BAR_HEIGHT,
+  type PlatformBarSettings,
+  type PlatformBarTextSettings,
+  type ProjectSettings,
+  type TopBarSettings,
+} from '../project-settings';
+import {
+  DEFAULT_SETTINGS,
   effectiveSchemaVersion,
   loadSettings,
-  MATCH_TYPES,
   resolveProjectSettings,
-  resolveSelectedColor,
-} from '../settings';
-import type {
-  HexColor,
-  MatchType,
-  PaletteSettings,
-  PlatformBarSettings,
-  PlatformBarTextSettings,
-  ProjectRule,
-  ProjectSettings,
-  TintSettings,
-  TopBarSettings,
-} from '../types';
+  type TintSettings,
+} from '../tint-settings';
 
 const CURRENT_VERSION = '0.1.0';
 

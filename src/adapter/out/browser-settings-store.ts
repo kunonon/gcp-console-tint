@@ -1,8 +1,11 @@
 import { browser } from 'wxt/browser';
 import { CURRENT_SCHEMA_VERSION } from '../../domain/migrations';
-import { effectiveSchemaVersion, loadSettings } from '../../domain/settings';
-import type { TintSettings } from '../../domain/types';
-import { UnknownRecordSchema } from '../../domain/types';
+import {
+  effectiveSchemaVersion,
+  loadSettings,
+  type TintSettings,
+  UnknownRecordSchema,
+} from '../../domain/tint-settings';
 import { compareVersions, VersionComparisonResult } from '../../domain/version';
 import type { SettingsStore } from '../../port/settings-store';
 

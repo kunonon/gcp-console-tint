@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
-import { HexColorSchema } from '../../../../../../domain/types';
+import { HexColorSchema } from '../../../../../../domain/color';
 import PaletteColorPicker from '../PaletteColorPicker';
 
 afterEach(() => {

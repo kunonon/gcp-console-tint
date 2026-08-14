@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DEFAULT_SETTINGS } from '../../../domain/settings';
-import type { TintSettings } from '../../../domain/types';
+import { DEFAULT_SETTINGS, type TintSettings } from '../../../domain/tint-settings';
 import type { SettingsStore } from '../../../port/settings-store';
 
 // Owns the side panel's settings state and its persistence via the injected SettingsStore

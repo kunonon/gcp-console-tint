@@ -1,4 +1,18 @@
-import { type HexColor, HexColorSchema } from './types';
+import { z } from 'zod';
+
+// Validated hex color: '#rrggbb', normalized to lowercase. The brand makes this schema the
+// only source of HexColor values, so unvalidated strings cannot enter the settings model.
+export const HexColorSchema = z
+  .string()
+  .regex(/^#[0-9a-f]{6}$/i)
+  .transform((value) => value.toLowerCase())
+  .brand<'HexColor'>();
+export type HexColor = z.infer<typeof HexColorSchema>;
+
+// Primitive defaults the schemas below fall back to. Canonical default colors for the tint
+// surfaces.
+export const DEFAULT_COLOR: HexColor = HexColorSchema.parse('#ff6d00');
+export const DEFAULT_TEXT_COLOR: HexColor = HexColorSchema.parse('#ffffff');
 
 // Value object for a color in the settings model. Instances only ever hold a validated,
 // lowercase '#rrggbb' value: fromHex() trusts the HexColorSchema brand and parse() is the

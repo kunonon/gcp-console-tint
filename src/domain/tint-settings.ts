@@ -1,52 +1,31 @@
+import { z } from 'zod';
 import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
-import type { ColorSelection, HexColor, MatchType, PaletteSettings } from './types';
-import {
-  MatchTypeSchema,
-  type ProjectRule,
-  ProjectRuleSchema,
-  type ProjectSettings,
-  ProjectSettingsSchema,
-  type TintSettings,
-  UnknownRecordSchema,
-} from './types';
+import type { ProjectRule } from './project-rule';
+import { ProjectRuleSchema } from './project-rule';
+import type { ProjectSettings } from './project-settings';
 import { compareVersions, VersionComparisonResult } from './version';
 
-export const MATCH_TYPES: readonly MatchType[] = MatchTypeSchema.options;
+// Generic "is this a plain record" guard, used by loadSettings below and the storage adapter
+// to sanity-check the raw value read from storage before it's handed to the schemas below (and
+// to runMigrations, which still operates on untyped data by design).
+export const UnknownRecordSchema = z.record(z.string(), z.unknown());
 
-export { DEFAULT_COLOR, DEFAULT_TEXT_COLOR, DEFAULT_TOP_BAR_HEIGHT } from './types';
+export const TintSettingsSchema = z.object({
+  schemaVersion: z.string(),
+  // Ordered: earlier rules take priority; first matching rule wins.
+  // When no rule matches (or the URL has no project param), nothing is applied.
+  projectRules: z.array(ProjectRuleSchema),
+});
+export type TintSettings = z.infer<typeof TintSettingsSchema>;
 
 // The oldest schemaVersion the migration chain can read. Anything below (or missing, or
 // invalid) predates every released shape and is replaced by fresh defaults.
 export const SCHEMA_MIN_VERSION = '0.1.0';
 
-export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = ProjectSettingsSchema.parse({});
-
-export function cloneProjectSettings(settings: ProjectSettings): ProjectSettings {
-  return {
-    palette: {
-      enabled: settings.palette.enabled,
-      entries: settings.palette.entries.map((entry) => ({ ...entry })),
-    },
-    topBar: { ...settings.topBar, color: { ...settings.topBar.color } },
-    platformBar: { ...settings.platformBar, color: { ...settings.platformBar.color } },
-    platformBarText: { ...settings.platformBarText, color: { ...settings.platformBarText.color } },
-  };
-}
-
 export const DEFAULT_SETTINGS: TintSettings = {
   schemaVersion: CURRENT_SCHEMA_VERSION,
   projectRules: [],
 };
-
-// Resolves a surface's effective color: the referenced palette entry when the palette is
-// enabled and the reference resolves, otherwise the surface's own custom color.
-export function resolveSelectedColor(palette: PaletteSettings, selection: ColorSelection): HexColor {
-  if (palette.enabled && selection.paletteId) {
-    const entry = palette.entries.find((e) => e.id === selection.paletteId);
-    if (entry) return entry.color;
-  }
-  return selection.custom;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return UnknownRecordSchema.safeParse(value).success;

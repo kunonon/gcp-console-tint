@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Color } from '../color';
-import { DEFAULT_COLOR } from '../types';
+import { Color, DEFAULT_COLOR } from '../color';
 
 describe('Color.parse', () => {
   it('accepts a #rrggbb hex string', () => {

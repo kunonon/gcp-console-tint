@@ -1,9 +1,12 @@
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
-import { Color } from '../../../../domain/color';
-import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, resolveSelectedColor } from '../../../../domain/settings';
-import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings } from '../../../../domain/types';
-import { HexColorSchema } from '../../../../domain/types';
+import { Color, HexColorSchema } from '../../../../domain/color';
+import type { ColorSelection } from '../../../../domain/color-selection';
+import { resolveSelectedColor } from '../../../../domain/color-selection';
+import type { PaletteEntry } from '../../../../domain/palette';
+import type { MatchType, ProjectRule } from '../../../../domain/project-rule';
+import type { ProjectSettings } from '../../../../domain/project-settings';
+import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS } from '../../../../domain/project-settings';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';

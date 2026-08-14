@@ -1,11 +1,8 @@
 import { Color } from '../../../domain/color';
-import {
-  DEFAULT_PROJECT_SETTINGS,
-  DEFAULT_SETTINGS,
-  resolveProjectSettings,
-  resolveSelectedColor,
-} from '../../../domain/settings';
-import type { ProjectSettings, TintSettings } from '../../../domain/types';
+import { resolveSelectedColor } from '../../../domain/color-selection';
+import type { ProjectSettings } from '../../../domain/project-settings';
+import { DEFAULT_PROJECT_SETTINGS } from '../../../domain/project-settings';
+import { DEFAULT_SETTINGS, resolveProjectSettings, type TintSettings } from '../../../domain/tint-settings';
 import { SettingsStoreImpl } from '../../out/browser-settings-store';
 import { stripeGradient } from '../stripes';
 
