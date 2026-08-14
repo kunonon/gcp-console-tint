@@ -1,11 +1,11 @@
-import type { ProjectSettings, TintSettings } from '../../../types';
-import { contrastTextColor, stripeGradient } from '../../../utils/color';
+import { contrastTextColor, stripeGradient } from '../../../domain/color';
 import {
   DEFAULT_PROJECT_SETTINGS,
   DEFAULT_SETTINGS,
   resolveProjectSettings,
   resolveSelectedColor,
-} from '../../../utils/settings';
+} from '../../../domain/settings';
+import type { ProjectSettings, TintSettings } from '../../../domain/types';
 import { SettingsStoreImpl } from '../../out/browser-settings-store';
 
 export default defineContentScript({

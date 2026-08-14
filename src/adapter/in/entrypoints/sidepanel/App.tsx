@@ -1,9 +1,9 @@
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
+import { contrastTextColor } from '../../../../domain/color';
+import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, resolveSelectedColor } from '../../../../domain/settings';
+import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings } from '../../../../domain/types';
 import type { SettingsStore } from '../../../../port/settings-store';
-import type { ColorSelection, MatchType, PaletteEntry, ProjectRule, ProjectSettings } from '../../../../types';
-import { contrastTextColor } from '../../../../utils/color';
-import { cloneProjectSettings, DEFAULT_PROJECT_SETTINGS, resolveSelectedColor } from '../../../../utils/settings';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
 import ColorSwatchField from './components/ColorSwatchField';

@@ -1,4 +1,5 @@
-import type { ColorSelection, MatchType, PaletteSettings } from '../types';
+import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
+import type { ColorSelection, MatchType, PaletteSettings } from './types';
 import {
   MatchTypeSchema,
   type ProjectRule,
@@ -7,13 +8,12 @@ import {
   ProjectSettingsSchema,
   type TintSettings,
   UnknownRecordSchema,
-} from '../types';
-import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
+} from './types';
 import { compareVersions, VersionComparisonResult } from './version';
 
 export const MATCH_TYPES: readonly MatchType[] = MatchTypeSchema.options;
 
-export { DEFAULT_COLOR, DEFAULT_TEXT_COLOR, DEFAULT_TOP_BAR_HEIGHT } from '../types';
+export { DEFAULT_COLOR, DEFAULT_TEXT_COLOR, DEFAULT_TOP_BAR_HEIGHT } from './types';
 
 // The oldest schemaVersion the migration chain can read. Anything below (or missing, or
 // invalid) predates every released shape and is replaced by fresh defaults.

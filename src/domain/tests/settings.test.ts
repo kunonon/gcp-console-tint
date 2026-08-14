@@ -1,14 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type {
-  MatchType,
-  PaletteSettings,
-  PlatformBarSettings,
-  PlatformBarTextSettings,
-  ProjectRule,
-  ProjectSettings,
-  TintSettings,
-  TopBarSettings,
-} from '../../types';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
 import {
   cloneProjectSettings,
@@ -23,6 +13,16 @@ import {
   resolveProjectSettings,
   resolveSelectedColor,
 } from '../settings';
+import type {
+  MatchType,
+  PaletteSettings,
+  PlatformBarSettings,
+  PlatformBarTextSettings,
+  ProjectRule,
+  ProjectSettings,
+  TintSettings,
+  TopBarSettings,
+} from '../types';
 
 const CURRENT_VERSION = '0.1.0';
 

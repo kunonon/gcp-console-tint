@@ -1,4 +1,4 @@
-import type { TintSettings } from '../types';
+import type { TintSettings } from '../domain/types';
 
 // Driven-side port: the persistence boundary for TintSettings. The browser.storage
 // implementation lives in adapter/out; driving adapters (side panel, content script)

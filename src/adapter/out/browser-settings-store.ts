@@ -1,10 +1,10 @@
 import { browser } from 'wxt/browser';
+import { CURRENT_SCHEMA_VERSION } from '../../domain/migrations';
+import { effectiveSchemaVersion, loadSettings } from '../../domain/settings';
+import type { TintSettings } from '../../domain/types';
+import { UnknownRecordSchema } from '../../domain/types';
+import { compareVersions, VersionComparisonResult } from '../../domain/version';
 import type { SettingsStore } from '../../port/settings-store';
-import type { TintSettings } from '../../types';
-import { UnknownRecordSchema } from '../../types';
-import { CURRENT_SCHEMA_VERSION } from '../../utils/migrations';
-import { effectiveSchemaVersion, loadSettings } from '../../utils/settings';
-import { compareVersions, VersionComparisonResult } from '../../utils/version';
 
 const STORAGE_KEY = 'tintSettings';
 

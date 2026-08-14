@@ -118,8 +118,7 @@ src/
         sidepanel/    # React settings UI, incl. its components/
       hooks/          # settings state + persistence for the side panel
     out/            # driven side: browser.storage implementation of the port
-  utils/            # pure logic: settings schema/matching, color math, version compare
-  types.ts          # settings data model
+  domain/           # pure core: settings model (Zod), rule matching, migrations, color/version math
 ```
 
 Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated.

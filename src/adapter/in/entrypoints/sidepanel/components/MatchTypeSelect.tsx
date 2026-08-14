@@ -1,6 +1,6 @@
 import { ListBox, Select } from '@heroui/react';
-import type { MatchType } from '../../../../../types';
-import { MATCH_TYPES } from '../../../../../utils/settings';
+import { MATCH_TYPES } from '../../../../../domain/settings';
+import type { MatchType } from '../../../../../domain/types';
 
 // Shared between the detail page's Pattern card and AddRuleModal so both surfaces speak the
 // same match-type vocabulary (previously the modal used a separate radio list with its own
