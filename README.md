@@ -120,7 +120,9 @@ src/
     out/            # driven side: browser.storage store + settings repository
                     # (Zod schemas of the persisted JSON, toDomain/toStored mapping)
   domain/           # pure core: immutable entities/VOs per concept (Color, Palette,
-                    # ProjectSettings, ProjectRule, TintSettings) — dependency-free
+                    # ProjectSettings, ProjectRule, TintSettings); no framework or
+                    # library imports, base/ holds the Entity/ValueObject classes
+  utils/            # dependency-free helpers shared across layers (assertNever)
 ```
 
 Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated.
