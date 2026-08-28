@@ -1,6 +1,6 @@
 {
   "name": "gcp-console-tint",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tints parts of the Google Cloud console per project so you always know which project you are looking at.",
   "license": "MIT",
   "repository": {
