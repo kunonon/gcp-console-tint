@@ -109,13 +109,20 @@ Release tags are immutable — a tag ruleset blocks moving or deleting `v*` tags
 
 ```
 src/
-  entrypoints/
-    content.ts    # applies the tint on console.cloud.google.com
-    background.ts # opens the side panel / sidebar on toolbar-icon click
-    sidepanel/    # React settings UI
-  components/     # shared UI (pickers, add-rule modal, confirm popover)
-  utils/          # settings schema/matching, color math, version compare
-  types.ts        # settings data model
+  port/           # interfaces (SettingsStore: the persistence boundary)
+  adapter/
+    in/             # driving side: WXT entrypoints, React UI, hooks
+      entrypoints/
+        content.ts    # applies the tint on console.cloud.google.com
+        background.ts # opens the side panel / sidebar on toolbar-icon click
+        sidepanel/    # React settings UI, incl. its components/
+      hooks/          # settings state + persistence for the side panel
+    out/            # driven side: browser.storage store + settings repository
+                    # (Zod schemas of the persisted JSON, toDomain/toStored mapping)
+  domain/           # pure core: immutable entities/VOs per concept (Color, Palette,
+                    # ProjectSettings, ProjectRule, TintSettings); no framework or
+                    # library imports, base/ holds the Entity/ValueObject classes
+  utils/            # dependency-free helpers shared across layers (assertNever)
 ```
 
 Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated.
