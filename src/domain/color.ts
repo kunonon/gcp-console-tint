@@ -33,36 +33,32 @@ export class Color extends ValueObject<Color> {
     // WCAG contrast ratio: (lighter + offset) / (darker + offset); the offset keeps the ratio
     // finite against pure black.
     const contrastOffset = 0.05;
-    const whiteLuminance = 1;
-    const blackLuminance = 0;
+    const candidateLuminance = { white: 1, black: 0 };
     const luminance = this.relativeLuminance();
-    const contrastWithWhite = (whiteLuminance + contrastOffset) / (luminance + contrastOffset);
-    const contrastWithBlack = (luminance + contrastOffset) / (blackLuminance + contrastOffset);
+    const contrastWithWhite = (candidateLuminance.white + contrastOffset) / (luminance + contrastOffset);
+    const contrastWithBlack = (luminance + contrastOffset) / (candidateLuminance.black + contrastOffset);
     return contrastWithBlack >= contrastWithWhite ? Color.BLACK : Color.WHITE;
   }
 
   // WCAG relative luminance (0 = black, 1 = white).
   private relativeLuminance(): number {
+    const channelMax = 255;
     // sRGB decoding: channels below the threshold are on the linear segment, the rest on the
     // gamma curve.
-    const channelMax = 255;
-    const linearThreshold = 0.03928;
-    const linearDivisor = 12.92;
-    const gammaOffset = 0.055;
-    const gammaScale = 1.055;
-    const gammaExponent = 2.4;
+    const linear = { threshold: 0.03928, divisor: 12.92 };
+    const gamma = { offset: 0.055, scale: 1.055, exponent: 2.4 };
     // Luminance weights of the linearized channels (Rec. 709 primaries).
-    const redWeight = 0.2126;
-    const greenWeight = 0.7152;
-    const blueWeight = 0.0722;
-
+    const weight = { red: 0.2126, green: 0.7152, blue: 0.0722 };
     // '#rrggbb': two hex digits per channel, starting right after the '#'.
+    const hexOffset = { red: 1, green: 3, blue: 5 };
+
     const channel = (start: number) => Number.parseInt(this.hex.slice(start, start + 2), 16) / channelMax;
     const linearize = (c: number) =>
-      c <= linearThreshold ? c / linearDivisor : ((c + gammaOffset) / gammaScale) ** gammaExponent;
-    const red = channel(1);
-    const green = channel(3);
-    const blue = channel(5);
-    return redWeight * linearize(red) + greenWeight * linearize(green) + blueWeight * linearize(blue);
+      c <= linear.threshold ? c / linear.divisor : ((c + gamma.offset) / gamma.scale) ** gamma.exponent;
+    return (
+      weight.red * linearize(channel(hexOffset.red)) +
+      weight.green * linearize(channel(hexOffset.green)) +
+      weight.blue * linearize(channel(hexOffset.blue))
+    );
   }
 }
