@@ -1,3 +1,4 @@
+import { ValueObject } from './base/value-object';
 import { Color } from './color';
 import { ColorSelection } from './color-selection';
 import { Palette, PaletteEntry } from './palette';
@@ -10,13 +11,24 @@ const DEFAULT_COLOR = Color.fromHex('#ff6d00') ?? Color.BLACK;
 const DEFAULT_TEXT_COLOR = Color.WHITE;
 const DEFAULT_TOP_BAR_HEIGHT = 4;
 
-export class TopBarSettings {
+export class TopBarSettings extends ValueObject<TopBarSettings> {
   constructor(
     readonly enabled: boolean,
     readonly color: ColorSelection,
     readonly height: number,
     readonly stripes: boolean,
-  ) {}
+  ) {
+    super();
+  }
+
+  equals(other: TopBarSettings): boolean {
+    return (
+      this.enabled === other.enabled &&
+      this.color.equals(other.color) &&
+      this.height === other.height &&
+      this.stripes === other.stripes
+    );
+  }
 
   withEnabled(enabled: boolean): TopBarSettings {
     return new TopBarSettings(enabled, this.color, this.height, this.stripes);
@@ -35,12 +47,18 @@ export class TopBarSettings {
   }
 }
 
-export class PlatformBarSettings {
+export class PlatformBarSettings extends ValueObject<PlatformBarSettings> {
   constructor(
     readonly enabled: boolean,
     readonly color: ColorSelection,
     readonly stripes: boolean,
-  ) {}
+  ) {
+    super();
+  }
+
+  equals(other: PlatformBarSettings): boolean {
+    return this.enabled === other.enabled && this.color.equals(other.color) && this.stripes === other.stripes;
+  }
 
   withEnabled(enabled: boolean): PlatformBarSettings {
     return new PlatformBarSettings(enabled, this.color, this.stripes);
@@ -55,13 +73,19 @@ export class PlatformBarSettings {
   }
 }
 
-export class PlatformBarTextSettings {
+export class PlatformBarTextSettings extends ValueObject<PlatformBarTextSettings> {
   constructor(
     readonly enabled: boolean,
     readonly color: ColorSelection,
     // Pick black/white automatically by WCAG contrast against the platform bar color.
     readonly auto: boolean,
-  ) {}
+  ) {
+    super();
+  }
+
+  equals(other: PlatformBarTextSettings): boolean {
+    return this.enabled === other.enabled && this.color.equals(other.color) && this.auto === other.auto;
+  }
 
   withEnabled(enabled: boolean): PlatformBarTextSettings {
     return new PlatformBarTextSettings(enabled, this.color, this.auto);
@@ -77,7 +101,7 @@ export class PlatformBarTextSettings {
 }
 
 // One object per tinted surface, mirroring the settings UI's cards.
-export class ProjectSettings {
+export class ProjectSettings extends ValueObject<ProjectSettings> {
   // The domain owns the default VALUES; recovering junk storage back to them is the settings
   // repository's job (adapter/out), which sources its `.catch()` fallbacks from here.
   static readonly DEFAULT: ProjectSettings = new ProjectSettings(
@@ -96,7 +120,18 @@ export class ProjectSettings {
     readonly topBar: TopBarSettings,
     readonly platformBar: PlatformBarSettings,
     readonly platformBarText: PlatformBarTextSettings,
-  ) {}
+  ) {
+    super();
+  }
+
+  equals(other: ProjectSettings): boolean {
+    return (
+      this.palette.equals(other.palette) &&
+      this.topBar.equals(other.topBar) &&
+      this.platformBar.equals(other.platformBar) &&
+      this.platformBarText.equals(other.platformBarText)
+    );
+  }
 
   withPalette(palette: Palette): ProjectSettings {
     return new ProjectSettings(palette, this.topBar, this.platformBar, this.platformBarText);

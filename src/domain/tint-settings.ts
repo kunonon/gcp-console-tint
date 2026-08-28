@@ -1,12 +1,27 @@
+import { ValueObject } from './base/value-object';
 import type { ProjectRule } from './project-rule';
 import type { ProjectSettings } from './project-settings';
 
-export class TintSettings {
+export class TintSettings extends ValueObject<TintSettings> {
   constructor(
     // Ordered: earlier rules take priority; first matching rule wins.
     // When no rule matches (or the URL has no project param), nothing is applied.
     readonly projectRules: readonly ProjectRule[],
-  ) {}
+  ) {
+    super();
+  }
+
+  // Rules are compared as entities (by id, in order); a rule's current pattern/settings do not
+  // take part.
+  equals(other: TintSettings): boolean {
+    return (
+      this.projectRules.length === other.projectRules.length &&
+      this.projectRules.every((rule, i) => {
+        const otherRule = other.projectRules[i];
+        return otherRule !== undefined && rule.equals(otherRule);
+      })
+    );
+  }
 
   // Rules are ordered by priority (top of the list first). The first rule that matches the
   // project id (per its matchType) wins; 'regex' rules with invalid patterns are skipped.

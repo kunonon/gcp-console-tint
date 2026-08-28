@@ -1,10 +1,11 @@
+import { Entity } from './base/entity';
 import { ProjectSettings } from './project-settings';
 
 // How a ProjectRule's pattern is compared against the console URL's ?project= param.
 export const MATCH_TYPES = ['prefix', 'suffix', 'exact', 'regex'] as const;
 export type MatchType = (typeof MATCH_TYPES)[number];
 
-export class ProjectRule {
+export class ProjectRule extends Entity<ProjectRule> {
   constructor(
     readonly id: string,
     readonly matchType: MatchType,
@@ -12,7 +13,14 @@ export class ProjectRule {
     // For 'regex': a regular expression source that must match the ENTIRE project id.
     readonly pattern: string,
     readonly settings: ProjectSettings,
-  ) {}
+  ) {
+    super();
+  }
+
+  // Entity identity: same id means the same rule, whatever its current attributes.
+  equals(other: ProjectRule): boolean {
+    return this.id === other.id;
+  }
 
   static create(matchType: MatchType, pattern: string): ProjectRule {
     return new ProjectRule(crypto.randomUUID(), matchType, pattern, ProjectSettings.DEFAULT);

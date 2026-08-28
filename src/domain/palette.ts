@@ -1,13 +1,22 @@
 // Palette: a project's named color entries plus the enabled flag.
+import { Entity } from './base/entity';
+import { ValueObject } from './base/value-object';
 import type { Color } from './color';
 import type { ColorSelection } from './color-selection';
 
-export class PaletteEntry {
+export class PaletteEntry extends Entity<PaletteEntry> {
   constructor(
     readonly id: string,
     readonly name: string,
     readonly color: Color,
-  ) {}
+  ) {
+    super();
+  }
+
+  // Entity identity: same id means the same entry, whatever its current attributes.
+  equals(other: PaletteEntry): boolean {
+    return this.id === other.id;
+  }
 
   static create(name: string, color: Color): PaletteEntry {
     return new PaletteEntry(crypto.randomUUID(), name, color);
@@ -22,11 +31,26 @@ export class PaletteEntry {
   }
 }
 
-export class Palette {
+export class Palette extends ValueObject<Palette> {
   constructor(
     readonly enabled: boolean,
     readonly entries: readonly PaletteEntry[],
-  ) {}
+  ) {
+    super();
+  }
+
+  // Entries are compared as entities (by id, in order): two palettes are equal when they hold
+  // the same entries in the same order, regardless of the entries' current name/color.
+  equals(other: Palette): boolean {
+    return (
+      this.enabled === other.enabled &&
+      this.entries.length === other.entries.length &&
+      this.entries.every((entry, i) => {
+        const otherEntry = other.entries[i];
+        return otherEntry !== undefined && entry.equals(otherEntry);
+      })
+    );
+  }
 
   // Resolves a surface's effective color: the referenced palette entry when the palette is
   // enabled and the reference resolves, otherwise the surface's own custom color.

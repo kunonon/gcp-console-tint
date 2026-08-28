@@ -1,3 +1,5 @@
+import { ValueObject } from './base/value-object';
+
 // Validated hex color: '#rrggbb', case-insensitive on input, normalized to lowercase.
 const HEX_PATTERN = /^#[0-9a-f]{6}$/i;
 
@@ -5,11 +7,13 @@ const HEX_PATTERN = /^#[0-9a-f]{6}$/i;
 // lowercase '#rrggbb' value: the private constructor makes fromHex() the single gate for
 // untrusted input. CSS generation deliberately lives outside the domain (see
 // adapter/in/stripes.ts).
-export class Color {
+export class Color extends ValueObject<Color> {
   static readonly BLACK = new Color('#000000');
   static readonly WHITE = new Color('#ffffff');
 
-  private constructor(private readonly hex: string) {}
+  private constructor(private readonly hex: string) {
+    super();
+  }
 
   // Boundary constructor for untrusted input; undefined unless it is a '#rrggbb' hex string.
   static fromHex(hex: string): Color | undefined {
