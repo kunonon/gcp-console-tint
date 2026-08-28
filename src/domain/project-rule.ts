@@ -51,6 +51,13 @@ export class ProjectRule extends Entity<ProjectRule> {
     return this.id.equals(other.id);
   }
 
+  // Two rules with the same match type and pattern select exactly the same project ids; the
+  // later one in the list can never win. Import uses this to decide which incoming rules replace
+  // an existing one instead of being added.
+  isDuplicateOf(other: ProjectRule): boolean {
+    return this.matchType === other.matchType && this.pattern === other.pattern;
+  }
+
   // A brand-new rule under a fresh identity, starting from the default settings.
   static create(matchType: MatchType, pattern: string): ProjectRule {
     return new ProjectRule(ProjectRuleId.create(), matchType, pattern, ProjectSettings.DEFAULT);

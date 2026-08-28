@@ -10,6 +10,7 @@ import {
   TopBarSettings,
 } from '../../domain/project-settings';
 import { TintSettings } from '../../domain/tint-settings';
+import { SettingsImportError } from '../../port/settings-store';
 import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
 
@@ -238,4 +239,31 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
 
 function storedSelection(selection: ColorSelection) {
   return { paletteId: selection.paletteId?.toString() ?? null, custom: selection.custom.toHex() };
+}
+
+// Parses an imported settings file's text into current-shape settings, throwing
+// SettingsImportError on anything the user needs to be told about. This duplicates
+// toDomain's schemaVersion checks instead of reusing its silent "fall back to defaults"
+// behavior: an import must tell the user WHY a file was rejected (bad JSON, wrong file,
+// too old, no rules), where toDomain's job is to always produce something loadable.
+export function parseSettingsFile(text: string): TintSettings {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new SettingsImportError({ reason: 'invalid-json' }, { cause: error });
+  }
+
+  if (!isRecord(value) || typeof value.schemaVersion !== 'string') {
+    throw new SettingsImportError({ reason: 'not-settings' });
+  }
+  if (compareVersions(value.schemaVersion, SCHEMA_MIN_VERSION) === VersionComparisonResult.Older) {
+    throw new SettingsImportError({ reason: 'unsupported-version', version: value.schemaVersion });
+  }
+
+  const settings = toDomain(value);
+  if (settings.projectRules.length === 0) {
+    throw new SettingsImportError({ reason: 'no-rules' });
+  }
+  return settings;
 }

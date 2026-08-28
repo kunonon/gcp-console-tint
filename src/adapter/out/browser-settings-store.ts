@@ -2,7 +2,7 @@ import { browser } from 'wxt/browser';
 import type { TintSettings } from '../../domain/tint-settings';
 import type { SettingsStore } from '../../port/settings-store';
 import { CURRENT_SCHEMA_VERSION } from './migrations';
-import { effectiveSchemaVersion, toDomain, toStored } from './settings-repository';
+import { effectiveSchemaVersion, parseSettingsFile, toDomain, toStored } from './settings-repository';
 import { compareVersions, VersionComparisonResult } from './version';
 
 const STORAGE_KEY = 'tintSettings';
@@ -37,6 +37,14 @@ export class SettingsStoreImpl implements SettingsStore {
       const newValue = changes[STORAGE_KEY].newValue;
       if (newValue) onChange(toDomain(newValue));
     });
+  }
+
+  exportJson(settings: TintSettings): string {
+    return JSON.stringify(toStored(settings, effectiveSchemaVersion(manifestVersion())), null, 2);
+  }
+
+  importJson(text: string): TintSettings {
+    return parseSettingsFile(text);
   }
 }
 

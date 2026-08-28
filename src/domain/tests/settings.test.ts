@@ -64,6 +64,103 @@ describe('ProjectRule.matches', () => {
   });
 });
 
+describe('ProjectRule.isDuplicateOf', () => {
+  const rule = (matchType: MatchType, pattern: string): ProjectRule =>
+    ProjectRule.recreate(ProjectRuleId.create(), matchType, pattern, DEFAULTS);
+
+  it('is true for the same matchType and pattern', () => {
+    expect(rule('exact', 'my-app').isDuplicateOf(rule('exact', 'my-app'))).toBe(true);
+  });
+
+  it('is false when matchType differs, even with the same pattern', () => {
+    expect(rule('exact', 'my-app').isDuplicateOf(rule('prefix', 'my-app'))).toBe(false);
+  });
+
+  it('is false when pattern differs, even with the same matchType', () => {
+    expect(rule('exact', 'my-app').isDuplicateOf(rule('exact', 'other-app'))).toBe(false);
+  });
+
+  it('ignores id and settings: only matchType and pattern decide duplication', () => {
+    const a = ProjectRule.recreate(ProjectRuleId.recreate('a'), 'exact', 'my-app', DEFAULTS);
+    const b = ProjectRule.recreate(
+      ProjectRuleId.recreate('b'),
+      'exact',
+      'my-app',
+      DEFAULTS.changeTopBar(DEFAULTS.topBar.disable()),
+    );
+    expect(a.isDuplicateOf(b)).toBe(true);
+  });
+});
+
+describe('TintSettings.mergeRules', () => {
+  const rule = (id: string, matchType: MatchType, pattern: string, settings: ProjectSettings = DEFAULTS): ProjectRule =>
+    ProjectRule.recreate(ProjectRuleId.recreate(id), matchType, pattern, settings);
+
+  it('returns an equal but distinct list when incoming is empty', () => {
+    const original = new TintSettings([rule('1', 'exact', 'my-app')]);
+
+    const merged = original.mergeRules([]);
+
+    expect(merged.equals(original)).toBe(true);
+    expect(merged).not.toBe(original);
+  });
+
+  it('does not mutate the receiver', () => {
+    const original = new TintSettings([rule('1', 'exact', 'my-app')]);
+
+    original.mergeRules([rule('2', 'prefix', 'other-app')]);
+
+    expect(original.projectRules).toHaveLength(1);
+    expect(original.projectRules[0]!.id.equals(ProjectRuleId.recreate('1'))).toBe(true);
+  });
+
+  it('appends a non-duplicate rule after existing rules, under a fresh id', () => {
+    const existing = rule('1', 'exact', 'my-app');
+    const original = new TintSettings([existing]);
+    const incomingRule = rule('imported-id', 'prefix', 'other-app');
+
+    const merged = original.mergeRules([incomingRule]);
+
+    expect(merged.projectRules).toHaveLength(2);
+    expect(merged.projectRules[0]).toBe(existing);
+    const appended = merged.projectRules[1]!;
+    expect(appended.matchType).toBe('prefix');
+    expect(appended.pattern).toBe('other-app');
+    // Fresh id: distinct from both the incoming rule's id and every existing rule's id.
+    expect(appended.id.equals(incomingRule.id)).toBe(false);
+    expect(appended.id.equals(existing.id)).toBe(false);
+  });
+
+  it('replaces a duplicate rule in place, keeping its id and position but taking the incoming settings', () => {
+    const other = rule('other', 'prefix', 'other-app');
+    const existing = rule('1', 'exact', 'my-app', DEFAULTS);
+    const original = new TintSettings([other, existing]);
+    const newSettings = DEFAULTS.changeTopBar(DEFAULTS.topBar.disable());
+    const incomingRule = rule('imported-id', 'exact', 'my-app', newSettings);
+
+    const merged = original.mergeRules([incomingRule]);
+
+    expect(merged.projectRules).toHaveLength(2);
+    expect(merged.projectRules[0]).toBe(other);
+    const replaced = merged.projectRules[1]!;
+    expect(replaced.id.equals(existing.id)).toBe(true);
+    expect(replaced.settings).toEqual(newSettings);
+  });
+
+  it('folds duplicates inside incoming itself left to right, the later one winning', () => {
+    const original = new TintSettings([]);
+    const settingsA = DEFAULTS;
+    const settingsB = DEFAULTS.changeTopBar(DEFAULTS.topBar.disable());
+    const ruleA = rule('a', 'exact', 'my-app', settingsA);
+    const ruleB = rule('b', 'exact', 'my-app', settingsB);
+
+    const merged = original.mergeRules([ruleA, ruleB]);
+
+    expect(merged.projectRules).toHaveLength(1);
+    expect(merged.projectRules[0]!.settings).toEqual(settingsB);
+  });
+});
+
 describe('TintSettings.resolveProjectSettings', () => {
   // `custom` is the per-rule "marker" field (paletteId pinned to undefined so it always wins
   // over the palette): each rule below gets a distinct — and, since Color validates, real —

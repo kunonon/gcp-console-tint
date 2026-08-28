@@ -2,16 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { Color } from '../../../domain/color';
 import { ColorSelection } from '../../../domain/color-selection';
 import { type Palette, PaletteEntry, PaletteEntryId } from '../../../domain/palette';
-import { MATCH_TYPES, ProjectRuleId } from '../../../domain/project-rule';
+import { MATCH_TYPES, ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import {
   type PlatformBarSettings,
   type PlatformBarTextSettings,
   ProjectSettings,
   type TopBarSettings,
 } from '../../../domain/project-settings';
-import type { TintSettings } from '../../../domain/tint-settings';
+import { TintSettings } from '../../../domain/tint-settings';
+import { SettingsImportError } from '../../../port/settings-store';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
-import { effectiveSchemaVersion, toDomain } from '../settings-repository';
+import { effectiveSchemaVersion, parseSettingsFile, toDomain, toStored } from '../settings-repository';
 
 // The product defaults live private to the domain's project-settings.ts; asserting the literals
 // here is deliberate — these tests are what pins them down.
@@ -707,5 +708,87 @@ describe('effectiveSchemaVersion', () => {
   it('returns currentVersion unchanged when it is above CURRENT_SCHEMA_VERSION', () => {
     expect(effectiveSchemaVersion('0.3.1')).toBe('0.3.1');
     expect(effectiveSchemaVersion('9.9.9')).toBe('9.9.9');
+  });
+});
+
+// Runs `fn`, returning whatever it throws. Fails the test (via a plain thrown Error) if `fn`
+// does not throw, so a broken assertion below never gets skipped silently.
+function thrownBy(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('expected function to throw, but it did not');
+}
+
+describe('parseSettingsFile', () => {
+  it('throws invalid-json, with the SyntaxError as cause, for text that is not JSON at all', () => {
+    const error = thrownBy(() => parseSettingsFile('not json{'));
+
+    expect(error).toBeInstanceOf(SettingsImportError);
+    expect((error as SettingsImportError).failure).toEqual({ reason: 'invalid-json' });
+    expect((error as SettingsImportError).cause).toBeInstanceOf(SyntaxError);
+  });
+
+  it.each([
+    ['a JSON array', '[]'],
+    ['a JSON number', '42'],
+    ['an object without schemaVersion', JSON.stringify({ projectRules: [] })],
+    ['an object with a non-string schemaVersion', JSON.stringify({ schemaVersion: 123, projectRules: [] })],
+  ])('throws not-settings for %s', (_label, text) => {
+    const error = thrownBy(() => parseSettingsFile(text));
+
+    expect(error).toBeInstanceOf(SettingsImportError);
+    expect((error as SettingsImportError).failure).toEqual({ reason: 'not-settings' });
+  });
+
+  it('throws unsupported-version, with the version, for a schemaVersion below SCHEMA_MIN_VERSION', () => {
+    const text = JSON.stringify({ schemaVersion: '0.0.9', projectRules: [{ id: '1', pattern: 'x', settings: {} }] });
+
+    const error = thrownBy(() => parseSettingsFile(text));
+
+    expect(error).toBeInstanceOf(SettingsImportError);
+    expect((error as SettingsImportError).failure).toEqual({ reason: 'unsupported-version', version: '0.0.9' });
+  });
+
+  it('throws no-rules for a valid file with an empty projectRules array', () => {
+    const text = JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [] });
+
+    const error = thrownBy(() => parseSettingsFile(text));
+
+    expect(error).toBeInstanceOf(SettingsImportError);
+    expect((error as SettingsImportError).failure).toEqual({ reason: 'no-rules' });
+  });
+
+  // Every stored rule is dropped by projectRuleSchema when its pattern isn't a string (see
+  // toDomain), so a file whose only rule fails that way ends up with zero readable rules too.
+  it('throws no-rules when every rule is dropped for having a non-string pattern', () => {
+    const text = JSON.stringify({
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      projectRules: [{ id: '1', pattern: 123, settings: {} }],
+    });
+
+    const error = thrownBy(() => parseSettingsFile(text));
+
+    expect(error).toBeInstanceOf(SettingsImportError);
+    expect((error as SettingsImportError).failure).toEqual({ reason: 'no-rules' });
+  });
+
+  it('round-trips a valid file: toStored -> JSON.stringify -> parseSettingsFile equals the original settings', () => {
+    const original = new TintSettings([
+      ProjectRule.recreate(
+        ProjectRuleId.recreate('rule-1'),
+        'exact',
+        'my-app',
+        projectSettings({ topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, color('#00ff00'))) }),
+      ),
+    ]);
+    const text = JSON.stringify(toStored(original, CURRENT_SCHEMA_VERSION));
+
+    const parsed = parseSettingsFile(text);
+
+    expect(parsed.equals(original)).toBe(true);
+    expect(parsed.projectRules[0]!.settings).toEqual(original.projectRules[0]!.settings);
   });
 });

@@ -1,5 +1,5 @@
 import { ValueObject } from './base/value-object';
-import type { ProjectRule, ProjectRuleId } from './project-rule';
+import { ProjectRule, ProjectRuleId } from './project-rule';
 import type { ProjectSettings } from './project-settings';
 
 export class TintSettings extends ValueObject<TintSettings> {
@@ -65,5 +65,24 @@ export class TintSettings extends ValueObject<TintSettings> {
 
   updateRule(id: ProjectRuleId, update: (rule: ProjectRule) => ProjectRule): TintSettings {
     return new TintSettings(this.projectRules.map((rule) => (rule.id.equals(id) ? update(rule) : rule)));
+  }
+
+  // Merges `incoming` (e.g. the rules picked from an imported file) into the list, in order: a
+  // rule that duplicates an existing one (ProjectRule.isDuplicateOf) replaces that rule's settings
+  // in place, keeping its id and position; any other rule is appended under a fresh id, so
+  // importing the same file twice never yields two rules with one id. Duplicates inside
+  // `incoming` itself fold left to right, so the later one wins.
+  mergeRules(incoming: readonly ProjectRule[]): TintSettings {
+    const rules = [...this.projectRules];
+    for (const rule of incoming) {
+      const index = rules.findIndex((existing) => existing.isDuplicateOf(rule));
+      const duplicate = rules[index];
+      if (duplicate) {
+        rules[index] = duplicate.changeSettings(rule.settings);
+      } else {
+        rules.push(ProjectRule.recreate(ProjectRuleId.create(), rule.matchType, rule.pattern, rule.settings));
+      }
+    }
+    return new TintSettings(rules);
   }
 }
