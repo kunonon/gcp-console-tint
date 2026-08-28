@@ -6,7 +6,7 @@ import { Palette, PaletteEntry } from './palette';
 // `?? Color.BLACK` branch is unreachable ('#ff6d00' is a valid '#rrggbb' literal) and only
 // exists to keep the type as `Color` rather than `Color | undefined`; the settings tests
 // assert the real value.
-const DEFAULT_COLOR = Color.parse('#ff6d00') ?? Color.BLACK;
+const DEFAULT_COLOR = Color.fromHex('#ff6d00') ?? Color.BLACK;
 const DEFAULT_TEXT_COLOR = Color.WHITE;
 const DEFAULT_TOP_BAR_HEIGHT = 4;
 

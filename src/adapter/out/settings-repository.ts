@@ -39,7 +39,7 @@ function colorField(fallback: Color) {
   return z
     .unknown()
     .optional()
-    .transform((value) => (typeof value === 'string' ? Color.parse(value) : undefined) ?? fallback);
+    .transform((value) => (typeof value === 'string' ? Color.fromHex(value) : undefined) ?? fallback);
 }
 
 // Parameterized by defaults because each surface falls back to a different selection: topBar

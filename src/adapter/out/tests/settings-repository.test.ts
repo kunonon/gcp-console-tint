@@ -22,7 +22,7 @@ const DEFAULT_TOP_BAR_HEIGHT = 4;
 const DEFAULTS = ProjectSettings.DEFAULT;
 
 // Every test color here is a real '#rrggbb' value: Color has no other way in.
-const color = (value: string): Color => Color.parse(value)!;
+const color = (value: string): Color => Color.fromHex(value)!;
 
 // Section-by-section builder for expected ProjectSettings values; sections not overridden come
 // from ProjectSettings.DEFAULT.

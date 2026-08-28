@@ -9,7 +9,7 @@ afterEach(() => {
   cleanup();
 });
 
-const palette = [new PaletteEntry('default', 'Primary', Color.parse('#ff6d00')!)];
+const palette = [new PaletteEntry('default', 'Primary', Color.fromHex('#ff6d00')!)];
 
 async function openDialog(user: ReturnType<typeof userEvent.setup>, triggerLabel: string) {
   await user.click(screen.getByRole('button', { name: triggerLabel }));

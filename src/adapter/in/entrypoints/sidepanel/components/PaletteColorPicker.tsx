@@ -30,10 +30,10 @@ export default function PaletteColorPicker({
   autoSelected,
   onSelectAuto,
 }: PaletteColorPickerProps) {
-  // input[type=color] can only ever emit '#rrggbb', so Color.parse never returns undefined
+  // input[type=color] can only ever emit '#rrggbb', so Color.fromHex never returns undefined
   // here; the guard just avoids a cast at the boundary.
   const handleCustomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const color = Color.parse(e.target.value);
+    const color = Color.fromHex(e.target.value);
     if (color) onSelectCustomColor(color);
   };
 

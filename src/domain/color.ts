@@ -2,7 +2,7 @@
 const HEX_PATTERN = /^#[0-9a-f]{6}$/i;
 
 // Value object for a color in the settings model. Instances only ever hold a validated,
-// lowercase '#rrggbb' value: the private constructor makes parse() the single gate for
+// lowercase '#rrggbb' value: the private constructor makes fromHex() the single gate for
 // untrusted input. CSS generation deliberately lives outside the domain (see
 // adapter/in/stripes.ts).
 export class Color {
@@ -11,9 +11,9 @@ export class Color {
 
   private constructor(private readonly hex: string) {}
 
-  // Boundary constructor for untrusted input; undefined when the value is not '#rrggbb'.
-  static parse(value: string): Color | undefined {
-    return HEX_PATTERN.test(value) ? new Color(value.toLowerCase()) : undefined;
+  // Boundary constructor for untrusted input; undefined unless it is a '#rrggbb' hex string.
+  static fromHex(hex: string): Color | undefined {
+    return HEX_PATTERN.test(hex) ? new Color(hex.toLowerCase()) : undefined;
   }
 
   toHex(): string {

@@ -1,52 +1,52 @@
 import { describe, expect, it } from 'vitest';
 import { Color } from '../color';
 
-describe('Color.parse', () => {
+describe('Color.fromHex', () => {
   it('accepts a #rrggbb hex string', () => {
-    expect(Color.parse('#000080')?.toHex()).toBe('#000080');
+    expect(Color.fromHex('#000080')?.toHex()).toBe('#000080');
   });
 
   it('normalizes uppercase hex to lowercase', () => {
-    expect(Color.parse('#ABCDEF')?.toHex()).toBe('#abcdef');
+    expect(Color.fromHex('#ABCDEF')?.toHex()).toBe('#abcdef');
   });
 
   it('returns undefined for an invalid hex string', () => {
-    expect(Color.parse('not-a-color')).toBeUndefined();
+    expect(Color.fromHex('not-a-color')).toBeUndefined();
   });
 
   it('returns undefined for a shorthand 3-digit hex (unsupported format)', () => {
-    expect(Color.parse('#fff')).toBeUndefined();
+    expect(Color.fromHex('#fff')).toBeUndefined();
   });
 
   it('returns undefined for an empty string', () => {
-    expect(Color.parse('')).toBeUndefined();
+    expect(Color.fromHex('')).toBeUndefined();
   });
 });
 
 describe('round-trip', () => {
   it('returns the same value it parsed', () => {
-    expect(Color.parse('#ff6d00')?.toHex()).toBe('#ff6d00');
+    expect(Color.fromHex('#ff6d00')?.toHex()).toBe('#ff6d00');
   });
 });
 
 describe('equals', () => {
   it('compares by value, not identity', () => {
-    expect(Color.parse('#000080')?.equals(Color.parse('#000080')!)).toBe(true);
-    expect(Color.parse('#000080')?.equals(Color.parse('#000081')!)).toBe(false);
+    expect(Color.fromHex('#000080')?.equals(Color.fromHex('#000080')!)).toBe(true);
+    expect(Color.fromHex('#000080')?.equals(Color.fromHex('#000081')!)).toBe(false);
   });
 
   it('treats case-different inputs as the same color', () => {
-    expect(Color.parse('#ABCDEF')?.equals(Color.parse('#abcdef')!)).toBe(true);
+    expect(Color.fromHex('#ABCDEF')?.equals(Color.fromHex('#abcdef')!)).toBe(true);
   });
 });
 
 describe('contrastingTextColor', () => {
   it('returns white text for a dark background', () => {
-    expect(Color.parse('#000080')?.contrastingTextColor().equals(Color.WHITE)).toBe(true);
+    expect(Color.fromHex('#000080')?.contrastingTextColor().equals(Color.WHITE)).toBe(true);
   });
 
   it('returns black text for a bright background', () => {
-    expect(Color.parse('#ffff00')?.contrastingTextColor().equals(Color.BLACK)).toBe(true);
+    expect(Color.fromHex('#ffff00')?.contrastingTextColor().equals(Color.BLACK)).toBe(true);
   });
 
   it('returns white text for pure black', () => {
