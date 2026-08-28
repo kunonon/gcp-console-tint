@@ -57,6 +57,13 @@ describe('Palette.resolve', () => {
   });
 });
 
+describe('ProjectRule.matches', () => {
+  it('throws on a matchType outside MATCH_TYPES (exhaustiveness guard)', () => {
+    const rule = ProjectRule.recreate(ProjectRuleId.recreate('1'), 'glob' as MatchType, '*', DEFAULTS);
+    expect(() => rule.matches('my-app')).toThrow(/glob/);
+  });
+});
+
 describe('TintSettings.resolveProjectSettings', () => {
   // `custom` is the per-rule "marker" field (paletteId pinned to undefined so it always wins
   // over the palette): each rule below gets a distinct — and, since Color validates, real —

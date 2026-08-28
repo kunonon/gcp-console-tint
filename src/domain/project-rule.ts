@@ -1,3 +1,4 @@
+import { assertNever } from '../utils/assert';
 import { Entity } from './base/entity';
 import { ValueObject } from './base/value-object';
 import { ProjectSettings } from './project-settings';
@@ -77,6 +78,8 @@ export class ProjectRule extends Entity<ProjectRule> {
           // invalid regex: the rule never matches
           return false;
         }
+      default:
+        assertNever(this.matchType);
     }
   }
 
