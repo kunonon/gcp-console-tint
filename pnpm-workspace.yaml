@@ -1,0 +1,10 @@
+# pnpm settings (single-package repository; no `packages` entry needed).
+
+# Supply-chain cooldown: a version must have been published for at least a week (10080
+# minutes) before pnpm resolves it, transitive dependencies included. Compromised releases
+# are usually pulled within hours, so this keeps `pnpm add` / `pnpm update` and lockfile
+# refreshes behind that window. pnpm also checks the versions already in pnpm-lock.yaml
+# against this policy on every install (frozen or not), so a lockfile carrying a version
+# younger than a week is rejected until it ages — or until the package is listed under
+# minimumReleaseAgeExclude. pnpm 11's default is one day.
+minimumReleaseAge: 10080
