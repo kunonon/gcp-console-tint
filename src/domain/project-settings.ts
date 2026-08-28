@@ -1,7 +1,7 @@
 import { ValueObject } from './base/value-object';
 import { Color } from './color';
 import { ColorSelection } from './color-selection';
-import { Palette, PaletteEntry } from './palette';
+import { Palette, PaletteEntry, PaletteEntryId } from './palette';
 
 // Product policy, not color theory: the canonical default colors for the tint surfaces. The
 // `?? Color.BLACK` branch is unreachable ('#ff6d00' is a valid '#rrggbb' literal) and only
@@ -10,6 +10,9 @@ import { Palette, PaletteEntry } from './palette';
 const DEFAULT_COLOR = Color.fromHex('#ff6d00') ?? Color.BLACK;
 const DEFAULT_TEXT_COLOR = Color.WHITE;
 const DEFAULT_TOP_BAR_HEIGHT = 4;
+// The default palette entry's identity, shared by the entry itself and the surfaces that
+// reference it (see ProjectSettings.DEFAULT).
+const DEFAULT_ENTRY_ID = PaletteEntryId.recreate('default');
 
 export class TopBarSettings extends ValueObject<TopBarSettings> {
   constructor(
@@ -109,9 +112,9 @@ export class ProjectSettings extends ValueObject<ProjectSettings> {
     // literal 'default' — not a generated one — because topBar/platformBar's default color
     // selection below references it by that id; Palette.resolve() would fail to resolve it
     // otherwise.
-    new Palette(true, [new PaletteEntry('default', 'Primary', DEFAULT_COLOR)]),
-    new TopBarSettings(true, new ColorSelection('default', DEFAULT_COLOR), DEFAULT_TOP_BAR_HEIGHT, false),
-    new PlatformBarSettings(true, new ColorSelection('default', DEFAULT_COLOR), false),
+    new Palette(true, [new PaletteEntry(DEFAULT_ENTRY_ID, 'Primary', DEFAULT_COLOR)]),
+    new TopBarSettings(true, new ColorSelection(DEFAULT_ENTRY_ID, DEFAULT_COLOR), DEFAULT_TOP_BAR_HEIGHT, false),
+    new PlatformBarSettings(true, new ColorSelection(DEFAULT_ENTRY_ID, DEFAULT_COLOR), false),
     new PlatformBarTextSettings(true, new ColorSelection(undefined, DEFAULT_TEXT_COLOR), false),
   );
 
@@ -153,9 +156,9 @@ export class ProjectSettings extends ValueObject<ProjectSettings> {
   // here does not touch any other rule's palette/references. All three surfaces' color
   // references are cleared atomically alongside the entry removal, so storage never sees an
   // intermediate state with a dangling paletteId.
-  withPaletteEntryRemoved(id: string): ProjectSettings {
+  withPaletteEntryRemoved(id: PaletteEntryId): ProjectSettings {
     const withoutRef = (selection: ColorSelection) =>
-      selection.paletteId === id ? selection.clearPalette() : selection;
+      selection.paletteId?.equals(id) ? selection.clearPalette() : selection;
     return new ProjectSettings(
       this.palette.removeEntry(id),
       this.topBar.withColor(withoutRef(this.topBar.color)),

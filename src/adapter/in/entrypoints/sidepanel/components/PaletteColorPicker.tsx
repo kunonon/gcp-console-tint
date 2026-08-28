@@ -1,16 +1,16 @@
 import { Popover } from '@heroui/react';
 import { Color } from '../../../../../domain/color';
-import type { PaletteEntry } from '../../../../../domain/palette';
+import type { PaletteEntry, PaletteEntryId } from '../../../../../domain/palette';
 import ColorSwatchField from './ColorSwatchField';
 
 interface PaletteColorPickerProps {
   ariaLabel: string;
   paletteEnabled: boolean;
   palette: readonly PaletteEntry[];
-  paletteId: string | undefined;
+  paletteId: PaletteEntryId | undefined;
   customColor: string;
   effectiveColor: string;
-  onSelectPaletteEntry: (id: string) => void;
+  onSelectPaletteEntry: (id: PaletteEntryId) => void;
   onSelectCustomColor: (color: Color) => void;
   supportsAuto?: boolean;
   autoSelected?: boolean;
@@ -37,7 +37,7 @@ export default function PaletteColorPicker({
     if (color) onSelectCustomColor(color);
   };
 
-  const referencedEntry = paletteEnabled && paletteId ? palette.find((e) => e.id === paletteId) : undefined;
+  const referencedEntry = paletteEnabled && paletteId ? palette.find((e) => e.id.equals(paletteId)) : undefined;
   const isCustomActive = !autoSelected && !referencedEntry;
   const triggerLabel = autoSelected ? 'Auto' : referencedEntry ? referencedEntry.name || '(unnamed)' : effectiveColor;
 
@@ -80,12 +80,12 @@ export default function PaletteColorPicker({
               <div className="flex flex-wrap gap-2">
                 {palette.map((entry) => (
                   <button
-                    key={entry.id}
+                    key={entry.id.toString()}
                     type="button"
                     aria-label={entry.name || '(unnamed)'}
                     onClick={() => onSelectPaletteEntry(entry.id)}
                     className={`h-7 w-7 cursor-pointer rounded-full border border-border ${
-                      !autoSelected && paletteId === entry.id ? 'ring-2 ring-focus' : ''
+                      !autoSelected && paletteId?.equals(entry.id) ? 'ring-2 ring-focus' : ''
                     }`}
                     style={{ backgroundColor: entry.color.toHex() }}
                   />

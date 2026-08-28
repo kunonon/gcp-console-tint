@@ -1,5 +1,5 @@
 import { ValueObject } from './base/value-object';
-import type { ProjectRule } from './project-rule';
+import type { ProjectRule, ProjectRuleId } from './project-rule';
 import type { ProjectSettings } from './project-settings';
 
 export class TintSettings extends ValueObject<TintSettings> {
@@ -39,13 +39,13 @@ export class TintSettings extends ValueObject<TintSettings> {
     return new TintSettings([...this.projectRules, rule]);
   }
 
-  withRuleRemoved(id: string): TintSettings {
-    return new TintSettings(this.projectRules.filter((rule) => rule.id !== id));
+  withRuleRemoved(id: ProjectRuleId): TintSettings {
+    return new TintSettings(this.projectRules.filter((rule) => !rule.id.equals(id)));
   }
 
   // Inserts the copy right after its original. Unknown id: nothing to duplicate, so no change.
-  withRuleDuplicated(id: string): TintSettings {
-    const index = this.projectRules.findIndex((rule) => rule.id === id);
+  withRuleDuplicated(id: ProjectRuleId): TintSettings {
+    const index = this.projectRules.findIndex((rule) => rule.id.equals(id));
     const original = this.projectRules[index];
     if (!original) return this;
     const next = [...this.projectRules];
@@ -63,7 +63,7 @@ export class TintSettings extends ValueObject<TintSettings> {
     return new TintSettings(next);
   }
 
-  withRuleUpdated(id: string, update: (rule: ProjectRule) => ProjectRule): TintSettings {
-    return new TintSettings(this.projectRules.map((rule) => (rule.id === id ? update(rule) : rule)));
+  withRuleUpdated(id: ProjectRuleId, update: (rule: ProjectRule) => ProjectRule): TintSettings {
+    return new TintSettings(this.projectRules.map((rule) => (rule.id.equals(id) ? update(rule) : rule)));
   }
 }

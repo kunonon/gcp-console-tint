@@ -1,8 +1,8 @@
 import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
 import { Color } from '../../../../domain/color';
-import { PaletteEntry } from '../../../../domain/palette';
-import { type MatchType, ProjectRule } from '../../../../domain/project-rule';
+import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
+import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../domain/project-rule';
 import { ProjectSettings } from '../../../../domain/project-settings';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useTintSettings } from '../../hooks/useTintSettings';
@@ -16,7 +16,7 @@ const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border b
 
 // The sidepanel is a single-page app with two views: the project rule list (the default
 // landing page) and a detail page for editing one rule's settings.
-type View = { type: 'list' } | { type: 'detail'; ruleId: string };
+type View = { type: 'list' } | { type: 'detail'; ruleId: ProjectRuleId };
 
 function isValidPattern(pattern: string): boolean {
   try {
@@ -167,7 +167,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // this today since Delete only acts from the list, but this keeps the view consistent
   // should that change), fall back to the list instead of rendering a phantom rule's page.
   useEffect(() => {
-    if (view.type === 'detail' && !settings.projectRules.some((r) => r.id === view.ruleId)) {
+    if (view.type === 'detail' && !settings.projectRules.some((r) => r.id.equals(view.ruleId))) {
       setView({ type: 'list' });
     }
   }, [view, settings.projectRules]);
@@ -198,13 +198,13 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     updateCurrentRule((rule) => rule.withMatchType(matchType));
   };
 
-  const handleDuplicateRule = (id: string) => {
+  const handleDuplicateRule = (id: ProjectRuleId) => {
     save(settings.withRuleDuplicated(id));
   };
 
   // Delete is confirm-gated via DeleteConfirmPopover (anchored to the row's Delete button);
   // this handler is only ever invoked from that popover's confirm action.
-  const handleDeleteRule = (id: string) => {
+  const handleDeleteRule = (id: ProjectRuleId) => {
     save(settings.withRuleRemoved(id));
   };
 
@@ -269,11 +269,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     );
   };
 
-  const handlePaletteNameChange = (id: string, name: string) => {
+  const handlePaletteNameChange = (id: PaletteEntryId, name: string) => {
     updateCurrent((ps) => ps.withPalette(ps.palette.renameEntry(id, name)));
   };
 
-  const handlePaletteColorChange = (id: string, color: string) => {
+  const handlePaletteColorChange = (id: PaletteEntryId, color: string) => {
     // input[type=color] can only ever emit '#rrggbb', so fromHex never returns undefined here.
     const parsed = Color.fromHex(color);
     if (parsed) updateCurrent((ps) => ps.withPalette(ps.palette.recolorEntry(id, parsed)));
@@ -283,11 +283,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // removing an entry here does not touch any other rule's palette/references. Clearing the
   // surfaces' now-dangling references happens inside withPaletteEntryRemoved, in the same save,
   // so storage never passes through an intermediate state with a dangling paletteId.
-  const handleRemoveColor = (id: string) => {
+  const handleRemoveColor = (id: PaletteEntryId) => {
     updateCurrent((ps) => ps.withPaletteEntryRemoved(id));
   };
 
-  const currentRule = view.type === 'detail' ? settings.projectRules.find((r) => r.id === view.ruleId) : undefined;
+  const currentRule = view.type === 'detail' ? settings.projectRules.find((r) => r.id.equals(view.ruleId)) : undefined;
   // Falls back to the built-in defaults only for the transient frame before the "rule
   // disappeared" effect above navigates back to the list.
   const currentSettings: ProjectSettings = currentRule ? currentRule.settings : ProjectSettings.DEFAULT;
@@ -359,7 +359,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
             {currentSettings.palette.enabled && (
               <div className="flex flex-col gap-2 border-t border-border pt-2">
                 {currentSettings.palette.entries.map((entry) => (
-                  <div key={entry.id} className="@container flex items-center justify-between gap-2">
+                  <div key={entry.id.toString()} className="@container flex items-center justify-between gap-2">
                     <Input
                       aria-label="Color name"
                       placeholder="Name"
@@ -600,7 +600,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               {settings.projectRules.map((rule, index) => (
                 // biome-ignore lint/a11y/noStaticElementInteractions: native HTML5 drag-and-drop row reordering; no keyboard-accessible equivalent yet
                 <div
-                  key={rule.id}
+                  key={rule.id.toString()}
                   draggable
                   onDragStart={handleRowDragStart(index)}
                   onDragOver={handleRowDragOver(index)}

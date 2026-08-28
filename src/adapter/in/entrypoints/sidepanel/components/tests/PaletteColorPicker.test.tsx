@@ -2,14 +2,15 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Color } from '../../../../../../domain/color';
-import { PaletteEntry } from '../../../../../../domain/palette';
+import { PaletteEntry, PaletteEntryId } from '../../../../../../domain/palette';
 import PaletteColorPicker from '../PaletteColorPicker';
 
 afterEach(() => {
   cleanup();
 });
 
-const palette = [new PaletteEntry('default', 'Primary', Color.fromHex('#ff6d00')!)];
+const defaultEntryId = PaletteEntryId.recreate('default');
+const palette = [new PaletteEntry(defaultEntryId, 'Primary', Color.fromHex('#ff6d00')!)];
 
 async function openDialog(user: ReturnType<typeof userEvent.setup>, triggerLabel: string) {
   await user.click(screen.getByRole('button', { name: triggerLabel }));
@@ -24,7 +25,7 @@ describe('PaletteColorPicker', () => {
           ariaLabel="Test color"
           paletteEnabled
           palette={palette}
-          paletteId="default"
+          paletteId={defaultEntryId}
           customColor="#123456"
           effectiveColor="#ff6d00"
           onSelectPaletteEntry={() => {}}
@@ -58,7 +59,7 @@ describe('PaletteColorPicker', () => {
           ariaLabel="Test color"
           paletteEnabled
           palette={palette}
-          paletteId="default"
+          paletteId={defaultEntryId}
           customColor="#123456"
           effectiveColor="#ff6d00"
           onSelectPaletteEntry={() => {}}
@@ -80,7 +81,7 @@ describe('PaletteColorPicker', () => {
         ariaLabel="Test color"
         paletteEnabled
         palette={palette}
-        paletteId="default"
+        paletteId={defaultEntryId}
         customColor="#123456"
         effectiveColor="#ff6d00"
         onSelectPaletteEntry={() => {}}

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { Color } from '../../domain/color';
 import { ColorSelection } from '../../domain/color-selection';
-import { Palette, PaletteEntry } from '../../domain/palette';
-import { MATCH_TYPES, ProjectRule } from '../../domain/project-rule';
+import { Palette, PaletteEntry, PaletteEntryId } from '../../domain/palette';
+import { MATCH_TYPES, ProjectRule, ProjectRuleId } from '../../domain/project-rule';
 import {
   PlatformBarSettings,
   PlatformBarTextSettings,
@@ -52,7 +52,7 @@ function colorSelectionSchema(defaults: ColorSelection) {
       paletteId: z
         .string()
         .nullable()
-        .transform((value) => value ?? undefined)
+        .transform((value) => (value === null ? undefined : PaletteEntryId.recreate(value)))
         .catch(defaults.paletteId),
       custom: colorField(defaults.custom),
     })
@@ -62,7 +62,10 @@ function colorSelectionSchema(defaults: ColorSelection) {
 
 const paletteEntrySchema = z
   .object({
-    id: z.string().catch(() => crypto.randomUUID()),
+    id: z
+      .string()
+      .transform((value) => PaletteEntryId.recreate(value))
+      .catch(() => PaletteEntryId.create()),
     name: z.string().catch(''),
     color: colorField(DEFAULT_ENTRY_COLOR),
   })
@@ -136,7 +139,10 @@ const projectSettingsSchema = z
 // via its own default instead of invalidating the whole rule.
 const projectRuleSchema = z
   .object({
-    id: z.string().catch(() => crypto.randomUUID()),
+    id: z
+      .string()
+      .transform((value) => ProjectRuleId.recreate(value))
+      .catch(() => ProjectRuleId.create()),
     matchType: z.enum(MATCH_TYPES).catch('regex'),
     pattern: z.string(),
     settings: projectSettingsSchema,
@@ -197,14 +203,14 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
   return {
     schemaVersion,
     projectRules: settings.projectRules.map((rule) => ({
-      id: rule.id,
+      id: rule.id.toString(),
       matchType: rule.matchType,
       pattern: rule.pattern,
       settings: {
         palette: {
           enabled: rule.settings.palette.enabled,
           entries: rule.settings.palette.entries.map((entry) => ({
-            id: entry.id,
+            id: entry.id.toString(),
             name: entry.name,
             color: entry.color.toHex(),
           })),
@@ -231,5 +237,5 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
 }
 
 function storedSelection(selection: ColorSelection) {
-  return { paletteId: selection.paletteId ?? null, custom: selection.custom.toHex() };
+  return { paletteId: selection.paletteId?.toString() ?? null, custom: selection.custom.toHex() };
 }

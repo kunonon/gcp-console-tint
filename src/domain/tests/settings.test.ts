@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Color } from '../color';
 import { ColorSelection } from '../color-selection';
-import { Palette, PaletteEntry } from '../palette';
+import { Palette, PaletteEntry, PaletteEntryId } from '../palette';
 import type { MatchType } from '../project-rule';
-import { ProjectRule } from '../project-rule';
+import { ProjectRule, ProjectRuleId } from '../project-rule';
 import {
   type PlatformBarSettings,
   type PlatformBarTextSettings,
@@ -36,15 +36,16 @@ function projectSettings(
 }
 
 describe('Palette.resolve', () => {
-  const palette = new Palette(true, [new PaletteEntry('p1', 'One', color('#111111'))]);
+  const entryId = PaletteEntryId.recreate('p1');
+  const palette = new Palette(true, [new PaletteEntry(entryId, 'One', color('#111111'))]);
   const custom = color('#999999');
 
   it('resolves to the palette entry color when enabled and paletteId references an existing entry', () => {
-    expect(palette.resolve(new ColorSelection('p1', custom)).toHex()).toBe('#111111');
+    expect(palette.resolve(new ColorSelection(entryId, custom)).toHex()).toBe('#111111');
   });
 
   it('falls back to custom when paletteId does not reference any entry (dangling reference)', () => {
-    expect(palette.resolve(new ColorSelection('missing', custom)).toHex()).toBe('#999999');
+    expect(palette.resolve(new ColorSelection(PaletteEntryId.recreate('missing'), custom)).toHex()).toBe('#999999');
   });
 
   it('falls back to custom when paletteId is undefined', () => {
@@ -52,7 +53,7 @@ describe('Palette.resolve', () => {
   });
 
   it('falls back to custom when the palette is disabled, even with a valid paletteId reference', () => {
-    expect(palette.withEnabled(false).resolve(new ColorSelection('p1', custom)).toHex()).toBe('#999999');
+    expect(palette.withEnabled(false).resolve(new ColorSelection(entryId, custom)).toHex()).toBe('#999999');
   });
 });
 
@@ -62,7 +63,7 @@ describe('TintSettings.resolveProjectSettings', () => {
   // hex value, so an assertion names which rule won.
   const rule = (id: string, matchType: MatchType, pattern: string, custom: string): ProjectRule =>
     new ProjectRule(
-      id,
+      ProjectRuleId.recreate(id),
       matchType,
       pattern,
       projectSettings({ topBar: DEFAULTS.topBar.withColor(new ColorSelection(undefined, color(custom))) }),

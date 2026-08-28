@@ -1,13 +1,41 @@
 import { Entity } from './base/entity';
+import { ValueObject } from './base/value-object';
 import { ProjectSettings } from './project-settings';
 
 // How a ProjectRule's pattern is compared against the console URL's ?project= param.
 export const MATCH_TYPES = ['prefix', 'suffix', 'exact', 'regex'] as const;
 export type MatchType = (typeof MATCH_TYPES)[number];
 
+// Identity of a ProjectRule. The raw string is private so this type stays nominally distinct
+// from other ids; only the boundaries (settings repository, React keys) read it via toString().
+export class ProjectRuleId extends ValueObject<ProjectRuleId> {
+  private constructor(private readonly value: string) {
+    super();
+  }
+
+  // A brand-new identity.
+  static create(): ProjectRuleId {
+    return new ProjectRuleId(crypto.randomUUID());
+  }
+
+  // Rehydrates an existing identity (from storage or the UI). Ids carry no format invariant
+  // beyond being a string.
+  static recreate(value: string): ProjectRuleId {
+    return new ProjectRuleId(value);
+  }
+
+  equals(other: ProjectRuleId): boolean {
+    return this.value === other.value;
+  }
+
+  override toString(): string {
+    return this.value;
+  }
+}
+
 export class ProjectRule extends Entity<ProjectRule> {
   constructor(
-    readonly id: string,
+    readonly id: ProjectRuleId,
     readonly matchType: MatchType,
     // For 'prefix' | 'suffix' | 'exact': a literal string compared against the project id.
     // For 'regex': a regular expression source that must match the ENTIRE project id.
@@ -19,11 +47,11 @@ export class ProjectRule extends Entity<ProjectRule> {
 
   // Entity identity: same id means the same rule, whatever its current attributes.
   equals(other: ProjectRule): boolean {
-    return this.id === other.id;
+    return this.id.equals(other.id);
   }
 
   static create(matchType: MatchType, pattern: string): ProjectRule {
-    return new ProjectRule(crypto.randomUUID(), matchType, pattern, ProjectSettings.DEFAULT);
+    return new ProjectRule(ProjectRuleId.create(), matchType, pattern, ProjectSettings.DEFAULT);
   }
 
   matches(projectId: string): boolean {
@@ -61,6 +89,6 @@ export class ProjectRule extends Entity<ProjectRule> {
   // A copy under a new id. Sharing the settings instance is safe: ProjectSettings is
   // immutable, so editing either rule replaces its own reference instead of mutating.
   duplicated(): ProjectRule {
-    return new ProjectRule(crypto.randomUUID(), this.matchType, this.pattern, this.settings);
+    return new ProjectRule(ProjectRuleId.create(), this.matchType, this.pattern, this.settings);
   }
 }

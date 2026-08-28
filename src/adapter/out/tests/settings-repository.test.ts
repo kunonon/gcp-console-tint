@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Color } from '../../../domain/color';
 import { ColorSelection } from '../../../domain/color-selection';
-import { type Palette, PaletteEntry } from '../../../domain/palette';
-import { MATCH_TYPES } from '../../../domain/project-rule';
+import { type Palette, PaletteEntry, PaletteEntryId } from '../../../domain/palette';
+import { MATCH_TYPES, ProjectRuleId } from '../../../domain/project-rule';
 import {
   type PlatformBarSettings,
   type PlatformBarTextSettings,
@@ -119,8 +119,8 @@ describe('toDomain', () => {
       });
 
       expect(loaded.projectRules).toEqual([
-        { id: 'r1', matchType: 'exact', pattern: 'my-app', settings: DEFAULTS },
-        { id: 'r2', matchType: 'regex', pattern: 'other-app', settings: DEFAULTS },
+        { id: ProjectRuleId.recreate('r1'), matchType: 'exact', pattern: 'my-app', settings: DEFAULTS },
+        { id: ProjectRuleId.recreate('r2'), matchType: 'regex', pattern: 'other-app', settings: DEFAULTS },
       ]);
     });
 
@@ -164,7 +164,7 @@ describe('toDomain', () => {
     expect(loaded).not.toHaveProperty('defaultProject');
     expect(loaded.projectRules).toEqual([
       {
-        id: '1',
+        id: ProjectRuleId.recreate('1'),
         matchType: 'exact',
         pattern: 'x',
         settings: projectSettings({
@@ -226,7 +226,7 @@ describe('toDomain', () => {
 
     expect(loaded.projectRules).toEqual([
       {
-        id: 'rule-1',
+        id: ProjectRuleId.recreate('rule-1'),
         matchType: 'exact',
         pattern: 'my-app',
         settings: projectSettings({
@@ -234,7 +234,7 @@ describe('toDomain', () => {
         }),
       },
       {
-        id: 'rule-2',
+        id: ProjectRuleId.recreate('rule-2'),
         matchType: 'prefix',
         pattern: 'other-app',
         settings: projectSettings({ platformBar: DEFAULTS.platformBar.withStripes(true) }),
@@ -253,7 +253,7 @@ describe('toDomain', () => {
 
     const loaded = toDomain(stored);
 
-    expect(loaded.projectRules.map((rule) => rule.id)).toEqual(['b', 'a']);
+    expect(loaded.projectRules.map((rule) => rule.id.toString())).toEqual(['b', 'a']);
   });
 
   it('defaults to an empty projectRules array when absent from otherwise-valid data', () => {
@@ -281,7 +281,9 @@ describe('toDomain', () => {
       ],
     });
 
-    expect(loaded.projectRules).toEqual([{ id: 'valid', matchType: 'exact', pattern: 'ok', settings: DEFAULTS }]);
+    expect(loaded.projectRules).toEqual([
+      { id: ProjectRuleId.recreate('valid'), matchType: 'exact', pattern: 'ok', settings: DEFAULTS },
+    ]);
   });
 
   it('generates a UUID for a rule id when missing from storage', () => {
@@ -291,8 +293,10 @@ describe('toDomain', () => {
     });
 
     expect(loaded.projectRules).toHaveLength(1);
-    expect(typeof loaded.projectRules[0]!.id).toBe('string');
-    expect(loaded.projectRules[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(typeof loaded.projectRules[0]!.id.toString()).toBe('string');
+    expect(loaded.projectRules[0]!.id.toString()).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
   });
 
   // Distinct from "missing from storage" above: the id key is PRESENT but wrong-typed. Zod's
@@ -306,7 +310,9 @@ describe('toDomain', () => {
 
     expect(loaded.projectRules).toHaveLength(1);
     expect(loaded.projectRules[0]!.pattern).toBe('junk-id');
-    expect(loaded.projectRules[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(loaded.projectRules[0]!.id.toString()).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
   });
 
   it('falls back to the default ProjectSettings when rule.settings is a string', () => {
@@ -418,7 +424,7 @@ describe('toDomain', () => {
       it('keeps a valid entries array as-is', () => {
         const customEntries = [{ id: 'custom', name: 'Custom', color: '#123123' }];
         expect(loadWithSettings({ palette: { entries: customEntries } }).palette.entries).toEqual([
-          new PaletteEntry('custom', 'Custom', color('#123123')),
+          new PaletteEntry(PaletteEntryId.recreate('custom'), 'Custom', color('#123123')),
         ]);
       });
 
@@ -437,7 +443,7 @@ describe('toDomain', () => {
           palette: { entries: [null, 'x', 42, [], { id: 'valid', name: 'Valid', color: '#123456' }] },
         }).palette.entries;
 
-        expect(entries).toEqual([new PaletteEntry('valid', 'Valid', color('#123456'))]);
+        expect(entries).toEqual([new PaletteEntry(PaletteEntryId.recreate('valid'), 'Valid', color('#123456'))]);
       });
 
       // Contrast with the above: once an element clears the "is it a record" bar, it is NEVER
@@ -450,7 +456,7 @@ describe('toDomain', () => {
         }).palette.entries;
 
         expect(entries).toHaveLength(1);
-        expect(entries[0]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        expect(entries[0]!.id.toString()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
         expect(entries[0]!.name).toBe('');
         expect(entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
       });
@@ -629,17 +635,17 @@ describe('ProjectSettings.DEFAULT (the values this repository recovers to)', () 
     expect(DEFAULTS).toEqual({
       palette: {
         enabled: true,
-        entries: [{ id: 'default', name: 'Primary', color: color(DEFAULT_COLOR) }],
+        entries: [{ id: PaletteEntryId.recreate('default'), name: 'Primary', color: color(DEFAULT_COLOR) }],
       },
       topBar: {
         enabled: true,
-        color: { paletteId: 'default', custom: color(DEFAULT_COLOR) },
+        color: { paletteId: PaletteEntryId.recreate('default'), custom: color(DEFAULT_COLOR) },
         height: DEFAULT_TOP_BAR_HEIGHT,
         stripes: false,
       },
       platformBar: {
         enabled: true,
-        color: { paletteId: 'default', custom: color(DEFAULT_COLOR) },
+        color: { paletteId: PaletteEntryId.recreate('default'), custom: color(DEFAULT_COLOR) },
         stripes: false,
       },
       platformBarText: {
@@ -679,7 +685,7 @@ describe('ProjectSettings.DEFAULT (the values this repository recovers to)', () 
 
     // Immutability replaces the old "mutate one and watch the other change" probe: an update
     // returns a new instance and leaves every other holder of the old value untouched.
-    const recolored = first.withPalette(first.palette.recolorEntry('default', Color.BLACK));
+    const recolored = first.withPalette(first.palette.recolorEntry(PaletteEntryId.recreate('default'), Color.BLACK));
     expect(recolored.palette.entries[0]!.color.toHex()).toBe('#000000');
     expect(first.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
     expect(second.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
