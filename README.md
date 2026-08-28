@@ -51,6 +51,8 @@ docker compose up
 
 This installs dependencies and starts the WXT dev server (HMR on port 3000). Load `.output/chrome-mv3-dev` as an unpacked extension to develop against the live build.
 
+The container keeps its `node_modules` in a named Docker volume (`node_modules`), separate from any `node_modules` a host-side `pnpm install` may have created: pnpm installs the native binaries (lightningcss, rolldown, Biome, TypeScript, Tailwind's oxide) for one platform only, so sharing a single directory between macOS and the Linux container breaks whichever side installed second. `docker compose down -v` drops the volume; the next `make up` reinstalls.
+
 With the stack running:
 
 ```sh
