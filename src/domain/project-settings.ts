@@ -33,8 +33,12 @@ export class TopBarSettings extends ValueObject<TopBarSettings> {
     );
   }
 
-  withEnabled(enabled: boolean): TopBarSettings {
-    return new TopBarSettings(enabled, this.color, this.height, this.stripes);
+  enable(): TopBarSettings {
+    return new TopBarSettings(true, this.color, this.height, this.stripes);
+  }
+
+  disable(): TopBarSettings {
+    return new TopBarSettings(false, this.color, this.height, this.stripes);
   }
 
   withColor(color: ColorSelection): TopBarSettings {
@@ -45,8 +49,12 @@ export class TopBarSettings extends ValueObject<TopBarSettings> {
     return new TopBarSettings(this.enabled, this.color, height, this.stripes);
   }
 
-  withStripes(stripes: boolean): TopBarSettings {
-    return new TopBarSettings(this.enabled, this.color, this.height, stripes);
+  enableStripes(): TopBarSettings {
+    return new TopBarSettings(this.enabled, this.color, this.height, true);
+  }
+
+  disableStripes(): TopBarSettings {
+    return new TopBarSettings(this.enabled, this.color, this.height, false);
   }
 }
 
@@ -63,16 +71,24 @@ export class PlatformBarSettings extends ValueObject<PlatformBarSettings> {
     return this.enabled === other.enabled && this.color.equals(other.color) && this.stripes === other.stripes;
   }
 
-  withEnabled(enabled: boolean): PlatformBarSettings {
-    return new PlatformBarSettings(enabled, this.color, this.stripes);
+  enable(): PlatformBarSettings {
+    return new PlatformBarSettings(true, this.color, this.stripes);
+  }
+
+  disable(): PlatformBarSettings {
+    return new PlatformBarSettings(false, this.color, this.stripes);
   }
 
   withColor(color: ColorSelection): PlatformBarSettings {
     return new PlatformBarSettings(this.enabled, color, this.stripes);
   }
 
-  withStripes(stripes: boolean): PlatformBarSettings {
-    return new PlatformBarSettings(this.enabled, this.color, stripes);
+  enableStripes(): PlatformBarSettings {
+    return new PlatformBarSettings(this.enabled, this.color, true);
+  }
+
+  disableStripes(): PlatformBarSettings {
+    return new PlatformBarSettings(this.enabled, this.color, false);
   }
 }
 
@@ -90,16 +106,24 @@ export class PlatformBarTextSettings extends ValueObject<PlatformBarTextSettings
     return this.enabled === other.enabled && this.color.equals(other.color) && this.auto === other.auto;
   }
 
-  withEnabled(enabled: boolean): PlatformBarTextSettings {
-    return new PlatformBarTextSettings(enabled, this.color, this.auto);
+  enable(): PlatformBarTextSettings {
+    return new PlatformBarTextSettings(true, this.color, this.auto);
+  }
+
+  disable(): PlatformBarTextSettings {
+    return new PlatformBarTextSettings(false, this.color, this.auto);
   }
 
   withColor(color: ColorSelection): PlatformBarTextSettings {
     return new PlatformBarTextSettings(this.enabled, color, this.auto);
   }
 
-  withAuto(auto: boolean): PlatformBarTextSettings {
-    return new PlatformBarTextSettings(this.enabled, this.color, auto);
+  enableAuto(): PlatformBarTextSettings {
+    return new PlatformBarTextSettings(this.enabled, this.color, true);
+  }
+
+  disableAuto(): PlatformBarTextSettings {
+    return new PlatformBarTextSettings(this.enabled, this.color, false);
   }
 }
 

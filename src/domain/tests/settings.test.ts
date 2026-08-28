@@ -53,7 +53,7 @@ describe('Palette.resolve', () => {
   });
 
   it('falls back to custom when the palette is disabled, even with a valid paletteId reference', () => {
-    expect(palette.withEnabled(false).resolve(new ColorSelection(entryId, custom)).toHex()).toBe('#999999');
+    expect(palette.disable().resolve(new ColorSelection(entryId, custom)).toHex()).toBe('#999999');
   });
 });
 

@@ -237,7 +237,7 @@ describe('toDomain', () => {
         id: ProjectRuleId.recreate('rule-2'),
         matchType: 'prefix',
         pattern: 'other-app',
-        settings: projectSettings({ platformBar: DEFAULTS.platformBar.withStripes(true) }),
+        settings: projectSettings({ platformBar: DEFAULTS.platformBar.enableStripes() }),
       },
     ]);
   });

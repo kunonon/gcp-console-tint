@@ -98,8 +98,12 @@ export class Palette extends ValueObject<Palette> {
     return selection.custom;
   }
 
-  withEnabled(enabled: boolean): Palette {
-    return new Palette(enabled, this.entries);
+  enable(): Palette {
+    return new Palette(true, this.entries);
+  }
+
+  disable(): Palette {
+    return new Palette(false, this.entries);
   }
 
   addEntry(entry: PaletteEntry): Palette {

@@ -35,7 +35,7 @@ describe('ProjectRule.equals', () => {
       ProjectRuleId.recreate('r1'),
       'exact',
       'bar',
-      ProjectSettings.DEFAULT.withTopBar(ProjectSettings.DEFAULT.topBar.withEnabled(false)),
+      ProjectSettings.DEFAULT.withTopBar(ProjectSettings.DEFAULT.topBar.disable()),
     );
     expect(a.equals(b)).toBe(true);
   });
@@ -85,13 +85,15 @@ describe('TopBarSettings.equals', () => {
 describe('PlatformBarSettings.equals', () => {
   it('is true for separately constructed, equal instances', () => {
     const a = ProjectSettings.DEFAULT.platformBar;
-    const b = ProjectSettings.DEFAULT.platformBar.withStripes(a.stripes);
+    const b = a.stripes
+      ? ProjectSettings.DEFAULT.platformBar.enableStripes()
+      : ProjectSettings.DEFAULT.platformBar.disableStripes();
     expect(a.equals(b)).toBe(true);
   });
 
   it('is false when stripes differs', () => {
     const a = ProjectSettings.DEFAULT.platformBar;
-    const b = a.withStripes(!a.stripes);
+    const b = a.stripes ? a.disableStripes() : a.enableStripes();
     expect(a.equals(b)).toBe(false);
   });
 });
@@ -99,13 +101,15 @@ describe('PlatformBarSettings.equals', () => {
 describe('PlatformBarTextSettings.equals', () => {
   it('is true for separately constructed, equal instances', () => {
     const a = ProjectSettings.DEFAULT.platformBarText;
-    const b = ProjectSettings.DEFAULT.platformBarText.withAuto(a.auto);
+    const b = a.auto
+      ? ProjectSettings.DEFAULT.platformBarText.enableAuto()
+      : ProjectSettings.DEFAULT.platformBarText.disableAuto();
     expect(a.equals(b)).toBe(true);
   });
 
   it('is false when auto differs', () => {
     const a = ProjectSettings.DEFAULT.platformBarText;
-    const b = a.withAuto(!a.auto);
+    const b = a.auto ? a.disableAuto() : a.enableAuto();
     expect(a.equals(b)).toBe(false);
   });
 });
@@ -119,7 +123,7 @@ describe('ProjectSettings.equals', () => {
 
   it('is false when a nested section differs', () => {
     const a = ProjectSettings.DEFAULT;
-    const b = a.withTopBar(a.topBar.withEnabled(!a.topBar.enabled));
+    const b = a.withTopBar(a.topBar.enabled ? a.topBar.disable() : a.topBar.enable());
     expect(a.equals(b)).toBe(false);
   });
 });

@@ -347,7 +347,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
             <Switch
               className="w-full"
               isSelected={currentSettings.palette.enabled}
-              onChange={(isSelected) => updateCurrent((ps) => ps.withPalette(ps.palette.withEnabled(isSelected)))}
+              onChange={(isSelected) =>
+                updateCurrent((ps) => ps.withPalette(isSelected ? ps.palette.enable() : ps.palette.disable()))
+              }
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Color palette
@@ -401,7 +403,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
             <Switch
               className="w-full"
               isSelected={currentSettings.topBar.enabled}
-              onChange={(isSelected) => updateCurrent((ps) => ps.withTopBar(ps.topBar.withEnabled(isSelected)))}
+              onChange={(isSelected) =>
+                updateCurrent((ps) => ps.withTopBar(isSelected ? ps.topBar.enable() : ps.topBar.disable()))
+              }
             >
               <Switch.Content className="flex w-full items-center justify-between">
                 Top bar
@@ -450,7 +454,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                 <Switch
                   className="min-h-8 w-full"
                   isSelected={currentSettings.topBar.stripes}
-                  onChange={(isSelected) => updateCurrent((ps) => ps.withTopBar(ps.topBar.withStripes(isSelected)))}
+                  onChange={(isSelected) =>
+                    updateCurrent((ps) =>
+                      ps.withTopBar(isSelected ? ps.topBar.enableStripes() : ps.topBar.disableStripes()),
+                    )
+                  }
                 >
                   <Switch.Content className="flex w-full items-center justify-between">
                     <span className="text-sm font-normal">Stripes</span>
@@ -470,7 +478,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               className="w-full"
               isSelected={currentSettings.platformBar.enabled}
               onChange={(isSelected) =>
-                updateCurrent((ps) => ps.withPlatformBar(ps.platformBar.withEnabled(isSelected)))
+                updateCurrent((ps) =>
+                  ps.withPlatformBar(isSelected ? ps.platformBar.enable() : ps.platformBar.disable()),
+                )
               }
             >
               <Switch.Content className="flex w-full items-center justify-between">
@@ -507,7 +517,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                   className="min-h-8 w-full"
                   isSelected={currentSettings.platformBar.stripes}
                   onChange={(isSelected) =>
-                    updateCurrent((ps) => ps.withPlatformBar(ps.platformBar.withStripes(isSelected)))
+                    updateCurrent((ps) =>
+                      ps.withPlatformBar(isSelected ? ps.platformBar.enableStripes() : ps.platformBar.disableStripes()),
+                    )
                   }
                 >
                   <Switch.Content className="flex w-full items-center justify-between">
@@ -528,7 +540,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               className="w-full"
               isSelected={currentSettings.platformBarText.enabled}
               onChange={(isSelected) =>
-                updateCurrent((ps) => ps.withPlatformBarText(ps.platformBarText.withEnabled(isSelected)))
+                updateCurrent((ps) =>
+                  ps.withPlatformBarText(isSelected ? ps.platformBarText.enable() : ps.platformBarText.disable()),
+                )
               }
             >
               <Switch.Content className="flex w-full items-center justify-between">
@@ -554,22 +568,20 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     onSelectPaletteEntry={(id) =>
                       updateCurrent((ps) =>
                         ps.withPlatformBarText(
-                          ps.platformBarText.withColor(ps.platformBarText.color.setPalette(id)).withAuto(false),
+                          ps.platformBarText.withColor(ps.platformBarText.color.setPalette(id)).disableAuto(),
                         ),
                       )
                     }
                     onSelectCustomColor={(color) =>
                       updateCurrent((ps) =>
                         ps.withPlatformBarText(
-                          ps.platformBarText.withColor(ps.platformBarText.color.setCustomColor(color)).withAuto(false),
+                          ps.platformBarText.withColor(ps.platformBarText.color.setCustomColor(color)).disableAuto(),
                         ),
                       )
                     }
                     supportsAuto
                     autoSelected={currentSettings.platformBarText.auto}
-                    onSelectAuto={() =>
-                      updateCurrent((ps) => ps.withPlatformBarText(ps.platformBarText.withAuto(true)))
-                    }
+                    onSelectAuto={() => updateCurrent((ps) => ps.withPlatformBarText(ps.platformBarText.enableAuto()))}
                   />
                 </div>
               </div>
