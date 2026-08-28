@@ -35,7 +35,7 @@ describe('ProjectRule.equals', () => {
       ProjectRuleId.recreate('r1'),
       'exact',
       'bar',
-      ProjectSettings.DEFAULT.withTopBar(ProjectSettings.DEFAULT.topBar.disable()),
+      ProjectSettings.DEFAULT.changeTopBar(ProjectSettings.DEFAULT.topBar.disable()),
     );
     expect(a.equals(b)).toBe(true);
   });
@@ -71,13 +71,13 @@ describe('ColorSelection.equals', () => {
 describe('TopBarSettings.equals', () => {
   it('is true for separately constructed, equal instances', () => {
     const a = ProjectSettings.DEFAULT.topBar;
-    const b = ProjectSettings.DEFAULT.topBar.withHeight(a.height);
+    const b = ProjectSettings.DEFAULT.topBar.changeHeight(a.height);
     expect(a.equals(b)).toBe(true);
   });
 
   it('is false when height differs', () => {
     const a = ProjectSettings.DEFAULT.topBar;
-    const b = a.withHeight(a.height + 1);
+    const b = a.changeHeight(a.height + 1);
     expect(a.equals(b)).toBe(false);
   });
 });
@@ -117,13 +117,13 @@ describe('PlatformBarTextSettings.equals', () => {
 describe('ProjectSettings.equals', () => {
   it('is true for separately constructed, equal instances', () => {
     const a = ProjectSettings.DEFAULT;
-    const b = ProjectSettings.DEFAULT.withTopBar(ProjectSettings.DEFAULT.topBar);
+    const b = ProjectSettings.DEFAULT.changeTopBar(ProjectSettings.DEFAULT.topBar);
     expect(a.equals(b)).toBe(true);
   });
 
   it('is false when a nested section differs', () => {
     const a = ProjectSettings.DEFAULT;
-    const b = a.withTopBar(a.topBar.enabled ? a.topBar.disable() : a.topBar.enable());
+    const b = a.changeTopBar(a.topBar.enabled ? a.topBar.disable() : a.topBar.enable());
     expect(a.equals(b)).toBe(false);
   });
 });

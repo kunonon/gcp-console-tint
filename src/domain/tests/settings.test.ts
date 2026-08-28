@@ -73,7 +73,7 @@ describe('TintSettings.resolveProjectSettings', () => {
       ProjectRuleId.recreate(id),
       matchType,
       pattern,
-      projectSettings({ topBar: DEFAULTS.topBar.withColor(new ColorSelection(undefined, color(custom))) }),
+      projectSettings({ topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, color(custom))) }),
     );
 
   const noRules = (): TintSettings => new TintSettings([]);

@@ -261,7 +261,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
 
   const handleAddColor = () => {
     updateCurrent((ps) =>
-      ps.withPalette(
+      ps.changePalette(
         ps.palette.addEntry(
           PaletteEntry.create(`Color ${ps.palette.entries.length + 1}`, ProjectSettings.DEFAULT.topBar.color.custom),
         ),
@@ -270,13 +270,13 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   };
 
   const handlePaletteNameChange = (id: PaletteEntryId, name: string) => {
-    updateCurrent((ps) => ps.withPalette(ps.palette.renameEntry(id, name)));
+    updateCurrent((ps) => ps.changePalette(ps.palette.renameEntry(id, name)));
   };
 
   const handlePaletteColorChange = (id: PaletteEntryId, color: string) => {
     // input[type=color] can only ever emit '#rrggbb', so fromHex never returns undefined here.
     const parsed = Color.fromHex(color);
-    if (parsed) updateCurrent((ps) => ps.withPalette(ps.palette.changeEntryColor(id, parsed)));
+    if (parsed) updateCurrent((ps) => ps.changePalette(ps.palette.changeEntryColor(id, parsed)));
   };
 
   // Palette entries and their references are scoped to the currently-edited rule only;
@@ -284,7 +284,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // surfaces' now-dangling references happens inside withPaletteEntryRemoved, in the same save,
   // so storage never passes through an intermediate state with a dangling paletteId.
   const handleRemoveColor = (id: PaletteEntryId) => {
-    updateCurrent((ps) => ps.withPaletteEntryRemoved(id));
+    updateCurrent((ps) => ps.removePaletteEntry(id));
   };
 
   const currentRule = view.type === 'detail' ? settings.projectRules.find((r) => r.id.equals(view.ruleId)) : undefined;
@@ -348,7 +348,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               className="w-full"
               isSelected={currentSettings.palette.enabled}
               onChange={(isSelected) =>
-                updateCurrent((ps) => ps.withPalette(isSelected ? ps.palette.enable() : ps.palette.disable()))
+                updateCurrent((ps) => ps.changePalette(isSelected ? ps.palette.enable() : ps.palette.disable()))
               }
             >
               <Switch.Content className="flex w-full items-center justify-between">
@@ -404,7 +404,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               className="w-full"
               isSelected={currentSettings.topBar.enabled}
               onChange={(isSelected) =>
-                updateCurrent((ps) => ps.withTopBar(isSelected ? ps.topBar.enable() : ps.topBar.disable()))
+                updateCurrent((ps) => ps.changeTopBar(isSelected ? ps.topBar.enable() : ps.topBar.disable()))
               }
             >
               <Switch.Content className="flex w-full items-center justify-between">
@@ -426,10 +426,12 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     customColor={currentSettings.topBar.color.custom.toHex()}
                     effectiveColor={topBarEffectiveColor.toHex()}
                     onSelectPaletteEntry={(id) =>
-                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.setPalette(id))))
+                      updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeColor(ps.topBar.color.setPalette(id))))
                     }
                     onSelectCustomColor={(color) =>
-                      updateCurrent((ps) => ps.withTopBar(ps.topBar.withColor(ps.topBar.color.setCustomColor(color))))
+                      updateCurrent((ps) =>
+                        ps.changeTopBar(ps.topBar.changeColor(ps.topBar.color.setCustomColor(color))),
+                      )
                     }
                   />
                 </div>
@@ -444,7 +446,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                       value={currentSettings.topBar.height}
                       onChange={(e) => {
                         const value = e.target.valueAsNumber;
-                        if (Number.isFinite(value)) updateCurrent((ps) => ps.withTopBar(ps.topBar.withHeight(value)));
+                        if (Number.isFinite(value))
+                          updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(value)));
                       }}
                       className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                     />
@@ -456,7 +459,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                   isSelected={currentSettings.topBar.stripes}
                   onChange={(isSelected) =>
                     updateCurrent((ps) =>
-                      ps.withTopBar(isSelected ? ps.topBar.enableStripes() : ps.topBar.disableStripes()),
+                      ps.changeTopBar(isSelected ? ps.topBar.enableStripes() : ps.topBar.disableStripes()),
                     )
                   }
                 >
@@ -479,7 +482,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               isSelected={currentSettings.platformBar.enabled}
               onChange={(isSelected) =>
                 updateCurrent((ps) =>
-                  ps.withPlatformBar(isSelected ? ps.platformBar.enable() : ps.platformBar.disable()),
+                  ps.changePlatformBar(isSelected ? ps.platformBar.enable() : ps.platformBar.disable()),
                 )
               }
             >
@@ -503,12 +506,12 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     effectiveColor={platformBarEffectiveColor.toHex()}
                     onSelectPaletteEntry={(id) =>
                       updateCurrent((ps) =>
-                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.setPalette(id))),
+                        ps.changePlatformBar(ps.platformBar.changeColor(ps.platformBar.color.setPalette(id))),
                       )
                     }
                     onSelectCustomColor={(color) =>
                       updateCurrent((ps) =>
-                        ps.withPlatformBar(ps.platformBar.withColor(ps.platformBar.color.setCustomColor(color))),
+                        ps.changePlatformBar(ps.platformBar.changeColor(ps.platformBar.color.setCustomColor(color))),
                       )
                     }
                   />
@@ -518,7 +521,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                   isSelected={currentSettings.platformBar.stripes}
                   onChange={(isSelected) =>
                     updateCurrent((ps) =>
-                      ps.withPlatformBar(isSelected ? ps.platformBar.enableStripes() : ps.platformBar.disableStripes()),
+                      ps.changePlatformBar(
+                        isSelected ? ps.platformBar.enableStripes() : ps.platformBar.disableStripes(),
+                      ),
                     )
                   }
                 >
@@ -541,7 +546,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               isSelected={currentSettings.platformBarText.enabled}
               onChange={(isSelected) =>
                 updateCurrent((ps) =>
-                  ps.withPlatformBarText(isSelected ? ps.platformBarText.enable() : ps.platformBarText.disable()),
+                  ps.changePlatformBarText(isSelected ? ps.platformBarText.enable() : ps.platformBarText.disable()),
                 )
               }
             >
@@ -567,21 +572,23 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     // are mutually exclusive states of this surface.
                     onSelectPaletteEntry={(id) =>
                       updateCurrent((ps) =>
-                        ps.withPlatformBarText(
-                          ps.platformBarText.withColor(ps.platformBarText.color.setPalette(id)).disableAuto(),
+                        ps.changePlatformBarText(
+                          ps.platformBarText.changeColor(ps.platformBarText.color.setPalette(id)).disableAuto(),
                         ),
                       )
                     }
                     onSelectCustomColor={(color) =>
                       updateCurrent((ps) =>
-                        ps.withPlatformBarText(
-                          ps.platformBarText.withColor(ps.platformBarText.color.setCustomColor(color)).disableAuto(),
+                        ps.changePlatformBarText(
+                          ps.platformBarText.changeColor(ps.platformBarText.color.setCustomColor(color)).disableAuto(),
                         ),
                       )
                     }
                     supportsAuto
                     autoSelected={currentSettings.platformBarText.auto}
-                    onSelectAuto={() => updateCurrent((ps) => ps.withPlatformBarText(ps.platformBarText.enableAuto()))}
+                    onSelectAuto={() =>
+                      updateCurrent((ps) => ps.changePlatformBarText(ps.platformBarText.enableAuto()))
+                    }
                   />
                 </div>
               </div>

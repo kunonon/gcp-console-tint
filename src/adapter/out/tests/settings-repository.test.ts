@@ -168,7 +168,7 @@ describe('toDomain', () => {
         matchType: 'exact',
         pattern: 'x',
         settings: projectSettings({
-          topBar: DEFAULTS.topBar.withColor(new ColorSelection(undefined, color('#00ff00'))),
+          topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, color('#00ff00'))),
         }),
       },
     ]);
@@ -230,7 +230,7 @@ describe('toDomain', () => {
         matchType: 'exact',
         pattern: 'my-app',
         settings: projectSettings({
-          topBar: DEFAULTS.topBar.withColor(new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#00ff00'))),
+          topBar: DEFAULTS.topBar.changeColor(new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#00ff00'))),
         }),
       },
       {
@@ -685,7 +685,7 @@ describe('ProjectSettings.DEFAULT (the values this repository recovers to)', () 
 
     // Immutability replaces the old "mutate one and watch the other change" probe: an update
     // returns a new instance and leaves every other holder of the old value untouched.
-    const recolored = first.withPalette(
+    const recolored = first.changePalette(
       first.palette.changeEntryColor(PaletteEntryId.recreate('default'), Color.BLACK),
     );
     expect(recolored.palette.entries[0]!.color.toHex()).toBe('#000000');

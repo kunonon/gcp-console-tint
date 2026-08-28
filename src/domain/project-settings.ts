@@ -41,11 +41,11 @@ export class TopBarSettings extends ValueObject<TopBarSettings> {
     return new TopBarSettings(false, this.color, this.height, this.stripes);
   }
 
-  withColor(color: ColorSelection): TopBarSettings {
+  changeColor(color: ColorSelection): TopBarSettings {
     return new TopBarSettings(this.enabled, color, this.height, this.stripes);
   }
 
-  withHeight(height: number): TopBarSettings {
+  changeHeight(height: number): TopBarSettings {
     return new TopBarSettings(this.enabled, this.color, height, this.stripes);
   }
 
@@ -79,7 +79,7 @@ export class PlatformBarSettings extends ValueObject<PlatformBarSettings> {
     return new PlatformBarSettings(false, this.color, this.stripes);
   }
 
-  withColor(color: ColorSelection): PlatformBarSettings {
+  changeColor(color: ColorSelection): PlatformBarSettings {
     return new PlatformBarSettings(this.enabled, color, this.stripes);
   }
 
@@ -114,7 +114,7 @@ export class PlatformBarTextSettings extends ValueObject<PlatformBarTextSettings
     return new PlatformBarTextSettings(false, this.color, this.auto);
   }
 
-  withColor(color: ColorSelection): PlatformBarTextSettings {
+  changeColor(color: ColorSelection): PlatformBarTextSettings {
     return new PlatformBarTextSettings(this.enabled, color, this.auto);
   }
 
@@ -160,19 +160,19 @@ export class ProjectSettings extends ValueObject<ProjectSettings> {
     );
   }
 
-  withPalette(palette: Palette): ProjectSettings {
+  changePalette(palette: Palette): ProjectSettings {
     return new ProjectSettings(palette, this.topBar, this.platformBar, this.platformBarText);
   }
 
-  withTopBar(topBar: TopBarSettings): ProjectSettings {
+  changeTopBar(topBar: TopBarSettings): ProjectSettings {
     return new ProjectSettings(this.palette, topBar, this.platformBar, this.platformBarText);
   }
 
-  withPlatformBar(platformBar: PlatformBarSettings): ProjectSettings {
+  changePlatformBar(platformBar: PlatformBarSettings): ProjectSettings {
     return new ProjectSettings(this.palette, this.topBar, platformBar, this.platformBarText);
   }
 
-  withPlatformBarText(platformBarText: PlatformBarTextSettings): ProjectSettings {
+  changePlatformBarText(platformBarText: PlatformBarTextSettings): ProjectSettings {
     return new ProjectSettings(this.palette, this.topBar, this.platformBar, platformBarText);
   }
 
@@ -180,14 +180,14 @@ export class ProjectSettings extends ValueObject<ProjectSettings> {
   // here does not touch any other rule's palette/references. All three surfaces' color
   // references are cleared atomically alongside the entry removal, so storage never sees an
   // intermediate state with a dangling paletteId.
-  withPaletteEntryRemoved(id: PaletteEntryId): ProjectSettings {
+  removePaletteEntry(id: PaletteEntryId): ProjectSettings {
     const withoutRef = (selection: ColorSelection) =>
       selection.paletteId?.equals(id) ? selection.clearPalette() : selection;
     return new ProjectSettings(
       this.palette.removeEntry(id),
-      this.topBar.withColor(withoutRef(this.topBar.color)),
-      this.platformBar.withColor(withoutRef(this.platformBar.color)),
-      this.platformBarText.withColor(withoutRef(this.platformBarText.color)),
+      this.topBar.changeColor(withoutRef(this.topBar.color)),
+      this.platformBar.changeColor(withoutRef(this.platformBar.color)),
+      this.platformBarText.changeColor(withoutRef(this.platformBarText.color)),
     );
   }
 }
