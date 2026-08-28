@@ -30,16 +30,39 @@ export class Color extends ValueObject<Color> {
 
   // Picks black or white, whichever has the higher WCAG contrast ratio against this color.
   contrastingTextColor(): Color {
+    // WCAG contrast ratio: (lighter + offset) / (darker + offset); the offset keeps the ratio
+    // finite against pure black.
+    const contrastOffset = 0.05;
+    const whiteLuminance = 1;
+    const blackLuminance = 0;
     const luminance = this.relativeLuminance();
-    const contrastWithWhite = 1.05 / (luminance + 0.05);
-    const contrastWithBlack = (luminance + 0.05) / 0.05;
+    const contrastWithWhite = (whiteLuminance + contrastOffset) / (luminance + contrastOffset);
+    const contrastWithBlack = (luminance + contrastOffset) / (blackLuminance + contrastOffset);
     return contrastWithBlack >= contrastWithWhite ? Color.BLACK : Color.WHITE;
   }
 
   // WCAG relative luminance (0 = black, 1 = white).
   private relativeLuminance(): number {
-    const channel = (start: number) => Number.parseInt(this.hex.slice(start, start + 2), 16) / 255;
-    const linearize = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-    return 0.2126 * linearize(channel(1)) + 0.7152 * linearize(channel(3)) + 0.0722 * linearize(channel(5));
+    // sRGB decoding: channels below the threshold are on the linear segment, the rest on the
+    // gamma curve.
+    const channelMax = 255;
+    const linearThreshold = 0.03928;
+    const linearDivisor = 12.92;
+    const gammaOffset = 0.055;
+    const gammaScale = 1.055;
+    const gammaExponent = 2.4;
+    // Luminance weights of the linearized channels (Rec. 709 primaries).
+    const redWeight = 0.2126;
+    const greenWeight = 0.7152;
+    const blueWeight = 0.0722;
+
+    // '#rrggbb': two hex digits per channel, starting right after the '#'.
+    const channel = (start: number) => Number.parseInt(this.hex.slice(start, start + 2), 16) / channelMax;
+    const linearize = (c: number) =>
+      c <= linearThreshold ? c / linearDivisor : ((c + gammaOffset) / gammaScale) ** gammaExponent;
+    const red = channel(1);
+    const green = channel(3);
+    const blue = channel(5);
+    return redWeight * linearize(red) + greenWeight * linearize(green) + blueWeight * linearize(blue);
   }
 }
