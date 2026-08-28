@@ -424,7 +424,7 @@ describe('toDomain', () => {
       it('keeps a valid entries array as-is', () => {
         const customEntries = [{ id: 'custom', name: 'Custom', color: '#123123' }];
         expect(loadWithSettings({ palette: { entries: customEntries } }).palette.entries).toEqual([
-          new PaletteEntry(PaletteEntryId.recreate('custom'), 'Custom', color('#123123')),
+          PaletteEntry.recreate(PaletteEntryId.recreate('custom'), 'Custom', color('#123123')),
         ]);
       });
 
@@ -443,7 +443,7 @@ describe('toDomain', () => {
           palette: { entries: [null, 'x', 42, [], { id: 'valid', name: 'Valid', color: '#123456' }] },
         }).palette.entries;
 
-        expect(entries).toEqual([new PaletteEntry(PaletteEntryId.recreate('valid'), 'Valid', color('#123456'))]);
+        expect(entries).toEqual([PaletteEntry.recreate(PaletteEntryId.recreate('valid'), 'Valid', color('#123456'))]);
       });
 
       // Contrast with the above: once an element clears the "is it a record" bar, it is NEVER

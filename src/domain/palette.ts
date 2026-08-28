@@ -32,7 +32,7 @@ export class PaletteEntryId extends ValueObject<PaletteEntryId> {
 }
 
 export class PaletteEntry extends Entity<PaletteEntry> {
-  constructor(
+  private constructor(
     readonly id: PaletteEntryId,
     readonly name: string,
     readonly color: Color,
@@ -45,8 +45,15 @@ export class PaletteEntry extends Entity<PaletteEntry> {
     return this.id.equals(other.id);
   }
 
+  // A brand-new entry under a fresh identity.
   static create(name: string, color: Color): PaletteEntry {
     return new PaletteEntry(PaletteEntryId.create(), name, color);
+  }
+
+  // Rebuilds an entry under an existing identity: persisted entries (settings repository) and
+  // the default entry with its literal id (ProjectSettings.DEFAULT).
+  static recreate(id: PaletteEntryId, name: string, color: Color): PaletteEntry {
+    return new PaletteEntry(id, name, color);
   }
 
   rename(name: string): PaletteEntry {

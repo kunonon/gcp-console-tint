@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 const defaultEntryId = PaletteEntryId.recreate('default');
-const palette = [new PaletteEntry(defaultEntryId, 'Primary', Color.fromHex('#ff6d00')!)];
+const palette = [PaletteEntry.recreate(defaultEntryId, 'Primary', Color.fromHex('#ff6d00')!)];
 
 async function openDialog(user: ReturnType<typeof userEvent.setup>, triggerLabel: string) {
   await user.click(screen.getByRole('button', { name: triggerLabel }));

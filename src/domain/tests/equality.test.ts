@@ -10,14 +10,14 @@ const color = (value: string): Color => Color.fromHex(value)!;
 
 describe('PaletteEntry.equals', () => {
   it('is true for the same id with different attributes', () => {
-    const a = new PaletteEntry(PaletteEntryId.recreate('p1'), 'One', color('#111111'));
-    const b = new PaletteEntry(PaletteEntryId.recreate('p1'), 'Two', color('#222222'));
+    const a = PaletteEntry.recreate(PaletteEntryId.recreate('p1'), 'One', color('#111111'));
+    const b = PaletteEntry.recreate(PaletteEntryId.recreate('p1'), 'Two', color('#222222'));
     expect(a.equals(b)).toBe(true);
   });
 
   it('is false for a different id with identical attributes', () => {
-    const a = new PaletteEntry(PaletteEntryId.recreate('p1'), 'One', color('#111111'));
-    const b = new PaletteEntry(PaletteEntryId.recreate('p2'), 'One', color('#111111'));
+    const a = PaletteEntry.recreate(PaletteEntryId.recreate('p1'), 'One', color('#111111'));
+    const b = PaletteEntry.recreate(PaletteEntryId.recreate('p2'), 'One', color('#111111'));
     expect(a.equals(b)).toBe(false);
   });
 
@@ -30,8 +30,8 @@ describe('PaletteEntry.equals', () => {
 
 describe('ProjectRule.equals', () => {
   it('is true for the same id with different attributes', () => {
-    const a = new ProjectRule(ProjectRuleId.recreate('r1'), 'prefix', 'foo', ProjectSettings.DEFAULT);
-    const b = new ProjectRule(
+    const a = ProjectRule.recreate(ProjectRuleId.recreate('r1'), 'prefix', 'foo', ProjectSettings.DEFAULT);
+    const b = ProjectRule.recreate(
       ProjectRuleId.recreate('r1'),
       'exact',
       'bar',
@@ -41,8 +41,8 @@ describe('ProjectRule.equals', () => {
   });
 
   it('is false for a different id with identical attributes', () => {
-    const a = new ProjectRule(ProjectRuleId.recreate('r1'), 'prefix', 'foo', ProjectSettings.DEFAULT);
-    const b = new ProjectRule(ProjectRuleId.recreate('r2'), 'prefix', 'foo', ProjectSettings.DEFAULT);
+    const a = ProjectRule.recreate(ProjectRuleId.recreate('r1'), 'prefix', 'foo', ProjectSettings.DEFAULT);
+    const b = ProjectRule.recreate(ProjectRuleId.recreate('r2'), 'prefix', 'foo', ProjectSettings.DEFAULT);
     expect(a.equals(b)).toBe(false);
   });
 });

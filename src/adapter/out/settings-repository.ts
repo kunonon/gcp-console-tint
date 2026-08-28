@@ -30,7 +30,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // Fresh instances on every call so two independently-recovered defaults never alias each other.
 function defaultPaletteEntries(): PaletteEntry[] {
-  return DEFAULTS.palette.entries.map((entry) => new PaletteEntry(entry.id, entry.name, entry.color));
+  return DEFAULTS.palette.entries.map((entry) => PaletteEntry.recreate(entry.id, entry.name, entry.color));
 }
 
 // Anything that is not a '#rrggbb' string recovers to `fallback`, the same per-field policy
@@ -69,7 +69,7 @@ const paletteEntrySchema = z
     name: z.string().catch(''),
     color: colorField(DEFAULT_ENTRY_COLOR),
   })
-  .transform((value) => new PaletteEntry(value.id, value.name, value.color));
+  .transform((value) => PaletteEntry.recreate(value.id, value.name, value.color));
 
 // Parses `value` as a PaletteEntry[]: a non-array value (missing or junk) falls back to the
 // default entries wholesale, otherwise each element is parsed independently and invalid
@@ -147,7 +147,7 @@ const projectRuleSchema = z
     pattern: z.string(),
     settings: projectSettingsSchema,
   })
-  .transform((value) => new ProjectRule(value.id, value.matchType, value.pattern, value.settings));
+  .transform((value) => ProjectRule.recreate(value.id, value.matchType, value.pattern, value.settings));
 
 // The schemaVersion to stamp on anything we write: the running release version, floored at
 // CURRENT_SCHEMA_VERSION. The floor is the invariant that matters — data written in the

@@ -37,7 +37,7 @@ function projectSettings(
 
 describe('Palette.resolve', () => {
   const entryId = PaletteEntryId.recreate('p1');
-  const palette = new Palette(true, [new PaletteEntry(entryId, 'One', color('#111111'))]);
+  const palette = new Palette(true, [PaletteEntry.recreate(entryId, 'One', color('#111111'))]);
   const custom = color('#999999');
 
   it('resolves to the palette entry color when enabled and paletteId references an existing entry', () => {
@@ -62,7 +62,7 @@ describe('TintSettings.resolveProjectSettings', () => {
   // over the palette): each rule below gets a distinct — and, since Color validates, real —
   // hex value, so an assertion names which rule won.
   const rule = (id: string, matchType: MatchType, pattern: string, custom: string): ProjectRule =>
-    new ProjectRule(
+    ProjectRule.recreate(
       ProjectRuleId.recreate(id),
       matchType,
       pattern,

@@ -34,7 +34,7 @@ export class ProjectRuleId extends ValueObject<ProjectRuleId> {
 }
 
 export class ProjectRule extends Entity<ProjectRule> {
-  constructor(
+  private constructor(
     readonly id: ProjectRuleId,
     readonly matchType: MatchType,
     // For 'prefix' | 'suffix' | 'exact': a literal string compared against the project id.
@@ -50,8 +50,14 @@ export class ProjectRule extends Entity<ProjectRule> {
     return this.id.equals(other.id);
   }
 
+  // A brand-new rule under a fresh identity, starting from the default settings.
   static create(matchType: MatchType, pattern: string): ProjectRule {
     return new ProjectRule(ProjectRuleId.create(), matchType, pattern, ProjectSettings.DEFAULT);
+  }
+
+  // Rebuilds a persisted rule under its existing identity (settings repository).
+  static recreate(id: ProjectRuleId, matchType: MatchType, pattern: string, settings: ProjectSettings): ProjectRule {
+    return new ProjectRule(id, matchType, pattern, settings);
   }
 
   matches(projectId: string): boolean {

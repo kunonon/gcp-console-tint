@@ -112,7 +112,7 @@ export class ProjectSettings extends ValueObject<ProjectSettings> {
     // literal 'default' — not a generated one — because topBar/platformBar's default color
     // selection below references it by that id; Palette.resolve() would fail to resolve it
     // otherwise.
-    new Palette(true, [new PaletteEntry(DEFAULT_ENTRY_ID, 'Primary', DEFAULT_COLOR)]),
+    new Palette(true, [PaletteEntry.recreate(DEFAULT_ENTRY_ID, 'Primary', DEFAULT_COLOR)]),
     new TopBarSettings(true, new ColorSelection(DEFAULT_ENTRY_ID, DEFAULT_COLOR), DEFAULT_TOP_BAR_HEIGHT, false),
     new PlatformBarSettings(true, new ColorSelection(DEFAULT_ENTRY_ID, DEFAULT_COLOR), false),
     new PlatformBarTextSettings(true, new ColorSelection(undefined, DEFAULT_TEXT_COLOR), false),
