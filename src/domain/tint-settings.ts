@@ -35,16 +35,16 @@ export class TintSettings extends ValueObject<TintSettings> {
     return undefined;
   }
 
-  withRuleAdded(rule: ProjectRule): TintSettings {
+  addRule(rule: ProjectRule): TintSettings {
     return new TintSettings([...this.projectRules, rule]);
   }
 
-  withRuleRemoved(id: ProjectRuleId): TintSettings {
+  removeRule(id: ProjectRuleId): TintSettings {
     return new TintSettings(this.projectRules.filter((rule) => !rule.id.equals(id)));
   }
 
   // Inserts the copy right after its original. Unknown id: nothing to duplicate, so no change.
-  withRuleDuplicated(id: ProjectRuleId): TintSettings {
+  duplicateRule(id: ProjectRuleId): TintSettings {
     const index = this.projectRules.findIndex((rule) => rule.id.equals(id));
     const original = this.projectRules[index];
     if (!original) return this;
@@ -55,7 +55,7 @@ export class TintSettings extends ValueObject<TintSettings> {
 
   // Drag-and-drop reorder: the rule at `fromIndex` is lifted out and re-inserted at `toIndex`
   // of the remaining list (so dropping on a row before it inserts above, after inserts below).
-  withRuleMoved(fromIndex: number, toIndex: number): TintSettings {
+  moveRule(fromIndex: number, toIndex: number): TintSettings {
     const next = [...this.projectRules];
     const [moved] = next.splice(fromIndex, 1);
     if (!moved) return this;
@@ -63,7 +63,7 @@ export class TintSettings extends ValueObject<TintSettings> {
     return new TintSettings(next);
   }
 
-  withRuleUpdated(id: ProjectRuleId, update: (rule: ProjectRule) => ProjectRule): TintSettings {
+  updateRule(id: ProjectRuleId, update: (rule: ProjectRule) => ProjectRule): TintSettings {
     return new TintSettings(this.projectRules.map((rule) => (rule.id.equals(id) ? update(rule) : rule)));
   }
 }

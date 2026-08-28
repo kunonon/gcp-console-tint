@@ -79,7 +79,7 @@ describe('TintSettings.resolveProjectSettings', () => {
   const noRules = (): TintSettings => new TintSettings([]);
 
   const withRules = (...rules: ProjectRule[]): TintSettings =>
-    rules.reduce((settings, r) => settings.withRuleAdded(r), noRules());
+    rules.reduce((settings, r) => settings.addRule(r), noRules());
 
   it('returns undefined when projectId is undefined', () => {
     const settings = withRules(rule('1', 'exact', 'my-app', '#c0ffee'));

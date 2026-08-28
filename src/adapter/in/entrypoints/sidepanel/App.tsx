@@ -177,16 +177,16 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // "pick a palette entry AND clear auto") are just a longer chain in one call.
   const updateCurrent = (update: (ps: ProjectSettings) => ProjectSettings) => {
     if (view.type !== 'detail') return;
-    save(settings.withRuleUpdated(view.ruleId, (rule) => rule.changeSettings(update(rule.settings))));
+    save(settings.updateRule(view.ruleId, (rule) => rule.changeSettings(update(rule.settings))));
   };
 
   const updateCurrentRule = (update: (rule: ProjectRule) => ProjectRule) => {
     if (view.type !== 'detail') return;
-    save(settings.withRuleUpdated(view.ruleId, update));
+    save(settings.updateRule(view.ruleId, update));
   };
 
   const handleAddRule = (matchType: MatchType, pattern: string) => {
-    save(settings.withRuleAdded(ProjectRule.create(matchType, pattern)));
+    save(settings.addRule(ProjectRule.create(matchType, pattern)));
   };
 
   const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -199,13 +199,13 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   };
 
   const handleDuplicateRule = (id: ProjectRuleId) => {
-    save(settings.withRuleDuplicated(id));
+    save(settings.duplicateRule(id));
   };
 
   // Delete is confirm-gated via DeleteConfirmPopover (anchored to the row's Delete button);
   // this handler is only ever invoked from that popover's confirm action.
   const handleDeleteRule = (id: ProjectRuleId) => {
-    save(settings.withRuleRemoved(id));
+    save(settings.removeRule(id));
   };
 
   const handleGripMouseDown = () => {
@@ -238,7 +238,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
       setDraggingIndex(null);
       return;
     }
-    save(settings.withRuleMoved(draggingIndex, index));
+    save(settings.moveRule(draggingIndex, index));
     setDraggingIndex(null);
   };
 
