@@ -276,7 +276,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   const handlePaletteColorChange = (id: PaletteEntryId, color: string) => {
     // input[type=color] can only ever emit '#rrggbb', so fromHex never returns undefined here.
     const parsed = Color.fromHex(color);
-    if (parsed) updateCurrent((ps) => ps.withPalette(ps.palette.recolorEntry(id, parsed)));
+    if (parsed) updateCurrent((ps) => ps.withPalette(ps.palette.changeEntryColor(id, parsed)));
   };
 
   // Palette entries and their references are scoped to the currently-edited rule only;

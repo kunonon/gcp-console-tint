@@ -130,7 +130,7 @@ describe('Palette.equals', () => {
 
   it('is true for the same entry ids in the same order, even with different names', () => {
     const a = new Palette(true, [entryA, entryB]);
-    const b = new Palette(true, [entryA.withName('Renamed'), entryB.withColor(color('#333333'))]);
+    const b = new Palette(true, [entryA.rename('Renamed'), entryB.changeColor(color('#333333'))]);
     expect(a.equals(b)).toBe(true);
   });
 

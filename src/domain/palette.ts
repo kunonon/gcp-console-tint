@@ -49,11 +49,11 @@ export class PaletteEntry extends Entity<PaletteEntry> {
     return new PaletteEntry(PaletteEntryId.create(), name, color);
   }
 
-  withName(name: string): PaletteEntry {
+  rename(name: string): PaletteEntry {
     return new PaletteEntry(this.id, name, this.color);
   }
 
-  withColor(color: Color): PaletteEntry {
+  changeColor(color: Color): PaletteEntry {
     return new PaletteEntry(this.id, this.name, color);
   }
 }
@@ -100,11 +100,11 @@ export class Palette extends ValueObject<Palette> {
   }
 
   renameEntry(id: PaletteEntryId, name: string): Palette {
-    return this.mapEntries(id, (entry) => entry.withName(name));
+    return this.mapEntries(id, (entry) => entry.rename(name));
   }
 
-  recolorEntry(id: PaletteEntryId, color: Color): Palette {
-    return this.mapEntries(id, (entry) => entry.withColor(color));
+  changeEntryColor(id: PaletteEntryId, color: Color): Palette {
+    return this.mapEntries(id, (entry) => entry.changeColor(color));
   }
 
   // Removal only: clearing the surfaces' now-dangling references is ProjectSettings' job (see
