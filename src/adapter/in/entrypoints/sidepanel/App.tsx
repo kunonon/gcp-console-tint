@@ -177,7 +177,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // "pick a palette entry AND clear auto") are just a longer chain in one call.
   const updateCurrent = (update: (ps: ProjectSettings) => ProjectSettings) => {
     if (view.type !== 'detail') return;
-    save(settings.withRuleUpdated(view.ruleId, (rule) => rule.withSettings(update(rule.settings))));
+    save(settings.withRuleUpdated(view.ruleId, (rule) => rule.changeSettings(update(rule.settings))));
   };
 
   const updateCurrentRule = (update: (rule: ProjectRule) => ProjectRule) => {
@@ -191,11 +191,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
 
   const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const pattern = e.target.value;
-    updateCurrentRule((rule) => rule.withPattern(pattern));
+    updateCurrentRule((rule) => rule.changePattern(pattern));
   };
 
   const handleMatchTypeChange = (matchType: MatchType) => {
-    updateCurrentRule((rule) => rule.withMatchType(matchType));
+    updateCurrentRule((rule) => rule.changeMatchType(matchType));
   };
 
   const handleDuplicateRule = (id: ProjectRuleId) => {

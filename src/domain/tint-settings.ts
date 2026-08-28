@@ -49,7 +49,7 @@ export class TintSettings extends ValueObject<TintSettings> {
     const original = this.projectRules[index];
     if (!original) return this;
     const next = [...this.projectRules];
-    next.splice(index + 1, 0, original.duplicated());
+    next.splice(index + 1, 0, original.duplicate());
     return new TintSettings(next);
   }
 

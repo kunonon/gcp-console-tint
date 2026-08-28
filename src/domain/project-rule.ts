@@ -83,21 +83,21 @@ export class ProjectRule extends Entity<ProjectRule> {
     }
   }
 
-  withPattern(pattern: string): ProjectRule {
+  changePattern(pattern: string): ProjectRule {
     return new ProjectRule(this.id, this.matchType, pattern, this.settings);
   }
 
-  withMatchType(matchType: MatchType): ProjectRule {
+  changeMatchType(matchType: MatchType): ProjectRule {
     return new ProjectRule(this.id, matchType, this.pattern, this.settings);
   }
 
-  withSettings(settings: ProjectSettings): ProjectRule {
+  changeSettings(settings: ProjectSettings): ProjectRule {
     return new ProjectRule(this.id, this.matchType, this.pattern, settings);
   }
 
   // A copy under a new id. Sharing the settings instance is safe: ProjectSettings is
   // immutable, so editing either rule replaces its own reference instead of mutating.
-  duplicated(): ProjectRule {
+  duplicate(): ProjectRule {
     return new ProjectRule(ProjectRuleId.create(), this.matchType, this.pattern, this.settings);
   }
 }

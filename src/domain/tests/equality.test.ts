@@ -163,7 +163,7 @@ describe('TintSettings.equals', () => {
 
   it('is true for the same rule ids in the same order', () => {
     const a = new TintSettings([ruleA, ruleB]);
-    const b = new TintSettings([ruleA.withPattern('changed'), ruleB]);
+    const b = new TintSettings([ruleA.changePattern('changed'), ruleB]);
     expect(a.equals(b)).toBe(true);
   });
 
