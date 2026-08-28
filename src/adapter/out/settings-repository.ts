@@ -10,13 +10,9 @@ import {
   TopBarSettings,
 } from '../../domain/project-settings';
 import { TintSettings } from '../../domain/tint-settings';
-import { SettingsImportError } from '../../port/settings-store';
-import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
+import { TopBarHeight } from '../../domain/top-bar-height';
+import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIN_VERSION } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
-
-// The oldest schemaVersion the migration chain can read. Anything below (or missing, or
-// invalid) predates every released shape and is replaced by fresh defaults.
-const SCHEMA_MIN_VERSION = '0.1.0';
 
 // The domain owns the default VALUES, this module owns which field recovers to what: every
 // `.catch()` below reads its fallback out of ProjectSettings.DEFAULT rather than restating it.
@@ -100,7 +96,16 @@ const topBarObjectSchema = z
   .object({
     enabled: z.boolean().catch(DEFAULTS.topBar.enabled),
     color: colorSelectionSchema(DEFAULTS.topBar.color),
-    height: z.number().catch(DEFAULTS.topBar.height),
+    // Same shape as colorField: the domain's factory judges the value, and anything it refuses
+    // (a fraction, 0, 41, a non-number, a missing key) recovers to the default. A stored height
+    // outside the range used to be rounded and clamped back into it by the content script at
+    // render time; it now recovers to the default here instead, like every other invalid field.
+    height: z
+      .unknown()
+      .optional()
+      .transform(
+        (value) => (typeof value === 'number' ? TopBarHeight.fromPixels(value) : undefined) ?? DEFAULTS.topBar.height,
+      ),
     stripes: z.boolean().catch(DEFAULTS.topBar.stripes),
   })
   .transform((value) => new TopBarSettings(value.enabled, value.color, value.height, value.stripes));
@@ -219,7 +224,7 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
         topBar: {
           enabled: rule.settings.topBar.enabled,
           color: storedSelection(rule.settings.topBar.color),
-          height: rule.settings.topBar.height,
+          height: rule.settings.topBar.height.toPixels(),
           stripes: rule.settings.topBar.stripes,
         },
         platformBar: {
@@ -239,31 +244,4 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
 
 function storedSelection(selection: ColorSelection) {
   return { paletteId: selection.paletteId?.toString() ?? null, custom: selection.custom.toHex() };
-}
-
-// Parses an imported settings file's text into current-shape settings, throwing
-// SettingsImportError on anything the user needs to be told about. This duplicates
-// toDomain's schemaVersion checks instead of reusing its silent "fall back to defaults"
-// behavior: an import must tell the user WHY a file was rejected (bad JSON, wrong file,
-// too old, no rules), where toDomain's job is to always produce something loadable.
-export function parseSettingsFile(text: string): TintSettings {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (error) {
-    throw new SettingsImportError({ reason: 'invalid-json' }, { cause: error });
-  }
-
-  if (!isRecord(value) || typeof value.schemaVersion !== 'string') {
-    throw new SettingsImportError({ reason: 'not-settings' });
-  }
-  if (compareVersions(value.schemaVersion, SCHEMA_MIN_VERSION) === VersionComparisonResult.Older) {
-    throw new SettingsImportError({ reason: 'unsupported-version', version: value.schemaVersion });
-  }
-
-  const settings = toDomain(value);
-  if (settings.projectRules.length === 0) {
-    throw new SettingsImportError({ reason: 'no-rules' });
-  }
-  return settings;
 }

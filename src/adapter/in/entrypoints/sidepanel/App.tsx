@@ -4,6 +4,7 @@ import { Color } from '../../../../domain/color';
 import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
 import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../domain/project-rule';
 import { ProjectSettings } from '../../../../domain/project-settings';
+import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
@@ -454,13 +455,15 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     <input
                       type="number"
                       aria-label="Top bar height"
-                      min={1}
-                      max={40}
-                      value={currentSettings.topBar.height}
+                      min={TopBarHeight.MIN.toPixels()}
+                      max={TopBarHeight.MAX.toPixels()}
+                      value={currentSettings.topBar.height.toPixels()}
                       onChange={(e) => {
-                        const value = e.target.valueAsNumber;
-                        if (Number.isFinite(value))
-                          updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(value)));
+                        // Anything the domain refuses is ignored rather than corrected: an empty
+                        // input (valueAsNumber is NaN) or a value outside the range simply leaves
+                        // the last valid height in place.
+                        const height = TopBarHeight.fromPixels(e.target.valueAsNumber);
+                        if (height) updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(height)));
                       }}
                       className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                     />

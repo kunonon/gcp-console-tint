@@ -3,7 +3,7 @@ import { Color } from '../color';
 import { ColorSelection } from '../color-selection';
 import { Palette, PaletteEntry, PaletteEntryId } from '../palette';
 import type { MatchType } from '../project-rule';
-import { ProjectRule, ProjectRuleId } from '../project-rule';
+import { isMatchType, MATCH_TYPES, ProjectRule, ProjectRuleId } from '../project-rule';
 import {
   type PlatformBarSettings,
   type PlatformBarTextSettings,
@@ -11,6 +11,7 @@ import {
   type TopBarSettings,
 } from '../project-settings';
 import { TintSettings } from '../tint-settings';
+import { TopBarHeight } from '../top-bar-height';
 
 const DEFAULTS = ProjectSettings.DEFAULT;
 
@@ -54,6 +55,29 @@ describe('Palette.resolve', () => {
 
   it('falls back to custom when the palette is disabled, even with a valid paletteId reference', () => {
     expect(palette.disable().resolve(new ColorSelection(entryId, custom)).toHex()).toBe('#999999');
+  });
+});
+
+describe('isMatchType', () => {
+  it.each(MATCH_TYPES)('accepts the match type %s', (value) => {
+    expect(isMatchType(value)).toBe(true);
+  });
+
+  it.each(['glob', 'Prefix', '', 'toString'])('rejects %o', (value) => {
+    expect(isMatchType(value)).toBe(false);
+  });
+});
+
+describe('TopBarSettings.changeHeight', () => {
+  it('replaces the height and leaves the other fields alone', () => {
+    const changed = DEFAULTS.topBar.changeHeight(TopBarHeight.fromPixels(12)!);
+
+    expect(changed.height.toPixels()).toBe(12);
+    expect(changed.enabled).toBe(DEFAULTS.topBar.enabled);
+    expect(changed.stripes).toBe(DEFAULTS.topBar.stripes);
+    expect(changed.color.equals(DEFAULTS.topBar.color)).toBe(true);
+    // Immutable: the original is untouched.
+    expect(DEFAULTS.topBar.height.toPixels()).toBe(4);
   });
 });
 

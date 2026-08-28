@@ -84,6 +84,8 @@ function failureSentence(fileName: string, error: unknown): string {
         return `${fileName} isn’t a GCP Console Tint settings file.`;
       case 'unsupported-version':
         return `${fileName} was written by an unsupported version (${error.failure.version}).`;
+      case 'invalid-fields':
+        return `${fileName} has missing or invalid fields.`;
       case 'no-rules':
         return `${fileName} contains no rules.`;
       default:
@@ -97,6 +99,11 @@ function failureSentence(fileName: string, error: unknown): string {
 // The error worth showing verbatim: for a refusal that's its cause (e.g. the JSON SyntaxError),
 // since SettingsImportError's own message is already spelled out as the sentence above.
 function failureDetail(error: unknown): string | undefined {
+  // A field-level refusal has no underlying error — the offending fields ARE the detail, one per
+  // line, so the user can see exactly what to fix in the file.
+  if (error instanceof SettingsImportError && error.failure.reason === 'invalid-fields') {
+    return error.failure.issues.map((issue) => `${issue.path}: ${issue.message}`).join('\n');
+  }
   const underlying = error instanceof SettingsImportError ? error.cause : error;
   return underlying instanceof Error ? `${underlying.name}: ${underlying.message}` : undefined;
 }

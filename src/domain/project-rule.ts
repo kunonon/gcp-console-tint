@@ -7,6 +7,11 @@ import { ProjectSettings } from './project-settings';
 export const MATCH_TYPES = ['prefix', 'suffix', 'exact', 'regex'] as const;
 export type MatchType = (typeof MATCH_TYPES)[number];
 
+// Guard for untrusted input (an imported settings file): whether a string names a match type.
+export function isMatchType(value: string): value is MatchType {
+  return (MATCH_TYPES as readonly string[]).includes(value);
+}
+
 // Identity of a ProjectRule. The raw string is private so this type stays nominally distinct
 // from other ids; only the boundaries (settings repository, React keys) read it via toString().
 export class ProjectRuleId extends ValueObject<ProjectRuleId> {

@@ -2,6 +2,7 @@ import { ValueObject } from './base/value-object';
 import { Color } from './color';
 import { ColorSelection } from './color-selection';
 import { Palette, PaletteEntry, PaletteEntryId } from './palette';
+import { TopBarHeight } from './top-bar-height';
 
 // Product policy, not color theory: the canonical default colors for the tint surfaces. The
 // `?? Color.BLACK` branch is unreachable ('#ff6d00' is a valid '#rrggbb' literal) and only
@@ -9,7 +10,9 @@ import { Palette, PaletteEntry, PaletteEntryId } from './palette';
 // assert the real value.
 const DEFAULT_COLOR = Color.fromHex('#ff6d00') ?? Color.BLACK;
 const DEFAULT_TEXT_COLOR = Color.WHITE;
-const DEFAULT_TOP_BAR_HEIGHT = 4;
+// Same unreachable-fallback shape as DEFAULT_COLOR: 4 is a whole number of pixels inside
+// TopBarHeight's range, so `?? TopBarHeight.MIN` only keeps the type as `TopBarHeight`.
+const DEFAULT_TOP_BAR_HEIGHT = TopBarHeight.fromPixels(4) ?? TopBarHeight.MIN;
 // The default palette entry's identity, shared by the entry itself and the surfaces that
 // reference it (see ProjectSettings.DEFAULT).
 const DEFAULT_ENTRY_ID = PaletteEntryId.recreate('default');
@@ -18,7 +21,7 @@ export class TopBarSettings extends ValueObject<TopBarSettings> {
   constructor(
     readonly enabled: boolean,
     readonly color: ColorSelection,
-    readonly height: number,
+    readonly height: TopBarHeight,
     readonly stripes: boolean,
   ) {
     super();
@@ -28,7 +31,7 @@ export class TopBarSettings extends ValueObject<TopBarSettings> {
     return (
       this.enabled === other.enabled &&
       this.color.equals(other.color) &&
-      this.height === other.height &&
+      this.height.equals(other.height) &&
       this.stripes === other.stripes
     );
   }
@@ -45,7 +48,7 @@ export class TopBarSettings extends ValueObject<TopBarSettings> {
     return new TopBarSettings(this.enabled, color, this.height, this.stripes);
   }
 
-  changeHeight(height: number): TopBarSettings {
+  changeHeight(height: TopBarHeight): TopBarSettings {
     return new TopBarSettings(this.enabled, this.color, height, this.stripes);
   }
 

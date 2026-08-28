@@ -2,7 +2,8 @@ import { browser } from 'wxt/browser';
 import type { TintSettings } from '../../domain/tint-settings';
 import type { SettingsStore } from '../../port/settings-store';
 import { CURRENT_SCHEMA_VERSION } from './migrations';
-import { effectiveSchemaVersion, parseSettingsFile, toDomain, toStored } from './settings-repository';
+import { parseSettingsFile } from './settings-file';
+import { effectiveSchemaVersion, toDomain, toStored } from './settings-repository';
 import { compareVersions, VersionComparisonResult } from './version';
 
 const STORAGE_KEY = 'tintSettings';

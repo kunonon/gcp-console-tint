@@ -1,13 +1,24 @@
 import type { TintSettings } from '../domain/tint-settings';
 import { assertNever } from '../utils/assert';
 
-// Why an import was refused. The UI turns each reason into a sentence and, when there is an
-// underlying error, shows it too so a support request can be diagnosed.
+// One field an imported file got wrong: where it sits (`projectRules[1].settings.topBar.height`)
+// and why it was refused. The UI lists these so the user can fix the file.
+export interface SettingsImportIssue {
+  path: string;
+  message: string;
+}
+
+// Why an import was refused. Import is strict — nothing is ever repaired with a default — so a
+// file is either taken whole or refused with a reason. The UI turns each reason into a sentence
+// and, when there is an underlying error or a list of bad fields, shows that too so the user
+// knows what to fix and a support request can be diagnosed.
 export type SettingsImportFailure =
   | { reason: 'invalid-json' } // the text is not JSON at all
   | { reason: 'not-settings' } // JSON, but not an object carrying a string schemaVersion
   | { reason: 'unsupported-version'; version: string } // schemaVersion below the oldest readable one
-  | { reason: 'no-rules' }; // a settings file, but with no readable rule
+  // a settings file whose fields are missing, wrongly typed, or hold unusable values
+  | { reason: 'invalid-fields'; issues: readonly SettingsImportIssue[] }
+  | { reason: 'no-rules' }; // a settings file, but with no rule in it
 
 function importFailureMessage(failure: SettingsImportFailure): string {
   switch (failure.reason) {
@@ -17,6 +28,8 @@ function importFailureMessage(failure: SettingsImportFailure): string {
       return 'Not a GCP Console Tint settings file';
     case 'unsupported-version':
       return `Settings file version ${failure.version} is not supported`;
+    case 'invalid-fields':
+      return `Missing or invalid fields (${failure.issues.length})`;
     case 'no-rules':
       return 'No rules found in the file';
     default:
@@ -51,7 +64,10 @@ export interface SettingsStore {
   // is the stored shape, load()'s migration chain will read it in any later release too.
   exportJson(settings: TintSettings): string;
   // Parses text written by exportJson (or the stored shape of any past release) into
-  // current-shape settings. Throws SettingsImportError instead of silently returning defaults:
-  // the caller shows the reason (and the underlying error) to the user.
+  // current-shape settings. Strict, unlike load(): every field the export writes must be present
+  // with the right JSON type (checked by the adapter) and hold a value the domain accepts
+  // (checked by the domain's own factories) — nothing is repaired with a default. Throws
+  // SettingsImportError instead of silently returning defaults, so the caller can show the user
+  // the reason, and for a field-level refusal which fields were wrong.
   importJson(text: string): TintSettings;
 }

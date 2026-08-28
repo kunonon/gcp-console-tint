@@ -1290,7 +1290,7 @@ describe('App', () => {
     expect(stored.schemaVersion).toBe('0.1.5');
 
     const reloaded = toDomain(stored);
-    expect(reloaded.projectRules[0]!.settings.topBar.height).toBe(19);
+    expect(reloaded.projectRules[0]!.settings.topBar.height.toPixels()).toBe(19);
   });
 
   it('loads settings once on mount; external storage changes made afterward are not reflected in the UI (no live storage.onChanged listener, unlike content.ts)', async () => {
@@ -1949,6 +1949,31 @@ describe('App', () => {
       expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] import failed', expect.anything());
 
       expect(screen.queryByRole('dialog')).toBeNull();
+      consoleError.mockRestore();
+    });
+
+    it('a file whose fields are missing or invalid is refused, listing each offending field path', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      const before = await getStoredSettings();
+      // Structurally wrong: height is a string where the format requires a number. Nothing is
+      // repaired, so the whole file is refused rather than silently importing a default height.
+      const broken = JSON.parse(settingsFile(existing));
+      broken.projectRules[0].settings.topBar.height = '4';
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken-fields.json', JSON.stringify(broken));
+
+      expect(await screen.findByText('broken-fields.json has missing or invalid fields.')).toBeTruthy();
+      expect(screen.getByText(/projectRules\[0\]\.settings\.topBar\.height/)).toBeTruthy();
+      // Refused outright: no rule picker, and storage is exactly what it was before the upload.
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(await getStoredSettings()).toEqual(before);
       consoleError.mockRestore();
     });
 
