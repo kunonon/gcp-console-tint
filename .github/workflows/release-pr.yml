@@ -31,9 +31,19 @@ jobs:
         run: |
           version="$(jq -r .version package.json)"
 
+          # Without previous_tag_name GitHub infers the previous release from the
+          # target's history, but release tags point at main-only merge commits,
+          # which are never ancestors of develop — inference fails and the notes
+          # span the full history. Pin the range to the latest release explicitly
+          # (skipped before the first release, when there is nothing to pin).
+          notes_args=(-f tag_name="v${version}" -f target_commitish=develop)
+          if previous="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2> /dev/null)"; then
+            notes_args+=(-f previous_tag_name="$previous")
+          fi
+
           # On failure gh api prints the error response to stdout, so reset notes
           # instead of letting the error JSON leak into the PR body.
-          if ! notes="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f tag_name="v${version}" -f target_commitish=develop --jq .body)"; then
+          if ! notes="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" "${notes_args[@]}" --jq .body)"; then
             notes=""
           fi
 
