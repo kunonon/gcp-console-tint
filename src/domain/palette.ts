@@ -119,7 +119,7 @@ export class Palette extends ValueObject<Palette> {
   }
 
   // Removal only: clearing the surfaces' now-dangling references is ProjectSettings' job (see
-  // ProjectSettings.withPaletteEntryRemoved), since a Palette cannot see them.
+  // ProjectSettings.removePaletteEntry), since a Palette cannot see them.
   removeEntry(id: PaletteEntryId): Palette {
     return new Palette(
       this.enabled,
