@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { SettingsStoreImpl } from '../../../../out/browser-settings-store';
 import { effectiveSchemaVersion, toDomain } from '../../../../out/settings-repository';
@@ -253,6 +253,59 @@ function makeDataTransferInit() {
   };
 }
 
+// Switches the list page from the default Rules tab to Settings, and waits for the Backup card.
+async function openSettingsTab(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('tab', { name: 'Settings' }));
+  return screen.findByRole('button', { name: 'Export' });
+}
+
+// jsdom implements neither blob URLs nor a real download, so Export's last two steps are stubbed:
+// the Blob handed to createObjectURL and the anchor that was clicked are captured for assertions.
+// Restored by the shared afterEach (vi.restoreAllMocks).
+function stubDownloads() {
+  const createObjectURL = vi.fn((_blob: Blob) => 'blob:settings');
+  const revokeObjectURL = vi.fn();
+  Object.assign(URL, { createObjectURL, revokeObjectURL });
+  const clicks: HTMLAnchorElement[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function captureClick(this: HTMLAnchorElement) {
+    clicks.push(this);
+  });
+  return { createObjectURL, revokeObjectURL, clicks };
+}
+
+// jsdom has no Clipboard API; "Copy details" only needs writeText to exist.
+function stubClipboard() {
+  const writeText = vi.fn();
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  return writeText;
+}
+
+// Picks a file in the Backup card's (visually hidden, but labelled) file input.
+async function uploadSettingsFile(user: ReturnType<typeof userEvent.setup>, fileName: string, contents: string) {
+  const input = screen.getByLabelText('Import settings file');
+  await user.upload(input as HTMLInputElement, new File([contents], fileName, { type: 'application/json' }));
+}
+
+// An export file in the stored shape, built from real stored rules so it stays schema-valid.
+function settingsFile(...projectRules: ProjectRule[]): string {
+  return JSON.stringify({ schemaVersion: CURRENT_VERSION, projectRules } satisfies StoredTintSettings);
+}
+
+// Same match type and pattern as `rule` — so importing it replaces that rule rather than adding
+// one — under a different id and with one visibly different setting.
+function replacementFor(rule: ProjectRule, topBarHeight: number): ProjectRule {
+  return {
+    ...rule,
+    id: 'file-alpha',
+    settings: { ...rule.settings, topBar: { ...rule.settings.topBar, height: topBarHeight } },
+  };
+}
+
+// A rule the current settings don't have, carrying an id the merge must not reuse.
+function newRule(rule: ProjectRule, pattern: string): ProjectRule {
+  return { ...rule, id: 'file-beta', pattern };
+}
+
 const TOP_INDICATOR = 'shadow-[inset_0_2px_0_0_var(--focus)]';
 const BOTTOM_INDICATOR = 'shadow-[inset_0_-2px_0_0_var(--focus)]';
 
@@ -268,6 +321,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 describe('App', () => {
@@ -1236,7 +1290,7 @@ describe('App', () => {
     expect(stored.schemaVersion).toBe('0.1.5');
 
     const reloaded = toDomain(stored);
-    expect(reloaded.projectRules[0]!.settings.topBar.height).toBe(19);
+    expect(reloaded.projectRules[0]!.settings.topBar.height.toPixels()).toBe(19);
   });
 
   it('loads settings once on mount; external storage changes made afterward are not reflected in the UI (no live storage.onChanged listener, unlike content.ts)', async () => {
@@ -1767,6 +1821,218 @@ describe('App', () => {
         // The other rule keeps its own default reference untouched.
         expect(beta.settings.topBar.color.paletteId).toBe('default');
       });
+    });
+  });
+
+  describe('Settings', () => {
+    it('opens on Rules by default and swaps the Projects card for the Backup card when Settings is picked', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      // The pill track behind the tabs only exists when Tabs.List is wrapped in
+      // Tabs.ListContainer, so its presence is what proves the intended composition.
+      expect(document.querySelector('.tabs__list-container')).toBeTruthy();
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs.map((tab) => tab.textContent)).toEqual(['Rules', 'Settings']);
+      expect((tabs[0] as HTMLElement).getAttribute('aria-selected')).toBe('true');
+
+      await openSettingsTab(user);
+
+      expect(screen.getByRole('button', { name: 'Import…' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+    });
+
+    it('Export downloads the current settings as pretty-printed JSON under a dated file name, and releases the blob URL', async () => {
+      const user = userEvent.setup();
+      const { createObjectURL, revokeObjectURL, clicks } = stubDownloads();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await openSettingsTab(user);
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      const blob = createObjectURL.mock.calls[0]![0] as Blob;
+      expect(blob.type).toBe('application/json');
+      expect(await blob.text()).toBe(JSON.stringify(await getStoredSettings(), null, 2));
+
+      const link = clicks[0]!;
+      expect(link.download).toMatch(/^gcp-console-tint-settings-\d{4}-\d{2}-\d{2}\.json$/);
+      // Revocation is deferred to the next tick (see BackupCard.handleExport), hence the wait.
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith(createObjectURL.mock.results[0]!.value));
+    });
+
+    it('Import lists every rule in the file, flags the one that would replace an existing rule, and merges the picked rules on confirm', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const before = await getStoredSettings();
+      const existing = before.projectRules[0]!;
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'x.json', settingsFile(replacementFor(existing, 21), newRule(existing, 'beta')));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText('x.json')).toBeTruthy();
+      expect(within(dialog).getByRole('checkbox', { name: 'alpha' })).toBeTruthy();
+      expect(within(dialog).getByRole('checkbox', { name: 'beta' })).toBeTruthy();
+      expect(within(dialog).getByText('2 of 2 selected')).toBeTruthy();
+      // Only the rule matching an existing match type + pattern is marked as a replacement.
+      expect(within(dialog).getAllByRole('img', { name: 'Replaces an existing rule' })).toHaveLength(1);
+      expect(within(dialog).getByText('Replaces 1 existing rule')).toBeTruthy();
+
+      // Unchecking one rule updates the counter, the warning and the confirm label.
+      await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+      expect(within(dialog).getByText('1 of 2 selected')).toBeTruthy();
+      expect(within(dialog).queryByText('Replaces 1 existing rule')).toBeNull();
+      expect(within(dialog).getByRole('button', { name: 'Import 1 rule' })).toBeTruthy();
+
+      await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+      await user.click(within(dialog).getByRole('button', { name: 'Import 2 rules' }));
+
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules).toHaveLength(2);
+      });
+      const after = await getStoredSettings();
+      // The duplicate replaced the existing rule in place: same id, same position, new settings.
+      expect(after.projectRules[0]!.id).toBe(existing.id);
+      expect(after.projectRules[0]!.settings.topBar.height).toBe(21);
+      // The new rule was appended under a fresh id, not the file's.
+      expect(after.projectRules[1]!.pattern).toBe('beta');
+      expect(after.projectRules[1]!.id).not.toBe('file-beta');
+
+      expect(await screen.findByText('Imported 2 rules')).toBeTruthy();
+      expect(screen.getByText('1 added and 1 replaced from x.json')).toBeTruthy();
+    });
+
+    it('Select all clears every row, which disables the Import button', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'x.json', settingsFile(existing, newRule(existing, 'beta')));
+
+      const dialog = await screen.findByRole('dialog');
+      const selectAll = within(dialog).getByRole('checkbox', { name: 'Select all' });
+      expect((selectAll as HTMLInputElement).checked).toBe(true);
+
+      await user.click(selectAll);
+
+      expect(within(dialog).getByText('0 of 2 selected')).toBeTruthy();
+      expect((within(dialog).getByRole('button', { name: 'Import 0 rules' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('a file that is not JSON is refused with the reason, a copyable detail block and a console.error', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const writeText = stubClipboard();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+
+      expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+      expect(screen.getByText('broken.json could not be parsed as JSON.')).toBeTruthy();
+      const detail = screen.getByText(/^SyntaxError: /);
+
+      await user.click(screen.getByRole('button', { name: 'Copy details' }));
+      expect(writeText).toHaveBeenCalledWith(detail.textContent);
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] import failed', expect.anything());
+
+      expect(screen.queryByRole('dialog')).toBeNull();
+      consoleError.mockRestore();
+    });
+
+    it('a file stamped by a newer release than this build is refused, telling the user to update', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      const before = await getStoredSettings();
+      // The manifest here is CURRENT_VERSION ('0.1.0'); a file this build could not have written.
+      const fromTheFuture = JSON.parse(settingsFile(existing));
+      fromTheFuture.schemaVersion = '9.9.9';
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'newer.json', JSON.stringify(fromTheFuture));
+
+      expect(
+        await screen.findByText(
+          'newer.json was written by a newer version of GCP Console Tint (9.9.9). Update the extension, then import it again.',
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(await getStoredSettings()).toEqual(before);
+      consoleError.mockRestore();
+    });
+
+    it('a file whose fields are missing or invalid is refused, listing each offending field path', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      const before = await getStoredSettings();
+      // Structurally wrong: height is a string where the format requires a number. Nothing is
+      // repaired, so the whole file is refused rather than silently importing a default height.
+      const broken = JSON.parse(settingsFile(existing));
+      broken.projectRules[0].settings.topBar.height = '4';
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken-fields.json', JSON.stringify(broken));
+
+      expect(await screen.findByText('broken-fields.json has missing or invalid fields.')).toBeTruthy();
+      expect(screen.getByText(/projectRules\[0\]\.settings\.topBar\.height/)).toBeTruthy();
+      // Refused outright: no rule picker, and storage is exactly what it was before the upload.
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(await getStoredSettings()).toEqual(before);
+      consoleError.mockRestore();
+    });
+
+    it('JSON that is not a settings file is refused with the reason only, without a detail block', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'other.json', '[]');
+
+      expect(await screen.findByText('other.json isn’t a GCP Console Tint settings file.')).toBeTruthy();
+      // No underlying error to show, so no detail block and nothing to copy.
+      expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+      consoleError.mockRestore();
+    });
+
+    it('a new action clears the previous notice', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      stubDownloads();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+      expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+
+      expect(screen.queryByText('Couldn’t import this file')).toBeNull();
+      consoleError.mockRestore();
     });
   });
 });

@@ -211,7 +211,9 @@ describe('content script', () => {
     }
   });
 
-  it('rounds a fractional topBarHeight to the nearest integer', async () => {
+  // Nothing rounds any more: TopBarHeight only accepts whole pixels, so a fractional stored
+  // height is refused by the domain and recovers to the default when settings are read.
+  it('falls back to the default height for a fractional topBarHeight (no rounding)', async () => {
     await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: 7.6 } }));
     setTestProjectLocation();
 
@@ -219,7 +221,7 @@ describe('content script', () => {
     await flush();
 
     const { bar } = getElements();
-    expect(bar.style.height).toBe('8px');
+    expect(bar.style.height).toBe('4px');
   });
 
   it('applies the Top bar stripe gradient when topBarStripes is enabled', async () => {
@@ -910,7 +912,7 @@ describe('content script', () => {
     expect(styleEl.textContent).toBe('');
   });
 
-  it('applies topBarHeight at the clamp boundaries (1 and 40) without adjustment', async () => {
+  it('applies topBarHeight at the range boundaries (1 and 40) without adjustment', async () => {
     for (const boundary of [1, 40]) {
       document.documentElement.innerHTML = '<head></head><body></body>';
       await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: boundary } }));
