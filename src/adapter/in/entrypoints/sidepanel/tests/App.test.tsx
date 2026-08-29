@@ -1952,6 +1952,32 @@ describe('App', () => {
       consoleError.mockRestore();
     });
 
+    it('a file stamped by a newer release than this build is refused, telling the user to update', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      const before = await getStoredSettings();
+      // The manifest here is CURRENT_VERSION ('0.1.0'); a file this build could not have written.
+      const fromTheFuture = JSON.parse(settingsFile(existing));
+      fromTheFuture.schemaVersion = '9.9.9';
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'newer.json', JSON.stringify(fromTheFuture));
+
+      expect(
+        await screen.findByText(
+          'newer.json was written by a newer version of GCP Console Tint (9.9.9). Update the extension, then import it again.',
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(await getStoredSettings()).toEqual(before);
+      consoleError.mockRestore();
+    });
+
     it('a file whose fields are missing or invalid is refused, listing each offending field path', async () => {
       const user = userEvent.setup();
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});

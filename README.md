@@ -130,4 +130,4 @@ src/
   utils/            # dependency-free helpers shared across layers (assertNever)
 ```
 
-Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated. An exported settings file is that same versioned JSON, so a file from an older release is read through the same migration path as stored data.
+Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated. An exported settings file is that same versioned JSON, so a file from an older release is read through the same migration path as stored data; a file stamped by a newer release than the one importing it is refused, since the importing build cannot know that shape.

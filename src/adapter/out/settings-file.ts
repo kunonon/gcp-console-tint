@@ -12,7 +12,7 @@ import {
 import { TintSettings } from '../../domain/tint-settings';
 import { TopBarHeight } from '../../domain/top-bar-height';
 import { SettingsImportError, type SettingsImportIssue } from '../../port/settings-store';
-import { runMigrations, SCHEMA_MIN_VERSION } from './migrations';
+import { runMigrations, SCHEMA_MIGRATIONS, SCHEMA_MIN_VERSION, type SchemaMigration } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
 
 // The import format: the same JSON shape settings-repository's toStored() writes, read back
@@ -158,9 +158,18 @@ function toRules(file: SettingsFile): { rules: ProjectRule[]; issues: SettingsIm
 
 // Parses an imported settings file's text into current-shape settings, throwing
 // SettingsImportError on anything the user needs to be told about: bad JSON, the wrong kind of
-// file, a version predating every readable shape, fields that are missing/wrongly typed/unusable,
-// or no rules at all.
-export function parseSettingsFile(text: string): TintSettings {
+// file, a version predating every readable shape or postdating this build, fields that are
+// missing/wrongly typed/unusable, or no rules at all.
+//
+// `currentVersion` is the newest stamp this build can have written itself (the running extension
+// version floored at CURRENT_SCHEMA_VERSION — see effectiveSchemaVersion). A file stamped newer
+// than that comes from a release this build does not know, whose shape it cannot judge, so it is
+// refused rather than guessed at. `steps` is injectable for tests; production uses the registry.
+export function parseSettingsFile(
+  text: string,
+  currentVersion: string,
+  steps: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
+): TintSettings {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -178,10 +187,14 @@ export function parseSettingsFile(text: string): TintSettings {
   if (compareVersions(schemaVersion, SCHEMA_MIN_VERSION) === VersionComparisonResult.Older) {
     throw new SettingsImportError({ reason: 'unsupported-version', version: schemaVersion });
   }
+  if (compareVersions(schemaVersion, currentVersion) === VersionComparisonResult.Newer) {
+    throw new SettingsImportError({ reason: 'newer-version', version: schemaVersion });
+  }
 
   // Folded forward to the current shape first, so an older file is judged against the shape it
-  // migrates into rather than the one it was written in.
-  const { data } = runMigrations(value, schemaVersion);
+  // migrates into rather than the one it was written in. Only steps newer than the file's own
+  // stamp run (see runMigrations), so a file already in a later shape is not migrated twice.
+  const { data } = runMigrations(value, schemaVersion, steps);
 
   const structure = settingsFileSchema.safeParse(data);
   if (!structure.success) {

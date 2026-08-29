@@ -84,6 +84,8 @@ function failureSentence(fileName: string, error: unknown): string {
         return `${fileName} isn’t a GCP Console Tint settings file.`;
       case 'unsupported-version':
         return `${fileName} was written by an unsupported version (${error.failure.version}).`;
+      case 'newer-version':
+        return `${fileName} was written by a newer version of GCP Console Tint (${error.failure.version}). Update the extension, then import it again.`;
       case 'invalid-fields':
         return `${fileName} has missing or invalid fields.`;
       case 'no-rules':

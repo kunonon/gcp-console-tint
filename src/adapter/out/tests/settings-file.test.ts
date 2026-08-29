@@ -5,7 +5,7 @@ import { ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
 import { SettingsImportError, type SettingsImportIssue } from '../../../port/settings-store';
-import { CURRENT_SCHEMA_VERSION } from '../migrations';
+import { CURRENT_SCHEMA_VERSION, type SchemaMigration } from '../migrations';
 import { parseSettingsFile } from '../settings-file';
 import { toStored } from '../settings-repository';
 
@@ -47,6 +47,9 @@ function fileWithRule(mutate: (rule: RawRule) => void): string {
   return JSON.stringify(file);
 }
 
+// The stamp this build would put on its own export; every case below imports "into" this build.
+const parse = (text: string) => parseSettingsFile(text, CURRENT_SCHEMA_VERSION);
+
 function issuesOf(error: unknown): readonly SettingsImportIssue[] {
   const failure = failureOf(error);
   expect(failure.reason).toBe('invalid-fields');
@@ -59,7 +62,7 @@ function paths(error: unknown): string[] {
 
 describe('parseSettingsFile: the file as a whole', () => {
   it('throws invalid-json, with the SyntaxError as cause, for text that is not JSON at all', () => {
-    const error = thrownBy(() => parseSettingsFile('not json{'));
+    const error = thrownBy(() => parse('not json{'));
 
     expect(failureOf(error)).toEqual({ reason: 'invalid-json' });
     expect((error as SettingsImportError).cause).toBeInstanceOf(SyntaxError);
@@ -71,13 +74,13 @@ describe('parseSettingsFile: the file as a whole', () => {
     ['an object without schemaVersion', JSON.stringify({ projectRules: [] })],
     ['an object with a non-string schemaVersion', JSON.stringify({ schemaVersion: 123, projectRules: [] })],
   ])('throws not-settings for %s', (_label, text) => {
-    expect(failureOf(thrownBy(() => parseSettingsFile(text)))).toEqual({ reason: 'not-settings' });
+    expect(failureOf(thrownBy(() => parse(text)))).toEqual({ reason: 'not-settings' });
   });
 
   it('throws unsupported-version, with the version, for a schemaVersion below SCHEMA_MIN_VERSION', () => {
     const text = JSON.stringify({ schemaVersion: '0.0.9', projectRules: [{ id: '1', pattern: 'x', settings: {} }] });
 
-    expect(failureOf(thrownBy(() => parseSettingsFile(text)))).toEqual({
+    expect(failureOf(thrownBy(() => parse(text)))).toEqual({
       reason: 'unsupported-version',
       version: '0.0.9',
     });
@@ -86,7 +89,7 @@ describe('parseSettingsFile: the file as a whole', () => {
   it('throws no-rules for a valid file with an empty projectRules array', () => {
     const text = JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [] });
 
-    expect(failureOf(thrownBy(() => parseSettingsFile(text)))).toEqual({ reason: 'no-rules' });
+    expect(failureOf(thrownBy(() => parse(text)))).toEqual({ reason: 'no-rules' });
   });
 
   it('ignores keys it does not know, at every level (a file from a newer release still imports)', () => {
@@ -98,8 +101,8 @@ describe('parseSettingsFile: the file as a whole', () => {
       rule.settings.topBar.somethingNew = true;
     });
 
-    expect(parseSettingsFile(text).projectRules).toHaveLength(1);
-    expect(parseSettingsFile(JSON.stringify(file)).projectRules).toHaveLength(1);
+    expect(parse(text).projectRules).toHaveLength(1);
+    expect(parse(JSON.stringify(file)).projectRules).toHaveLength(1);
   });
 
   it('round-trips a valid file: toStored -> JSON.stringify -> parseSettingsFile equals the original settings', () => {
@@ -115,7 +118,7 @@ describe('parseSettingsFile: the file as a whole', () => {
     ]);
     const text = JSON.stringify(toStored(original, CURRENT_SCHEMA_VERSION));
 
-    const parsed = parseSettingsFile(text);
+    const parsed = parse(text);
 
     expect(parsed.equals(original)).toBe(true);
     expect(parsed.projectRules[0]!.settings).toEqual(original.projectRules[0]!.settings);
@@ -132,7 +135,7 @@ describe('parseSettingsFile: structural issues (missing keys and wrong JSON type
     const file = validFile();
     mutate(file);
 
-    expect(paths(thrownBy(() => parseSettingsFile(JSON.stringify(file))))).toEqual([path]);
+    expect(paths(thrownBy(() => parse(JSON.stringify(file))))).toEqual([path]);
   });
 
   it.each([
@@ -159,7 +162,7 @@ describe('parseSettingsFile: structural issues (missing keys and wrong JSON type
       'projectRules[0].settings.topBar.color.paletteId',
     ],
   ])('refuses the file when a field is not %s', (_label, mutate: (rule: RawRule) => void, path) => {
-    const error = thrownBy(() => parseSettingsFile(fileWithRule(mutate)));
+    const error = thrownBy(() => parse(fileWithRule(mutate)));
 
     expect(failureOf(error).reason).toBe('invalid-fields');
     expect(paths(error)).toEqual([path]);
@@ -172,9 +175,7 @@ describe('parseSettingsFile: structural issues (missing keys and wrong JSON type
     rules[1].id = 'rule-2';
     rules[1].settings.topBar.height = '4';
 
-    expect(paths(thrownBy(() => parseSettingsFile(JSON.stringify(file))))).toEqual([
-      'projectRules[1].settings.topBar.height',
-    ]);
+    expect(paths(thrownBy(() => parse(JSON.stringify(file))))).toEqual(['projectRules[1].settings.topBar.height']);
   });
 });
 
@@ -219,7 +220,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
       'expected an integer from 1 to 40',
     ],
   ])('refuses %s', (_label, mutate: (rule: RawRule) => void, path, message) => {
-    expect(issuesOf(thrownBy(() => parseSettingsFile(fileWithRule(mutate))))).toEqual([{ path, message }]);
+    expect(issuesOf(thrownBy(() => parse(fileWithRule(mutate))))).toEqual([{ path, message }]);
   });
 
   it('reports every bad value in the file in one pass, not just the first', () => {
@@ -231,7 +232,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
       rule.settings.platformBarText.color.custom = '#12345';
     });
 
-    expect(paths(thrownBy(() => parseSettingsFile(text))).sort()).toEqual([
+    expect(paths(thrownBy(() => parse(text))).sort()).toEqual([
       'projectRules[0].matchType',
       'projectRules[0].settings.palette.entries[0].color',
       'projectRules[0].settings.platformBarText.color.custom',
@@ -243,7 +244,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
   // The domain treats a reference to a missing entry as legal and falls back to the custom color
   // (Palette.resolve), so the import must not invent a stricter rule than the model has.
   it('accepts empty ids: ids are opaque strings to the domain, so there is no value rule to apply', () => {
-    const settings = parseSettingsFile(
+    const settings = parse(
       fileWithRule((rule) => {
         rule.id = '';
         rule.settings.palette.entries[0].id = '';
@@ -258,7 +259,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
       rule.settings.topBar.color.paletteId = 'gone';
     });
 
-    const parsed = parseSettingsFile(text);
+    const parsed = parse(text);
 
     const topBar = parsed.projectRules[0]!.settings.topBar;
     expect(topBar.color.paletteId?.toString()).toBe('gone');
@@ -270,7 +271,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
       rule.settings.topBar.color.paletteId = null;
     });
 
-    expect(parseSettingsFile(text).projectRules[0]!.settings.topBar.color.paletteId).toBeUndefined();
+    expect(parse(text).projectRules[0]!.settings.topBar.color.paletteId).toBeUndefined();
   });
 
   it.each([1, 40])('accepts a height at the boundary (%i)', (pixels) => {
@@ -278,6 +279,69 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
       rule.settings.topBar.height = pixels;
     });
 
-    expect(parseSettingsFile(text).projectRules[0]!.settings.topBar.height.toPixels()).toBe(pixels);
+    expect(parse(text).projectRules[0]!.settings.topBar.height.toPixels()).toBe(pixels);
+  });
+});
+
+describe('parseSettingsFile: versions and migrations', () => {
+  const stamped = (schemaVersion: string): string => JSON.stringify({ ...validFile(), schemaVersion });
+
+  it('refuses a file stamped newer than what this build can have written (newer-version)', () => {
+    expect(failureOf(thrownBy(() => parseSettingsFile(stamped('0.2.0'), '0.1.5')))).toEqual({
+      reason: 'newer-version',
+      version: '0.2.0',
+    });
+  });
+
+  it('accepts a stamp equal to the current version, and one between the schema version and it', () => {
+    expect(parseSettingsFile(stamped('0.1.5'), '0.1.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.1.2'), '0.1.5').projectRules).toHaveLength(1);
+  });
+
+  // A fake shape change: 0.2.0 renames topBar.heightPx to topBar.height. Files written before it
+  // carry heightPx, so the step must run for them and must not run for files already at 0.2.0.
+  const renameHeight: SchemaMigration = {
+    to: '0.2.0',
+    migrate: (data) => ({
+      ...data,
+      projectRules: (data.projectRules as RawRule[]).map((rule) => {
+        const { heightPx, ...topBar } = rule.settings.topBar;
+        return { ...rule, settings: { ...rule.settings, topBar: { ...topBar, height: heightPx } } };
+      }),
+    }),
+  };
+
+  function oldShapeFile(schemaVersion: string): string {
+    const file = validFile();
+    const topBar = (file.projectRules as RawRule[])[0].settings.topBar;
+    topBar.heightPx = 12;
+    delete topBar.height;
+    return JSON.stringify({ ...file, schemaVersion });
+  }
+
+  it('folds an older file forward through the migration steps before validating it', () => {
+    const settings = parseSettingsFile(oldShapeFile('0.1.0'), '0.2.0', [renameHeight]);
+    expect(settings.projectRules[0]!.settings.topBar.height.toPixels()).toBe(12);
+  });
+
+  it("does not run a step at or below the file's own stamp (the file is already in that shape)", () => {
+    const breakHeight: SchemaMigration = {
+      to: '0.2.0',
+      migrate: (data) => ({
+        ...data,
+        projectRules: (data.projectRules as RawRule[]).map((rule) => {
+          const { height: _dropped, ...topBar } = rule.settings.topBar;
+          return { ...rule, settings: { ...rule.settings, topBar } };
+        }),
+      }),
+    };
+    expect(parseSettingsFile(stamped('0.2.0'), '0.2.0', [breakHeight]).projectRules).toHaveLength(1);
+  });
+
+  it('refuses, as invalid-fields, an older file whose migration leaves the shape incomplete', () => {
+    const incomplete: SchemaMigration = { to: '0.2.0', migrate: (data) => data };
+    expect(paths(thrownBy(() => parseSettingsFile(oldShapeFile('0.1.0'), '0.2.0', [incomplete])))).toEqual([
+      'projectRules[0].settings.topBar.height',
+    ]);
   });
 });

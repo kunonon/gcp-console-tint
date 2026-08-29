@@ -53,6 +53,17 @@ describe('SettingsStoreImpl.exportJson / importJson', () => {
     expect(roundTripped.equals(settings)).toBe(true);
   });
 
+  it('importJson refuses a file stamped newer than the running extension version', () => {
+    const store = new SettingsStoreImpl();
+    const text = JSON.stringify(toStored(new TintSettings([]), '0.3.0'));
+    expect(() => store.importJson(text)).toThrow(SettingsImportError);
+    try {
+      store.importJson(text);
+    } catch (error) {
+      expect((error as SettingsImportError).failure).toEqual({ reason: 'newer-version', version: '0.3.0' });
+    }
+  });
+
   it('importJson propagates SettingsImportError for text that is not a settings file', () => {
     const store = new SettingsStoreImpl();
 

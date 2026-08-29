@@ -45,7 +45,8 @@ export class SettingsStoreImpl implements SettingsStore {
   }
 
   importJson(text: string): TintSettings {
-    return parseSettingsFile(text);
+    // The same stamp exportJson writes: anything newer must come from a later release.
+    return parseSettingsFile(text, effectiveSchemaVersion(manifestVersion()));
   }
 }
 

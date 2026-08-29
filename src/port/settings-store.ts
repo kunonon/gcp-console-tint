@@ -16,6 +16,7 @@ export type SettingsImportFailure =
   | { reason: 'invalid-json' } // the text is not JSON at all
   | { reason: 'not-settings' } // JSON, but not an object carrying a string schemaVersion
   | { reason: 'unsupported-version'; version: string } // schemaVersion below the oldest readable one
+  | { reason: 'newer-version'; version: string } // schemaVersion above what this build can have written: a later release's file
   // a settings file whose fields are missing, wrongly typed, or hold unusable values
   | { reason: 'invalid-fields'; issues: readonly SettingsImportIssue[] }
   | { reason: 'no-rules' }; // a settings file, but with no rule in it
@@ -28,6 +29,8 @@ function importFailureMessage(failure: SettingsImportFailure): string {
       return 'Not a GCP Console Tint settings file';
     case 'unsupported-version':
       return `Settings file version ${failure.version} is not supported`;
+    case 'newer-version':
+      return `Settings file version ${failure.version} is newer than this extension`;
     case 'invalid-fields':
       return `Missing or invalid fields (${failure.issues.length})`;
     case 'no-rules':
