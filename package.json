@@ -29,12 +29,12 @@
     "@heroui/styles": "^3.2.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
     "@tailwindcss/vite": "^4.3.3",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.5",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
