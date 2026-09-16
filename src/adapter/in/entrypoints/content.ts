@@ -1,4 +1,4 @@
-import { ProjectSettings } from '../../../domain/project-settings';
+import type { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
 import { SettingsStoreImpl } from '../../out/browser-settings-store';
 import { stripeGradient } from '../stripes';
@@ -6,13 +6,6 @@ import { stripeGradient } from '../stripes';
 export default defineContentScript({
   matches: ['https://console.cloud.google.com/*'],
   main(ctx) {
-    const clampTopBarHeight = (height: number): number => {
-      if (!Number.isFinite(height)) return ProjectSettings.DEFAULT.topBar.height;
-      const rounded = Math.round(height);
-      if (rounded < 1 || rounded > 40) return ProjectSettings.DEFAULT.topBar.height;
-      return rounded;
-    };
-
     // Crossfade colors when the settings for the current page change (e.g. switching GCP
     // projects). Honors the user's reduced-motion preference. Optional-chained because
     // jsdom has no matchMedia.
@@ -35,7 +28,7 @@ export default defineContentScript({
       const { palette } = project;
       if (project.topBar.enabled) {
         bar.style.display = '';
-        bar.style.height = `${clampTopBarHeight(project.topBar.height)}px`;
+        bar.style.height = `${project.topBar.height.toPixels()}px`;
         const topBarColor = palette.resolve(project.topBar.color);
         bar.style.backgroundColor = topBarColor.toHex();
         bar.style.backgroundImage = project.topBar.stripes ? stripeGradient(topBarColor) : '';

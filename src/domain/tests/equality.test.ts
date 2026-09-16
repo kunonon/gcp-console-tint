@@ -5,6 +5,7 @@ import { Palette, PaletteEntry, PaletteEntryId } from '../palette';
 import { ProjectRule, ProjectRuleId } from '../project-rule';
 import { ProjectSettings } from '../project-settings';
 import { TintSettings } from '../tint-settings';
+import { TopBarHeight } from '../top-bar-height';
 
 const color = (value: string): Color => Color.fromHex(value)!;
 
@@ -77,8 +78,15 @@ describe('TopBarSettings.equals', () => {
 
   it('is false when height differs', () => {
     const a = ProjectSettings.DEFAULT.topBar;
-    const b = a.changeHeight(a.height + 1);
+    const b = a.changeHeight(TopBarHeight.fromPixels(a.height.toPixels() + 1)!);
     expect(a.equals(b)).toBe(false);
+  });
+
+  it('compares height by value: changeHeight to an equal-but-separate instance stays equal', () => {
+    const a = ProjectSettings.DEFAULT.topBar;
+    const b = a.changeHeight(TopBarHeight.fromPixels(a.height.toPixels())!);
+    expect(b.height).not.toBe(a.height);
+    expect(a.equals(b)).toBe(true);
   });
 });
 

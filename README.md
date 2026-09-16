@@ -11,6 +11,7 @@ A browser extension (Chrome MV3 / Firefox MV2) that tints parts of the [Google C
   - The platform bar text color (descendants of `.cfc-platform-bar-left` / `.cfc-platform-bar-right` / `.pcc-platform-bar-button`), with an auto mode that picks black or white by WCAG contrast against the platform bar color
 - **Per-project color palette** — named color entries that the pickers reference; change a palette color once and every surface using it follows.
 - **Live updates** — settings apply immediately via `storage.onChanged`, and the tint follows the console's SPA project switches without a reload, with a short crossfade (disabled under `prefers-reduced-motion`).
+- **Export / import** — the Settings tab saves every rule (with its palette and colors) to a JSON file, and imports rules back from one: pick the rules to take, and a rule with the same match type and pattern as an existing one replaces that rule in place instead of being added.
 
 ## Usage
 
@@ -129,4 +130,4 @@ src/
   utils/            # dependency-free helpers shared across layers (assertNever)
 ```
 
-Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated.
+Settings are stored in `browser.storage.local` under a versioned schema; while the project is pre-release, older stored shapes may be read destructively instead of migrated. An exported settings file is that same versioned JSON, so a file from an older release is read through the same migration path as stored data; a file stamped by a newer release than the one importing it is refused, since the importing build cannot know that shape.
