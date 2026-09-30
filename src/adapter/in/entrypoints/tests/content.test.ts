@@ -222,6 +222,60 @@ describe('content script', () => {
     expect(bar.style.height).toBe('8px');
   });
 
+  it.each([1, 4, 12, 40])('sets shared viewport background properties at top bar height %i px', async (height) => {
+    await fakeBrowser.storage.local.set(
+      tintSettingsWithRule({ topBar: { height, stripes: true }, platformBar: { stripes: true } }),
+    );
+    setTestProjectLocation();
+
+    runContentScript();
+    await flush();
+
+    const { bar, styleEl } = getElements();
+    expect(bar.style.height).toBe(`${height}px`);
+    expect(bar.style.backgroundAttachment).toBe('fixed');
+    expect(bar.style.backgroundPosition).toBe('0px 0px');
+    expect(bar.style.backgroundSize).toBe('auto');
+    expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
+    expect(styleEl.textContent).toContain('background-position: 0 0 !important;');
+    expect(styleEl.textContent).toContain('background-size: auto !important;');
+  });
+
+  it('keeps viewport background properties after a live height change and removes disabled stripes', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettingsWithRule({ topBar: { height: 1, stripes: true }, platformBar: { stripes: true } }),
+    );
+    setTestProjectLocation();
+
+    runContentScript();
+    await flush();
+
+    await fakeBrowser.storage.local.set(
+      tintSettingsWithRule({ topBar: { height: 40, stripes: true }, platformBar: { stripes: true } }),
+    );
+    await flush();
+
+    const { bar, styleEl } = getElements();
+    expect(bar.style.height).toBe('40px');
+    expect(bar.style.backgroundAttachment).toBe('fixed');
+    expect(bar.style.backgroundPosition).toBe('0px 0px');
+    expect(bar.style.backgroundSize).toBe('auto');
+    expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
+    expect(styleEl.textContent).toContain('background-position: 0 0 !important;');
+    expect(styleEl.textContent).toContain('background-size: auto !important;');
+
+    await fakeBrowser.storage.local.set(
+      tintSettingsWithRule({ topBar: { height: 40, stripes: false }, platformBar: { stripes: false } }),
+    );
+    await flush();
+
+    expect(bar.style.backgroundImage).toBe('');
+    expect(styleEl.textContent).not.toContain('background-image');
+    expect(styleEl.textContent).not.toContain('background-attachment');
+    expect(styleEl.textContent).not.toContain('background-position');
+    expect(styleEl.textContent).not.toContain('background-size');
+  });
+
   it('applies the Top bar stripe gradient when topBarStripes is enabled', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({ topBar: { stripes: true, color: { paletteId: null, custom: '#ffff00' } } }),
@@ -262,6 +316,30 @@ describe('content script', () => {
     expect(styleEl.textContent).toContain('rgba(255, 255, 255, 0.3)');
   });
 
+  it.each([
+    { topBarColor: '#7744ee', platformBarColor: '#ff0000' },
+    { topBarColor: '#ff0000', platformBarColor: '#7744ee' },
+  ])('aligns bright and dark stripe phases for mixed colors', async ({ topBarColor, platformBarColor }) => {
+    await fakeBrowser.storage.local.set(
+      tintSettingsWithRule({
+        topBar: { stripes: true, color: { paletteId: null, custom: topBarColor } },
+        platformBar: { stripes: true, color: { paletteId: null, custom: platformBarColor } },
+      }),
+    );
+    setTestProjectLocation();
+
+    runContentScript();
+    await flush();
+
+    const { bar, styleEl } = getElements();
+    const brightFirst = 'repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.3) 0 8px, transparent 8px 16px)';
+    const darkSecond = 'repeating-linear-gradient(-45deg, transparent 0 8px, rgba(0, 0, 0, 0.3) 8px 16px)';
+    const topBarGradient = topBarColor === '#7744ee' ? brightFirst : darkSecond;
+    const platformBarGradient = platformBarColor === '#7744ee' ? brightFirst : darkSecond;
+    expect(bar.style.backgroundImage).toBe(topBarGradient);
+    expect(styleEl.textContent).toContain(`background-image: ${platformBarGradient} !important;`);
+  });
+
   it('omits the background-image declaration when platformBarStripes is disabled', async () => {
     await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBar: { stripes: false } }));
     setTestProjectLocation();
@@ -271,6 +349,9 @@ describe('content script', () => {
 
     const { styleEl } = getElements();
     expect(styleEl.textContent).not.toContain('background-image');
+    expect(styleEl.textContent).not.toContain('background-attachment');
+    expect(styleEl.textContent).not.toContain('background-position');
+    expect(styleEl.textContent).not.toContain('background-size');
   });
 
   it('follows the resolved palette color for stripe tinting on both Top bar and Platform Bar', async () => {
