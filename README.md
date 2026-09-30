@@ -51,6 +51,8 @@ docker compose up
 
 This installs dependencies and starts the WXT dev server (HMR on port 3000). Load `.output/chrome-mv3-dev` as an unpacked extension to develop against the live build.
 
+The container keeps its `node_modules` in a named Docker volume (`node_modules`), separate from any `node_modules` a host-side `pnpm install` may have created: pnpm installs the native binaries (lightningcss, rolldown, Biome, TypeScript, Tailwind's oxide) for one platform only, so sharing a single directory between macOS and the Linux container breaks whichever side installed second. `docker compose down -v` drops the volume; the next `make up` reinstalls.
+
 With the stack running:
 
 ```sh
@@ -62,6 +64,8 @@ docker compose exec dev pnpm build      # production build (add :firefox for Fir
 ```
 
 If dev-mode styles look stale after larger edits, restart the server: `docker compose restart dev` (the dev side panel loads a pre-render chunk that is fixed at server start).
+
+Dependency updates sit behind a one-week cooldown: `minimumReleaseAge` in `pnpm-workspace.yaml` makes pnpm resolve only versions published at least 7 days ago (transitive dependencies included), so a compromised release that gets pulled within hours never lands in the lockfile. pnpm applies the same check to the versions already in `pnpm-lock.yaml` on every install, so a lockfile that carries a younger version (for example from a dependency PR resolved elsewhere) fails to install — in CI and in the dev container — until that version is a week old. For an urgent fix, add the package to `minimumReleaseAgeExclude` in the same file.
 
 ## CI
 

@@ -25,6 +25,10 @@ export default defineContentScript({
     bar.style.right = '0';
     bar.style.zIndex = '2147483647';
     bar.style.pointerEvents = 'none';
+    // Shared viewport coordinates keep stripes aligned as the overlay height animates.
+    bar.style.backgroundAttachment = 'fixed';
+    bar.style.backgroundPosition = '0 0';
+    bar.style.backgroundSize = 'auto';
     if (animate) bar.style.transition = 'background-color 300ms ease, height 200ms ease';
     document.documentElement.appendChild(bar);
 
@@ -49,6 +53,9 @@ export default defineContentScript({
         const declarations = [`background-color: ${platformBarColor.toHex()} !important;`];
         if (project.platformBar.stripes) {
           declarations.push(`background-image: ${stripeGradient(platformBarColor)} !important;`);
+          declarations.push('background-attachment: fixed !important;');
+          declarations.push('background-position: 0 0 !important;');
+          declarations.push('background-size: auto !important;');
         }
         if (animate) {
           declarations.push('transition: background-color 300ms ease !important;');
