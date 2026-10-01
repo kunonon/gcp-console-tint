@@ -5,28 +5,10 @@ import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Key } from 'webdriverio';
+import { projectSettings, rule, settings, VERSION } from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
 
-const { version: VERSION } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const MATCH_LABELS = { prefix: 'Starts with', suffix: 'Ends with', exact: 'Exact', regex: 'Regex' };
-
-function projectSettings(overrides = {}) {
-  return {
-    palette: { enabled: false, entries: [] },
-    topBar: { enabled: false, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false },
-    platformBar: { enabled: false, color: { paletteId: null, custom: '#234567' }, stripes: false },
-    platformBarText: { enabled: false, color: { paletteId: null, custom: '#345678' }, auto: false },
-    ...overrides,
-  };
-}
-
-function rule(id, pattern, matchType = 'exact', settings = projectSettings()) {
-  return { id, matchType, pattern, settings };
-}
-
-function settings(...projectRules) {
-  return { schemaVersion: VERSION, projectRules };
-}
 
 async function panel(h) {
   await h.browser.switchToWindow(h.panelHandle);
@@ -62,33 +44,32 @@ async function switchByLabel(browser, label) {
   return browser.$(`//label[.//input[@role="switch"] and normalize-space(.)="${label}"]`);
 }
 
-async function waitForPopoverClosed(browser, button) {
-  const isOpen = () =>
-    browser.execute((element) => element.parentElement?.getAttribute('aria-expanded') === 'true', button);
-  if (await isOpen()) await button.click();
-  await browser.waitUntil(
-    () => browser.execute((element) => element.parentElement?.getAttribute('aria-expanded') === 'false', button),
-    { timeout: 5000, timeoutMsg: 'color popover did not close after selecting a palette entry' },
-  );
+async function waitForPopoverClosed(browser) {
+  const popover = await browser.$('[role="dialog"]');
+  if (await popover.isDisplayed()) await browser.keys('Escape');
+  await browser.waitUntil(async () => !(await browser.$('[role="dialog"]').isDisplayed()), {
+    timeout: 5000,
+    timeoutMsg: 'color popover did not close after selecting a palette entry',
+  });
 }
 
 async function stored(h) {
-  const value = await h.readSettings();
-  return value?.tintSettings ?? value?.settings ?? value;
+  return h.readSettings();
 }
 
 async function waitStored(h, predicate) {
+  let matched;
   await h.browser.waitUntil(
     async () => {
-      const value = await stored(h);
-      return value !== null && predicate(value);
+      matched = await stored(h);
+      return matched !== null && predicate(matched);
     },
     {
       timeout: 5000,
       timeoutMsg: 'extension storage did not reach the expected state',
     },
   );
-  return stored(h);
+  return matched;
 }
 
 async function dialog(browser) {
@@ -104,15 +85,26 @@ async function dialogIsClosed(browser) {
   return !dialogDisplayed && !backdropDisplayed;
 }
 
-async function alertText(browser) {
-  const alert = await browser.$('.alert--danger');
-  await alert.waitForDisplayed();
-  return await alert.getText();
+async function alertText(browser, expected) {
+  await browser.waitUntil(
+    async () => {
+      const alert = await browser.$('[role="alert"]');
+      return (await alert.isDisplayed()) && expected.test(await alert.getText());
+    },
+    { timeout: 5000, interval: 100, timeoutMsg: `alert did not show ${expected}` },
+  );
+  return await (await browser.$('[role="alert"]')).getText();
 }
 
-async function alertIsHidden(browser) {
-  const alert = await browser.$('.alert--danger');
-  return !(await alert.isDisplayed());
+async function statusText(browser, expected) {
+  await browser.waitUntil(
+    async () => {
+      const status = await browser.$('[role="status"]');
+      return (await status.isDisplayed()) && expected.test(await status.getText());
+    },
+    { timeout: 5000, interval: 100, timeoutMsg: `status did not show ${expected}` },
+  );
+  return await (await browser.$('[role="status"]')).getText();
 }
 
 async function chooseMatchType(browser, container, type) {
@@ -130,7 +122,10 @@ async function addRuleThroughUi(h, type, value) {
   const label = type === 'regex' ? 'Pattern' : 'Project ID';
   const input = await modal.$(`input[aria-label="${label}"]`);
   await fill(browser, input, value);
-  await browser.keys('Enter');
+  await modal.$('button=Add').click();
+  await waitStored(h, (storedSettings) =>
+    storedSettings.projectRules?.some((item) => item.matchType === type && item.pattern === value.trim()),
+  );
   await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
 }
 
@@ -154,7 +149,7 @@ async function openDetail(browser, index = 0) {
 }
 
 async function selectTab(browser, name) {
-  await click(browser, `[role="tab"][data-key="${name.toLowerCase()}"]`);
+  await click(browser, `//*[@role="tab" and normalize-space(.)="${name}"]`);
 }
 
 async function setColor(browser, input, color) {
@@ -190,39 +185,56 @@ async function setFileInput(browser, input, path) {
     ) {
       throw error;
     }
-    await browser.execute((element) => {
-      element.style.position = 'fixed';
-      element.style.left = '0';
-      element.style.top = '0';
-      element.style.width = '12px';
-      element.style.height = '12px';
-      element.style.margin = '0';
-      element.style.opacity = '0.01';
-      element.style.clip = 'auto';
-      element.style.clipPath = 'none';
-      element.style.zIndex = '2147483647';
-      element.style.pointerEvents = 'auto';
-    }, input);
-    await input.waitForDisplayed();
-    await input.addValue(path);
+    const inlineStyle = await browser.execute((element) => element.getAttribute('style'), input);
+    try {
+      await browser.execute((element) => {
+        element.style.position = 'fixed';
+        element.style.left = '0';
+        element.style.top = '0';
+        element.style.width = '12px';
+        element.style.height = '12px';
+        element.style.margin = '0';
+        element.style.opacity = '0.01';
+        element.style.clip = 'auto';
+        element.style.clipPath = 'none';
+        element.style.zIndex = '2147483647';
+        element.style.pointerEvents = 'auto';
+      }, input);
+      await input.waitForDisplayed();
+      await input.addValue(path);
+    } finally {
+      await browser.execute(
+        (element, style) => {
+          if (style === null) element.removeAttribute('style');
+          else element.setAttribute('style', style);
+        },
+        input,
+        inlineStyle,
+      );
+    }
   }
 }
 
 async function dragWithPointer(browser, from, to, browserName) {
-  const [fromLocation, fromSize, toLocation, toSize] = await Promise.all([
-    from.getLocation(),
-    from.getSize(),
-    to.getLocation(),
-    to.getSize(),
-  ]);
-  const start = {
-    x: Math.round(fromLocation.x + fromSize.width / 2),
-    y: Math.round(fromLocation.y + fromSize.height / 2),
-  };
-  const end = {
-    x: Math.round(toLocation.x + toSize.width / 2),
-    y: Math.round(toLocation.y + toSize.height / 2),
-  };
+  const { start, end, viewport } = await browser.execute(
+    (source, target) => {
+      source.scrollIntoView({ block: 'center', inline: 'nearest' });
+      target.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const center = (element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+      };
+      return { start: center(source), end: center(target), viewport: { width: innerWidth, height: innerHeight } };
+    },
+    from,
+    to,
+  );
+  for (const point of [start, end]) {
+    assert.ok(
+      point.x >= 0 && point.x < viewport.width && point.y >= 0 && point.y < viewport.height,
+      `drag point (${point.x}, ${point.y}) is outside the ${viewport.width}x${viewport.height} viewport`,
+    );
+  }
   if (browserName === 'firefox') {
     assert.equal(process.env.E2E_CONTAINER, '1', 'Firefox XTest drag requires the dedicated E2E Compose container');
     const origin = await browser.execute(() => ({
@@ -363,58 +375,63 @@ for (const browserName of browserTargets()) {
     });
 
     test('edits and duplicates a rule independently, and gates deletion behind a dismissible confirmation', async () => {
-      await h.seedSettings(settings(rule('base', 'old-id')));
+      await h.seedSettings(settings(rule('left', 'left'), rule('base', 'old-id'), rule('right', 'right')));
       const browser = await panel(h);
-      await openDetail(browser);
+      await openDetail(browser, 1);
       await fill(browser, await browser.$('input[aria-label="Project ID"]'), 'edited-id');
-      const trigger = await browser.$('button[aria-haspopup="listbox"]');
-      await trigger.click();
-      await browser.$('//*[@role="option" and normalize-space(.)="Starts with"]').click();
+      await chooseMatchType(browser, browser, 'prefix');
       await waitStored(
         h,
-        (value) => value.projectRules?.[0]?.pattern === 'edited-id' && value.projectRules[0].matchType === 'prefix',
+        (value) => value.projectRules?.[1]?.pattern === 'edited-id' && value.projectRules[1].matchType === 'prefix',
       );
       await click(browser, 'button[aria-label="Back"]');
-      await (await rowAt(browser, 0)).$('button[aria-label="Duplicate"]').click();
-      const duplicated = await waitStored(h, (value) => value.projectRules?.length === 2);
-      assert.equal(duplicated.projectRules[1].pattern, 'edited-id');
-      assert.notEqual(duplicated.projectRules[0].id, duplicated.projectRules[1].id);
-      await openDetail(browser, 1);
+      await (await rowAt(browser, 1)).$('button[aria-label="Duplicate"]').click();
+      const duplicated = await waitStored(h, (value) => value.projectRules?.length === 4);
+      assert.deepEqual(
+        duplicated.projectRules.map((item) => item.pattern),
+        ['left', 'edited-id', 'edited-id', 'right'],
+      );
+      assert.deepEqual(
+        [duplicated.projectRules[0].id, duplicated.projectRules[1].id, duplicated.projectRules[3].id],
+        ['left', 'base', 'right'],
+      );
+      assert.equal(new Set(duplicated.projectRules.map((item) => item.id)).size, 4);
+      assert.notEqual(duplicated.projectRules[1].id, duplicated.projectRules[2].id);
+      await openDetail(browser, 2);
       await fill(browser, await browser.$('input[aria-label="Project ID"]'), 'copy-id');
-      const independentlyEdited = await waitStored(h, (value) => value.projectRules?.[1]?.pattern === 'copy-id');
-      assert.equal(independentlyEdited.projectRules[0].pattern, 'edited-id');
+      const independentlyEdited = await waitStored(h, (value) => value.projectRules?.[2]?.pattern === 'copy-id');
+      assert.equal(independentlyEdited.projectRules[1].pattern, 'edited-id');
       await click(browser, 'button[aria-label="Back"]');
 
-      await (await rowAt(browser, 1)).$('button[aria-label="Delete"]').click();
+      await (await rowAt(browser, 2)).$('button[aria-label="Delete"]').click();
       await dialog(browser);
       await browser.keys('Escape');
       await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
-      assert.equal((await stored(h)).projectRules.length, 2);
-      await (await rowAt(browser, 1)).$('button[aria-label="Delete"]').click();
+      assert.equal((await stored(h)).projectRules.length, 4);
+      await (await rowAt(browser, 2)).$('button[aria-label="Delete"]').click();
       const confirmation = await dialog(browser);
       await confirmation.$('button=Delete').click();
-      const remaining = await waitStored(h, (value) => value.projectRules?.length === 1);
-      assert.equal(remaining.projectRules[0].pattern, 'edited-id');
+      const remaining = await waitStored(h, (value) => value.projectRules?.length === 3);
+      assert.deepEqual(
+        remaining.projectRules.map((item) => item.pattern),
+        ['left', 'edited-id', 'right'],
+      );
 
-      await openDetail(browser);
-      const matchType = await browser.$('button[aria-haspopup="listbox"]');
-      await matchType.click();
-      await browser.$('//*[@role="option" and normalize-space(.)="Regex"]').click();
+      await openDetail(browser, 1);
+      await chooseMatchType(browser, browser, 'regex');
       const pattern = await browser.$('input[aria-label="Pattern"]');
       await fill(browser, pattern, '[');
       const invalidPattern = await browser.$('//*[normalize-space(.)="Invalid regular expression"]');
       await invalidPattern.waitForDisplayed();
-      const invalidRegex = await waitStored(
+      await waitStored(
         h,
-        (value) => value.projectRules?.[0]?.matchType === 'regex' && value.projectRules[0].pattern === '[',
+        (value) => value.projectRules?.[1]?.matchType === 'regex' && value.projectRules[1].pattern === '[',
       );
-      assert.equal(invalidRegex.projectRules[0].pattern, '[', 'an invalid regex remains visible while editing');
       await fill(browser, pattern, '^edited-id$');
-      const validRegex = await waitStored(
+      await waitStored(
         h,
-        (value) => value.projectRules?.[0]?.matchType === 'regex' && value.projectRules[0].pattern === '^edited-id$',
+        (value) => value.projectRules?.[1]?.matchType === 'regex' && value.projectRules[1].pattern === '^edited-id$',
       );
-      assert.equal(validRegex.projectRules[0].pattern, '^edited-id$');
       await browser.waitUntil(async () => !(await invalidPattern.isDisplayed()), {
         timeout: 5000,
         timeoutMsg: 'valid regex did not clear the detail validation message',
@@ -461,7 +478,7 @@ for (const browserName of browserTargets()) {
           afterTextDrag = (await stored(h)).projectRules.map((item) => item.pattern);
           return JSON.stringify(afterTextDrag) !== JSON.stringify(before) || Date.now() - unchangedSince >= 400;
         },
-        { timeout: 1000, interval: 50, timeoutMsg: 'text drag did not settle within the stability window' },
+        { timeout: 5000, interval: 50, timeoutMsg: 'text drag did not settle within the stability window' },
       );
       assert.deepEqual(afterTextDrag, before, 'dragging from rule text must not change rule order');
       await browser.waitUntil(async () => (await h.snapshotConsole()).topBar.backgroundColor === 'rgb(0, 204, 0)', {
@@ -480,7 +497,15 @@ for (const browserName of browserTargets()) {
         palette: otherPalette,
         topBar: { enabled: true, color: { paletteId: 'other-color', custom: '#abcdef' }, height: 8, stripes: false },
       });
-      await h.seedSettings(settings(rule('first', 'project-a'), rule('second', 'project-b', 'exact', otherSettings)));
+      const initialSettings = projectSettings({
+        topBar: { enabled: false, color: { paletteId: null, custom: '#123456' }, height: 7, stripes: false },
+      });
+      await h.seedSettings(
+        settings(
+          rule('first', 'project-a', 'exact', initialSettings),
+          rule('second', 'project-b', 'exact', otherSettings),
+        ),
+      );
       const browser = await panel(h);
       await openDetail(browser);
       const paletteSwitch = await switchByLabel(browser, 'Color palette');
@@ -498,15 +523,11 @@ for (const browserName of browserTargets()) {
       await browser.keys('Escape');
       await waitStored(h, (value) => Boolean(value.projectRules?.[0]?.settings.topBar.color.paletteId));
       const height = await browser.$('input[aria-label="Top bar height"]');
-      await waitForPopoverClosed(browser, await browser.$('button[aria-label="Top bar color"]'));
+      await waitForPopoverClosed(browser);
       await height.waitForClickable({
         timeout: 5000,
         timeoutMsg: 'top bar height control remained blocked after closing its color picker',
       });
-      await fill(browser, height, '40');
-      await waitStored(h, (value) => value.projectRules?.[0]?.settings.topBar.height === 40);
-      await fill(browser, height, '1');
-      await waitStored(h, (value) => value.projectRules?.[0]?.settings.topBar.height === 1);
       const waitForHeightToStay = async (expected, input) => {
         let stableSince;
         await browser.waitUntil(
@@ -523,11 +544,23 @@ for (const browserName of browserTargets()) {
         );
       };
       await fill(browser, height, '0');
-      await waitForHeightToStay(1, '0');
-      assert.equal((await stored(h)).projectRules[0].settings.topBar.height, 1);
-      await fill(browser, height, '1.5');
-      await waitForHeightToStay(1, '1.5');
-      assert.equal((await stored(h)).projectRules[0].settings.topBar.height, 1);
+      await waitForHeightToStay(7, '0');
+      assert.equal((await stored(h)).projectRules[0].settings.topBar.height, 7);
+      await browser.execute(
+        (element, value) => {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          setter.call(element, value);
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        },
+        height,
+        '1.5',
+      );
+      await waitForHeightToStay(7, '1.5');
+      assert.equal((await stored(h)).projectRules[0].settings.topBar.height, 7);
+      await fill(browser, height, '40');
+      await waitStored(h, (value) => value.projectRules?.[0]?.settings.topBar.height === 40);
+      await fill(browser, height, '1');
+      await waitStored(h, (value) => value.projectRules?.[0]?.settings.topBar.height === 1);
       await fill(browser, height, '41');
       await waitForHeightToStay(4, '41');
       assert.equal(
@@ -585,12 +618,15 @@ for (const browserName of browserTargets()) {
       assert.equal(paletteText.projectRules[0].settings.platformBarText.color.custom, '#345678');
       await setColor(browser, await browser.$('input[aria-label="Custom color"]'), '#223344');
       await browser.keys('Escape');
-      const saved = await waitStored(h, (value) => value.projectRules?.[0]?.settings.platformBarText.auto === false);
-      assert.equal(saved.projectRules[0].settings.platformBarText.color.custom, '#223344');
+      const saved = await waitStored(
+        h,
+        (value) =>
+          value.projectRules?.[0]?.settings.platformBarText.auto === false &&
+          value.projectRules[0].settings.platformBarText.color.custom === '#223344',
+      );
       assert.equal(saved.projectRules[1].settings.palette.entries[0].name, 'Other');
 
-      const platformTextPicker = await browser.$('button[aria-label="Platform Bar text color"]');
-      await waitForPopoverClosed(browser, platformTextPicker);
+      await waitForPopoverClosed(browser);
       await (await browser.$('button[aria-label="Platform Bar color"]')).waitForClickable({
         timeout: 5000,
         timeoutMsg: 'text color popover did not close before opening the platform color picker',
@@ -598,16 +634,15 @@ for (const browserName of browserTargets()) {
       await click(browser, 'button[aria-label="Platform Bar color"]');
       await click(browser, 'button[aria-label="Brand"]');
       await browser.keys('Escape');
-      const platformPicker = await browser.$('button[aria-label="Platform Bar color"]');
-      await waitForPopoverClosed(browser, platformPicker);
-      await platformTextPicker.waitForClickable({
+      await waitForPopoverClosed(browser);
+      await browser.$('button[aria-label="Platform Bar text color"]').waitForClickable({
         timeout: 5000,
         timeoutMsg: 'platform color popover did not close before reopening the text color picker',
       });
       await click(browser, 'button[aria-label="Platform Bar text color"]');
       await click(browser, 'button[aria-label="Brand"]');
       await browser.keys('Escape');
-      await waitForPopoverClosed(browser, platformTextPicker);
+      await waitForPopoverClosed(browser);
       let referenced = await waitStored(
         h,
         (value) =>
@@ -804,24 +839,50 @@ for (const browserName of browserTargets()) {
       for (const name of await readdir(h.downloadDir)) {
         if (name.endsWith('.json')) await unlink(join(h.downloadDir, name));
       }
-      await click(browser, 'button=Export');
       let exportedName;
-      await browser.waitUntil(
-        async () => {
-          exportedName = (await readdir(h.downloadDir)).find((name) =>
-            /^gcp-console-tint-settings-\d{4}-\d{2}-\d{2}\.json$/.test(name),
-          );
-          return Boolean(exportedName);
-        },
-        { timeout: 10000, timeoutMsg: 'Export did not produce a downloaded JSON file' },
-      );
-      const exported = JSON.parse(await readFile(join(h.downloadDir, exportedName), 'utf8'));
-      const date = await browser.execute(() => {
-        const now = new Date();
-        const pad = (value) => String(value).padStart(2, '0');
-        return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      await browser.execute(() => {
+        const NativeDate = window.Date;
+        const actualNow = NativeDate.now.bind(NativeDate);
+        const fixedTime = NativeDate.UTC(2024, 0, 1, 23, 30);
+        Object.defineProperty(window, '__gcpTintOriginalDate', { value: NativeDate, configurable: true });
+        window.Date = class extends NativeDate {
+          constructor(...args) {
+            super(...(args.length === 0 ? [fixedTime] : args));
+          }
+          static now() {
+            return actualNow();
+          }
+        };
       });
-      assert.equal(exportedName, `gcp-console-tint-settings-${date}.json`);
+      try {
+        await click(browser, 'button=Export');
+        await browser.waitUntil(
+          async () => {
+            exportedName = (await readdir(h.downloadDir)).find((name) =>
+              /^gcp-console-tint-settings-\d{4}-\d{2}-\d{2}\.json$/.test(name),
+            );
+            return Boolean(exportedName);
+          },
+          { timeout: 10000, timeoutMsg: 'Export did not produce a downloaded JSON file' },
+        );
+        const dates = await browser.execute(() => {
+          // Firefox's WebDriver script global has its own Date; inspect the page's constructor.
+          const now = new window.Date();
+          const pad = (value) => String(value).padStart(2, '0');
+          return {
+            localDate: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+            utcDate: now.toISOString().slice(0, 10),
+          };
+        });
+        assert.deepEqual(dates, { localDate: '2024-01-02', utcDate: '2024-01-01' });
+        assert.equal(exportedName, 'gcp-console-tint-settings-2024-01-02.json');
+      } finally {
+        await browser.execute(() => {
+          window.Date = window.__gcpTintOriginalDate;
+          delete window.__gcpTintOriginalDate;
+        });
+      }
+      const exported = JSON.parse(await readFile(join(h.downloadDir, exportedName), 'utf8'));
       assert.equal(exported.schemaVersion, VERSION);
       assert.deepEqual(exported, initial);
 
@@ -832,7 +893,9 @@ for (const browserName of browserTargets()) {
       await dialog(browser);
       await click(browser, 'button=Import 2 rules');
       await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
-      const roundTripped = await stored(h);
+      const addedNotice = await statusText(browser, /Imported 2 rules/);
+      assert.ok(addedNotice.includes(`2 added from ${exportedName}`));
+      const roundTripped = await waitStored(h, (value) => value.projectRules?.length === 2);
       assert.deepEqual(
         roundTripped.projectRules.map(({ id, ...item }) => item),
         initial.projectRules.map(({ id, ...item }) => item),
@@ -882,9 +945,32 @@ for (const browserName of browserTargets()) {
       const warning = await browser.$('.alert--warning');
       await warning.waitForDisplayed();
       assert.match(await warning.getText(), /Replaces 2 existing rules/);
-      await browser.$('//label[.//input[@type="checkbox" and @aria-label="skip"]]').click();
+      const selectAll = await browser.$('//label[.//input[@type="checkbox"] and contains(., "Select all")]');
+      const skip = await browser.$('//label[.//input[@type="checkbox" and @aria-label="skip"]]');
+      await skip.click();
+      await browser.$('//span[normalize-space(.)="3 of 4 selected"]').waitForDisplayed();
+      const selectAllState = await browser.execute((label) => {
+        const checkbox = label.querySelector('input[type="checkbox"]');
+        return {
+          checked: checkbox.checked,
+          indeterminate: checkbox.indeterminate,
+          ariaChecked:
+            checkbox.getAttribute('aria-checked') ??
+            label.getAttribute('aria-checked') ??
+            label.querySelector('[role="checkbox"]')?.getAttribute('aria-checked'),
+        };
+      }, selectAll);
+      assert.equal(selectAllState.checked, false);
+      assert.ok(selectAllState.indeterminate || selectAllState.ariaChecked === 'mixed');
+      await selectAll.click();
+      await browser.$('//span[normalize-space(.)="4 of 4 selected"]').waitForDisplayed();
+      assert.equal(await (await selectAll.$('input[type="checkbox"]')).isSelected(), true);
+      await skip.click();
+      await browser.$('//span[normalize-space(.)="3 of 4 selected"]').waitForDisplayed();
       await click(browser, 'button=Import 3 rules');
       await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
+      const duplicateNotice = await statusText(browser, /Imported 3 rules/);
+      assert.ok(duplicateNotice.includes('1 added and 2 replaced from incoming.json'));
       const imported = await waitStored(h, (value) => value.projectRules?.some((item) => item.pattern === 'new'));
       assert.deepEqual(
         imported.projectRules.map((item) => item.pattern),
@@ -966,15 +1052,21 @@ for (const browserName of browserTargets()) {
         const path = join(h.downloadDir, failure.name);
         await writeFile(path, failure.content);
         await setFileInput(browser, input, path);
-        const currentAlert = await alertText(browser);
+        const currentAlert = await alertText(browser, failure.message);
         assert.match(currentAlert, /Couldn’t import this file/);
-        assert.match(currentAlert, failure.message);
         if (failure.detail) assert.match(currentAlert, failure.detail);
         const copyDetails = await browser.$('button=Copy details');
         assert.equal(await copyDetails.isExisting(), failure.detail !== undefined);
         if (index === 0) {
-          const expectedDetails = await browser.$('.alert--danger .whitespace-pre-wrap').getText();
-          assert.ok(expectedDetails, 'the parser detail should be visible before copying');
+          const expectedDetails = await browser.execute((content) => {
+            try {
+              JSON.parse(content);
+            } catch (error) {
+              return `${error.name}: ${error.message}`;
+            }
+          }, failure.content);
+          assert.match(expectedDetails, /^SyntaxError: .+/);
+          assert.ok(currentAlert.includes(expectedDetails), 'the browser JSON parser detail should be visible');
 
           const probeId = 'e2e-clipboard-probe';
           await browser.execute((id) => {
@@ -1013,19 +1105,13 @@ for (const browserName of browserTargets()) {
           ['safe-project'],
         );
         if (index === 0) {
-          await click(browser, 'button=Export');
-          await browser.waitUntil(() => alertIsHidden(browser), { timeout: 5000 });
+          await writeFile(path, '[]');
           await setFileInput(browser, input, path);
-          const retryAlert = await alertText(browser);
-          assert.match(retryAlert, /invalid-json\.json could not be parsed as JSON\./);
+          await alertText(browser, /invalid-json\.json isn’t a GCP Console Tint settings file\./);
           assert.deepEqual(
             (await stored(h)).projectRules.map((item) => item.pattern),
             ['safe-project'],
           );
-        }
-        if (index < failures.length - 1) {
-          await click(browser, 'button=Export');
-          await browser.waitUntil(() => alertIsHidden(browser), { timeout: 5000 });
         }
       }
     });

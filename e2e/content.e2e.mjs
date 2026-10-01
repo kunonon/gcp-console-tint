@@ -1,28 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { setTimeout as pause } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
+import { projectSettings, rule, settings, VERSION } from './fixtures.mjs';
 import { browserTargets, createHarness, openTab } from './harness.mjs';
-
-const { version: VERSION } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-
-function projectSettings(overrides = {}) {
-  return {
-    palette: { enabled: false, entries: [] },
-    topBar: { enabled: false, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false },
-    platformBar: { enabled: false, color: { paletteId: null, custom: '#234567' }, stripes: false },
-    platformBarText: { enabled: false, color: { paletteId: null, custom: '#345678' }, auto: false },
-    ...overrides,
-  };
-}
-
-function rule(id, pattern, matchType = 'exact', settings = projectSettings()) {
-  return { id, matchType, pattern, settings };
-}
-
-function settings(...projectRules) {
-  return { schemaVersion: VERSION, projectRules };
-}
 
 function topBar(color, height = 7, stripes = false) {
   return { enabled: true, color: { paletteId: null, custom: color }, height, stripes };
@@ -57,13 +38,21 @@ async function setStored(h, value, extra = {}) {
   await browser.switchToWindow(h.mockHandle);
 }
 
-async function snapshotWhen(h, predicate, message) {
-  await h.browser.waitUntil(async () => predicate(await h.snapshotConsole()), {
+async function snapshotWhen(h, predicate, message, handle = h.mockHandle) {
+  await h.browser.waitUntil(async () => predicate(await h.snapshotConsole(handle)), {
     timeout: 8000,
     interval: 100,
     timeoutMsg: message,
   });
-  return h.snapshotConsole();
+  return h.snapshotConsole(handle);
+}
+
+async function assertStable(read, assertSample, message, duration = 450) {
+  const deadline = Date.now() + duration;
+  do {
+    assertSample(await read(), message);
+    if (Date.now() < deadline) await pause(100);
+  } while (Date.now() < deadline);
 }
 
 async function waitSettings(h, predicate, message) {
@@ -174,7 +163,7 @@ for (const browserName of browserTargets()) {
           rule('suffix', '-prod', 'suffix', colors.suffix),
           rule('exact', 'exact-id', 'exact', colors.exact),
           rule('exact-path', 'team/prod', 'exact', projectSettings({ topBar: topBar('#ffaa00') })),
-          rule('regex', 'svc-[0-9]+|dev-[0-9]+', 'regex', colors.regex),
+          rule('regex', 'svc[0-9]+|dev[0-9]+', 'regex', colors.regex),
           rule('invalid-regex', '[', 'regex', projectSettings({ topBar: topBar('#ff00ff') })),
         ),
       );
@@ -186,9 +175,11 @@ for (const browserName of browserTargets()) {
         ['exact-id', 'rgb(0, 0, 204)'],
         ['exact-id-extra', 'none'],
         ['team/prod', 'rgb(255, 170, 0)'],
-        ['svc-123', 'rgb(170, 0, 170)'],
-        ['dev-7', 'rgb(170, 0, 170)'],
-        ['xsvc-123', 'none'],
+        ['svc123', 'rgb(170, 0, 170)'],
+        ['svc123-extra', 'none'],
+        ['dev7', 'rgb(170, 0, 170)'],
+        ['xdev7', 'none'],
+        ['team-other', 'rgb(204, 0, 0)'],
         ['invalid', 'none'],
       ];
       await h.openConsole(cases[0][0]);
@@ -223,16 +214,16 @@ for (const browserName of browserTargets()) {
         ),
       );
 
-      await h.openConsole('alpha');
-      const matched = await snapshotWhen(
-        h,
-        (value) =>
-          value.topBar.backgroundColor === 'rgb(204, 0, 0)' && value.platformBar.backgroundColor === 'rgb(0, 170, 0)',
-        'matched project was not tinted before no-match checks',
-      );
-      assert.equal(matched.topBar.backgroundColor, 'rgb(204, 0, 0)');
-
       for (const path of ['/', '/?project=', '/?project=other']) {
+        await h.openConsole('alpha');
+        await snapshotWhen(
+          h,
+          (value) =>
+            value.topBar.display === 'block' &&
+            value.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+            value.platformBar.backgroundColor === 'rgb(0, 170, 0)',
+          'matched project was not tinted before no-match checks',
+        );
         await pushHistoryUrl(h, path);
         const snapshot = await snapshotWhen(
           h,
@@ -249,28 +240,41 @@ for (const browserName of browserTargets()) {
 
       for (const url of ['http://outside.example.test/?project=alpha', 'https://outside.example.test/?project=alpha']) {
         await h.openConsole(url);
-        const snapshot = await h.snapshotConsole();
-        assert.equal(snapshot.topBar.exists, false, url);
-        assert.equal(snapshot.topBar.display, null, url);
-        assert.equal(snapshot.platformBar.backgroundColor, 'rgb(238, 238, 238)', url);
+        const snapshot = await snapshotWhen(
+          h,
+          (value) =>
+            value.origin === new URL(url).origin && value.title === 'GCP Console mock' && value.platformBar.exists,
+          `outside-origin fixture did not load for ${url}`,
+        );
+        assert.equal(new URL(snapshot.href).host, new URL(url).host, url);
+        await assertStable(
+          () => h.snapshotConsole(),
+          (value, message) => {
+            assert.equal(value.topBar.exists, false, message);
+            assert.equal(value.topBar.display, null, message);
+            assert.equal(value.topBar.backgroundColor, null, message);
+            assert.equal(value.platformBar.backgroundColor, 'rgb(238, 238, 238)', message);
+          },
+          `outside-origin tint changed after load for ${url}`,
+        );
       }
 
       await h.openConsole('http://console.cloud.google.com/?project=alpha');
-      const httpAttempt = await h.snapshotConsole();
-      assert.equal(httpAttempt.title, 'GCP Console mock');
-      assert.equal(new URL(httpAttempt.href).host, 'console.cloud.google.com');
-      await h.browser.switchToWindow(h.mockHandle);
-      assert.equal(
-        await h.browser.execute(() => Boolean(document.querySelector('#ocb-platform-bar'))),
-        true,
-        'HTTP response did not contain the GCP Console fixture platform bar',
+      const httpAttempt = await snapshotWhen(
+        h,
+        (value) => value.title === 'GCP Console mock' && value.platformBar.exists,
+        'HTTP response did not load the GCP Console fixture platform bar',
       );
+      assert.equal(new URL(httpAttempt.href).host, 'console.cloud.google.com');
       const wasUpgraded = new URL(httpAttempt.href).protocol === 'https:';
       const httpObserved = wasUpgraded
         ? await snapshotWhen(
             h,
-            (value) => value.topBar.backgroundColor === 'rgb(204, 0, 0)',
-            'HTTPS-upgraded console page was not tinted',
+            (value) =>
+              value.topBar.display === 'block' &&
+              value.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+              value.platformBar.backgroundColor === 'rgb(0, 170, 0)',
+            'HTTPS-upgraded console page did not show both configured colors',
           )
         : httpAttempt;
       assert.equal(
@@ -279,11 +283,26 @@ for (const browserName of browserTargets()) {
         'HTTP input should only run the content script if the browser upgraded it to HTTPS',
       );
       if (wasUpgraded) assert.equal(httpObserved.topBar.backgroundColor, 'rgb(204, 0, 0)');
+      else {
+        await assertStable(
+          () => h.snapshotConsole(),
+          (value, message) => {
+            assert.equal(value.topBar.exists, false, message);
+            assert.equal(value.topBar.display, null, message);
+            assert.equal(value.topBar.backgroundColor, null, message);
+            assert.equal(value.platformBar.backgroundColor, 'rgb(238, 238, 238)', message);
+          },
+          'non-upgraded HTTP console acquired a tint after load',
+        );
+      }
 
       await h.openConsole('alpha');
       await snapshotWhen(
         h,
-        (value) => value.topBar.backgroundColor === 'rgb(204, 0, 0)',
+        (value) =>
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+          value.platformBar.backgroundColor === 'rgb(0, 170, 0)',
         'matching settings were not restored after origin checks',
       );
       await setStored(h, settings());
@@ -299,6 +318,31 @@ for (const browserName of browserTargets()) {
     test('covers all eight surface-enable combinations through real storage updates', async () => {
       const baselineTextColors = Object.values((await h.snapshotConsole()).platformBar.textColors);
       const expectedText = 'rgb(171, 18, 205)';
+      await setStored(
+        h,
+        settings(
+          rule(
+            'alpha',
+            'alpha',
+            'exact',
+            projectSettings({
+              topBar: topBar('#123456', 11),
+              platformBar: platformBar('#00aa00'),
+              platformBarText: textColor('#ab12cd'),
+            }),
+          ),
+        ),
+      );
+      await snapshotWhen(
+        h,
+        (current) =>
+          current.topBar.display === 'block' &&
+          current.topBar.backgroundColor === 'rgb(18, 52, 86)' &&
+          current.topBar.height === '11px' &&
+          current.platformBar.backgroundColor === 'rgb(0, 170, 0)' &&
+          Object.values(current.platformBar.textColors).every((color) => color === expectedText),
+        'all enabled surfaces did not render before the mask sequence',
+      );
       for (let mask = 0; mask < 8; mask++) {
         const [topEnabled, platformEnabled, textEnabled] = [0, 1, 2].map((bit) => Boolean(mask & (1 << bit)));
         const value = settings(
@@ -470,10 +514,22 @@ for (const browserName of browserTargets()) {
         platformBar: platformBar('#f8f8f8'),
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
       });
-      await setStored(h, settings(rule('dark', 'dark', 'exact', dark), rule('light', 'light', 'exact', light)));
+      const gray = projectSettings({
+        platformBar: platformBar('#777777'),
+        platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
+      });
+      await setStored(
+        h,
+        settings(
+          rule('dark', 'dark', 'exact', dark),
+          rule('light', 'light', 'exact', light),
+          rule('gray', 'gray', 'exact', gray),
+        ),
+      );
       for (const [projectId, expected] of [
         ['dark', 'rgb(255, 255, 255)'],
         ['light', 'rgb(0, 0, 0)'],
+        ['gray', 'rgb(0, 0, 0)'],
       ]) {
         await h.openConsole(projectId);
         const snapshot = await snapshotWhen(
@@ -559,47 +615,35 @@ for (const browserName of browserTargets()) {
 
       const secondHandle = await openTab(h.browser, browserName, 'https://console.cloud.google.com/?project=alpha');
       try {
-        await h.browser.waitUntil(
-          () =>
-            h.browser.execute(() => {
-              const bar = [...document.documentElement.children].find(
-                (element) => element.style.position === 'fixed' && element.style.zIndex === '2147483647',
-              );
-              return (
-                document.readyState === 'complete' &&
-                location.origin === 'https://console.cloud.google.com' &&
-                new URLSearchParams(location.search).get('project') === 'alpha' &&
-                bar &&
-                getComputedStyle(bar).backgroundColor === 'rgb(204, 0, 0)'
-              );
-            }),
-          {
-            timeout: 10000,
-            interval: 100,
-            timeoutMsg: 'second tab did not load the initial content script and project tint',
-          },
+        await snapshotWhen(
+          h,
+          (current) =>
+            current.origin === 'https://console.cloud.google.com' &&
+            current.href.includes('project=alpha') &&
+            current.topBar.display === 'block' &&
+            current.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+            current.platformBar.backgroundColor === 'rgb(204, 0, 0)',
+          'second tab did not load the initial content script and project tint',
+          secondHandle,
         );
         const shared = projectSettings({ topBar: topBar('#00aa00'), platformBar: platformBar('#00aa00') });
         await setStored(h, settings(rule('alpha', 'alpha', 'exact', shared), rule('beta', 'beta', 'exact', beta)));
         snapshot = await snapshotWhen(
           h,
-          (current) => current.topBar.backgroundColor === 'rgb(0, 170, 0)',
+          (current) =>
+            current.topBar.display === 'block' &&
+            current.topBar.backgroundColor === 'rgb(0, 170, 0)' &&
+            current.platformBar.backgroundColor === 'rgb(0, 170, 0)',
           'first tab did not receive storage.onChanged',
         );
-        await h.browser.switchToWindow(secondHandle);
-        await h.browser.waitUntil(
-          () =>
-            h.browser.execute(() => {
-              const bar = [...document.documentElement.children].find(
-                (element) => element.style.position === 'fixed' && element.style.zIndex === '2147483647',
-              );
-              return Boolean(bar && getComputedStyle(bar).backgroundColor === 'rgb(0, 170, 0)');
-            }),
-          {
-            timeout: 8000,
-            interval: 100,
-            timeoutMsg: 'second tab did not receive storage.onChanged',
-          },
+        await snapshotWhen(
+          h,
+          (current) =>
+            current.topBar.display === 'block' &&
+            current.topBar.backgroundColor === 'rgb(0, 170, 0)' &&
+            current.platformBar.backgroundColor === 'rgb(0, 170, 0)',
+          'second tab did not receive storage.onChanged',
+          secondHandle,
         );
 
         await h.browser.switchToWindow(h.panelHandle);
@@ -612,29 +656,17 @@ for (const browserName of browserTargets()) {
           }
         });
         assert.equal(unrelatedChange?.ok, true, unrelatedChange?.message || 'Failed to write unrelated storage key');
-        const stableGreen = async (handle) => {
-          let stableSince;
-          await h.browser.waitUntil(
-            async () => {
-              await h.browser.switchToWindow(handle);
-              const color = await h.browser.execute(() => {
-                const bar = [...document.documentElement.children].find(
-                  (element) => element.style.position === 'fixed' && element.style.zIndex === '2147483647',
-                );
-                return bar ? getComputedStyle(bar).backgroundColor : null;
-              });
-              if (color !== 'rgb(0, 170, 0)') {
-                stableSince = undefined;
-                return false;
-              }
-              stableSince ??= Date.now();
-              return Date.now() - stableSince >= 400;
+        for (const handle of [h.mockHandle, secondHandle]) {
+          await assertStable(
+            () => h.snapshotConsole(handle),
+            (current, message) => {
+              assert.equal(current.topBar.display, 'block', message);
+              assert.equal(current.topBar.backgroundColor, 'rgb(0, 170, 0)', message);
+              assert.equal(current.platformBar.backgroundColor, 'rgb(0, 170, 0)', message);
             },
-            { timeout: 5000, interval: 100, timeoutMsg: 'unrelated storage update changed the active tint' },
+            `unrelated storage update changed the tint in ${handle}`,
           );
-        };
-        await stableGreen(h.mockHandle);
-        await stableGreen(secondHandle);
+        }
       } finally {
         if (
           secondHandle !== h.mockHandle &&
@@ -690,7 +722,21 @@ for (const browserName of browserTargets()) {
         (value) => isDeepStrictEqual(value, current),
         'current schema did not remain intact after extension reload',
       );
-      assert.deepEqual(currentReloaded, current, 'current schema data changed on extension reload');
+      assert.deepEqual(currentReloaded, current, 'current schema data did not remain intact after extension reload');
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=alpha') &&
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(0, 170, 0)' &&
+          value.topBar.height === '7px',
+        'current schema tint and height did not render in the fresh document',
+      );
+      await assertStable(
+        () => h.readSettings(),
+        (value, message) => assert.deepEqual(value, current, message),
+        'current schema raw settings changed after the fresh document rendered',
+      );
 
       const partiallyCorrupt = {
         schemaVersion: VERSION,
@@ -717,11 +763,6 @@ for (const browserName of browserTargets()) {
       };
       await setStored(h, partiallyCorrupt);
       await h.reloadExtension();
-      assert.deepEqual(
-        await h.readSettings(),
-        partiallyCorrupt,
-        'current-schema recovery should not rewrite raw storage',
-      );
 
       await h.openPanel();
       const browser = h.browser;
@@ -751,11 +792,20 @@ for (const browserName of browserTargets()) {
       await h.openConsole('alpha');
       const recovered = await snapshotWhen(
         h,
-        (value) => value.topBar.backgroundColor === 'rgb(204, 51, 102)' && value.topBar.height === '4px',
-        'content script did not apply sanitized field defaults and the valid palette sibling',
+        (value) =>
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(204, 51, 102)' &&
+          value.topBar.height === '4px',
+        'partially corrupt CSS did not use the custom fallback color and default height',
       );
+      assert.equal(recovered.topBar.display, 'block');
       assert.equal(recovered.topBar.backgroundColor, 'rgb(204, 51, 102)');
       assert.equal(recovered.topBar.height, '4px');
+      await assertStable(
+        () => h.readSettings(),
+        (value, message) => assert.deepEqual(value, partiallyCorrupt, message),
+        'partially corrupt current-schema raw settings changed after the CSS fallback rendered',
+      );
 
       const newer = {
         ...settings(rule('future', 'alpha', 'exact', projectSettings({ topBar: topBar('#0000cc') }))),
@@ -768,7 +818,21 @@ for (const browserName of browserTargets()) {
         (value) => isDeepStrictEqual(value, newer),
         'newer schema did not remain intact after extension reload',
       );
-      assert.deepEqual(newerReloaded, newer, 'newer schema data was rewritten or discarded on extension reload');
+      assert.deepEqual(newerReloaded, newer, 'newer schema data did not remain intact after extension reload');
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=alpha') &&
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(0, 0, 204)' &&
+          value.topBar.height === '7px',
+        'newer schema tint and height did not render in the fresh document',
+      );
+      await assertStable(
+        () => h.readSettings(),
+        (value, message) => assert.deepEqual(value, newer, message),
+        'newer schema raw settings changed after the fresh document rendered',
+      );
     });
 
     test('reapplies scoped CSS when the mock platform bar is replaced', async () => {

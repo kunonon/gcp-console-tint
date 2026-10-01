@@ -40,6 +40,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check browser download dependencies
+        run: |
+          pnpm list extract-zip --depth Infinity --json --lockfile-only | node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const containsExtractZip = (value) => value !== null && typeof value === "object" &&
+              (value.from === "extract-zip" || Object.hasOwn(value, "extract-zip") ||
+                Object.values(value).some(containsExtractZip));
+            assert.equal(containsExtractZip(JSON.parse(readFileSync(0, "utf8"))), false,
+              "extract-zip was reintroduced; review the browser download override");
+          '
+
       # The checks are independent of each other, so they run as one parallel group
       # (each member becomes a background step with an implicit wait at the end; if one
       # fails, the rest still finish and the job fails at the group boundary). The two

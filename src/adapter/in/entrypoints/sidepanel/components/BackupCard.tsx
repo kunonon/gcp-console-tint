@@ -210,7 +210,7 @@ export default function BackupCard({ settingsStore, settings, onImport }: Backup
       </Card>
 
       {notice?.status === 'success' && (
-        <Alert status="success">
+        <Alert status="success" role="status">
           <Alert.Indicator />
           <Alert.Content>
             <Alert.Title>
@@ -222,7 +222,7 @@ export default function BackupCard({ settingsStore, settings, onImport }: Backup
       )}
 
       {notice?.status === 'danger' && (
-        <Alert status="danger">
+        <Alert status="danger" role="alert">
           <Alert.Indicator />
           <Alert.Content>
             <Alert.Title>Couldn’t import this file</Alert.Title>

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chown, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,7 +122,7 @@ async function extensionArtifact(browserName, version) {
   if (browserName === 'chrome') {
     const directory = join(outputDir, 'chrome-mv3');
     const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
-    assert.equal(manifest.version, version, 'Chrome output is stale; rebuild the extension first');
+    assert.equal(manifest.version, version, 'Chrome output version does not match this checkout; rebuild first');
     assert.equal(
       manifest.side_panel?.default_path,
       'sidepanel.html',
@@ -137,7 +137,7 @@ async function extensionArtifact(browserName, version) {
   const archive = join(outputDir, `gcp-console-tint-${version}-firefox.zip`);
   const manifest = JSON.parse(execFileSync('unzip', ['-p', archive, 'manifest.json'], { encoding: 'utf8' }));
   assert.equal(manifest.name, extensionName, 'Firefox ZIP contains a different extension');
-  assert.equal(manifest.version, version, 'Firefox output is stale; rebuild the extension first');
+  assert.equal(manifest.version, version, 'Firefox output version does not match this checkout; rebuild first');
   assert.equal(
     manifest.sidebar_action?.default_panel,
     'sidepanel.html',
@@ -154,7 +154,7 @@ async function waitForPage(browser) {
   await browser.waitUntil(() => browser.execute(() => document.readyState === 'complete'), {
     timeout: 15000,
     interval: 100,
-    timeoutMsg: `Timed out loading ${await browser.getUrl()}`,
+    timeoutMsg: 'Timed out waiting for the page to finish loading',
   });
 }
 
@@ -186,7 +186,7 @@ export async function openTab(browser, browserName, url) {
   return handle;
 }
 
-export async function createHarness(browserName, { reducedMotion = process.env.E2E_REDUCED_MOTION === '1' } = {}) {
+export async function createHarness(browserName, { reducedMotion = false } = {}) {
   assert.equal(
     process.env.E2E_CONTAINER,
     '1',
@@ -206,6 +206,14 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
   let mock;
   let browser;
   let closed = false;
+  let failed = false;
+  const restoreArtifactOwnership = async () => {
+    if (process.getuid?.() !== 0) return;
+    const { uid, gid } = await stat(projectRoot);
+    await chown(artifactRoot, uid, gid);
+    await chown(join(artifactRoot, browserName), uid, gid);
+    execFileSync('chown', ['-R', `${uid}:${gid}`, artifactDir]);
+  };
 
   try {
     await mkdir(downloadDir, { recursive: true });
@@ -220,7 +228,6 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
     }
     mock = await startGcpMock();
 
-    const headless = process.env.E2E_HEADLESS !== '0';
     const proxy = {
       proxyType: 'manual',
       httpProxy: mock.proxyUrl,
@@ -241,8 +248,7 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
                 '--window-size=1400,1200',
                 '--no-first-run',
                 '--disable-sync',
-                ...(process.env.E2E_CONTAINER === '1' ? ['--no-sandbox'] : []),
-                ...(headless ? ['--headless=new'] : []),
+                '--no-sandbox',
                 ...(reducedMotion ? ['--force-prefers-reduced-motion=reduce'] : []),
               ],
               prefs: {
@@ -272,7 +278,7 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
               },
             },
             'moz:firefoxOptions': {
-              args: [...(headless ? ['-headless'] : [])],
+              args: [],
               prefs: {
                 'browser.download.dir': downloadDir,
                 'browser.download.folderList': 2,
@@ -616,10 +622,10 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
         await harness.reloadPanel();
         await harness.openConsole();
       },
-      async snapshotConsole() {
+      async snapshotConsole(handle = mockHandle) {
         const originalHandle = await browser.getWindowHandle();
         try {
-          await browser.switchToWindow(mockHandle);
+          await browser.switchToWindow(handle);
           return await browser.execute(() => {
             const computed = (selector) => {
               const element = document.querySelector(selector);
@@ -655,6 +661,7 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
                 },
               },
               unaffectedColor: computed('#unaffected-content')?.color ?? null,
+              unaffectedButtonColor: computed('#navigate-project')?.color ?? null,
               bodyText: document.body.innerText,
             };
           });
@@ -795,6 +802,7 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
         }
       },
       async captureFailure(label = 'failure') {
+        failed = true;
         const screenshotsDir = join(artifactDir, 'screenshots');
         await mkdir(screenshotsDir, { recursive: true });
         const stem =
@@ -807,11 +815,13 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
         ]) {
           try {
             await browser.switchToWindow(handle);
-            await browser.saveScreenshot(join(screenshotsDir, `${stem}-${name}.png`));
-            await writeFile(join(screenshotsDir, `${stem}-${name}.html`), await browser.getPageSource());
           } catch {
-            // Preserve the original test failure if a tab has already closed.
+            continue; // A closed tab cannot provide diagnostics.
           }
+          await Promise.allSettled([
+            browser.saveScreenshot(join(screenshotsDir, `${stem}-${name}.png`)),
+            browser.getPageSource().then((source) => writeFile(join(screenshotsDir, `${stem}-${name}.html`), source)),
+          ]);
         }
       },
       async close() {
@@ -822,6 +832,10 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
           () => browser.deleteSession(),
           () => mock.close(),
           () => rm(tempDir, { recursive: true, force: true }),
+          async () => {
+            await restoreArtifactOwnership();
+            if (!failed && cleanupErrors.length === 0) await rm(artifactDir, { recursive: true, force: true });
+          },
         ]) {
           try {
             await cleanup();
@@ -839,11 +853,16 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
       await mkdir(join(artifactDir, 'startup'), { recursive: true });
       await writeFile(join(artifactDir, 'startup', 'error.txt'), String(error.stack || error));
       if (browser) {
-        await writeFile(join(artifactDir, 'startup', 'url.txt'), await browser.getUrl());
-        await writeFile(join(artifactDir, 'startup', 'page.html'), await browser.getPageSource());
-        await browser.saveScreenshot(join(artifactDir, 'startup', 'page.png'));
-        const browserLogs = await browser.getLogs('browser').catch(() => []);
-        await writeFile(join(artifactDir, 'startup', 'browser-logs.json'), JSON.stringify(browserLogs, null, 2));
+        await Promise.allSettled([
+          browser.getUrl().then((url) => writeFile(join(artifactDir, 'startup', 'url.txt'), url)),
+          browser.getPageSource().then((source) => writeFile(join(artifactDir, 'startup', 'page.html'), source)),
+          browser.saveScreenshot(join(artifactDir, 'startup', 'page.png')),
+          browser
+            .getLogs('browser')
+            .then((logs) =>
+              writeFile(join(artifactDir, 'startup', 'browser-logs.json'), JSON.stringify(logs, null, 2)),
+            ),
+        ]);
       }
     } catch {
       // Startup diagnostics must not replace the actual browser error.
@@ -853,6 +872,7 @@ export async function createHarness(browserName, { reducedMotion = process.env.E
       () => browser?.deleteSession(),
       () => mock?.close(),
       () => rm(tempDir, { recursive: true, force: true }),
+      () => restoreArtifactOwnership(),
     ]) {
       try {
         await cleanup();

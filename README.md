@@ -36,7 +36,7 @@ docker compose run --rm dev sh -c "corepack enable && pnpm install && pnpm build
 
 ## Development
 
-The development server and package-manager work happen inside Docker. Browser end-to-end tests use a separate Linux container so Chrome and Firefox run in a consistent environment. Make shortcuts:
+Local dependency installation and the development server run inside Docker. Browser end-to-end tests use a separate Linux container so Chrome and Firefox run in a consistent environment. Make shortcuts:
 
 ```sh
 make up      # start the dev stack in the background (docker compose up -d)
@@ -72,7 +72,7 @@ The WebdriverIO tests load the production Chrome and Firefox extensions against 
 docker compose --profile e2e run --rm --build e2e
 ```
 
-The service installs dependencies, builds both extension artifacts, and runs the browsers under Xvfb. Use `docker compose --profile e2e run --rm --build -e E2E_BROWSER=chrome e2e` or the same command with `E2E_BROWSER=firefox` to select one browser. `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox` are shortcuts to those Compose runs. Browser binaries and dependencies use dedicated Docker volumes, separate from the development container and host `node_modules`. Failure screenshots and startup diagnostics are written to `.e2e-artifacts/`.
+The service installs dependencies, builds both extension artifacts, and runs the browsers under Xvfb. Use `docker compose --profile e2e run --rm --build -e E2E_BROWSER=chrome e2e` or the same command with `E2E_BROWSER=firefox` to select one browser. If pnpm is already available on the host, `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox` are optional launchers for those Compose runs; host dependency installation is unnecessary. Browser binaries and dependencies use dedicated Docker volumes, separate from the development container and host `node_modules`. Failed runs retain screenshots and startup diagnostics in `.e2e-artifacts/`; successful harness runs remove their own artifacts.
 
 See [E2E coverage and scope](e2e/README.md) for the scenarios and browser-coverage limits.
 

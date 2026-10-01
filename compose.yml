@@ -36,7 +36,7 @@ services:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
       E2E_ARTIFACT_DIR: /artifacts
       E2E_CONTAINER: "1"
-      E2E_HEADLESS: "0"
+      TZ: Asia/Tokyo
 
 volumes:
   node_modules:

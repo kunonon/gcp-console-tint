@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import test from 'node:test';
 import { browserTargets, createHarness } from './harness.mjs';
 
@@ -13,6 +15,10 @@ for (const browserName of browserTargets()) {
       assert.equal(snapshot.title, 'GCP Console mock');
       assert.equal(snapshot.topBar.exists, true);
       assert.equal(snapshot.topBar.display, 'none');
+      assert.equal(snapshot.platformBar.backgroundColor, 'rgb(238, 238, 238)');
+      assert.equal(snapshot.platformBar.textColors.left, 'rgb(34, 34, 34)');
+      assert.equal(snapshot.platformBar.textColors.right, 'rgb(34, 34, 34)');
+      assert.equal(snapshot.platformBar.textColors.button, snapshot.unaffectedButtonColor);
       assert.ok(
         harness.mockRequests.some(
           (request) =>
@@ -37,5 +43,12 @@ for (const browserName of browserTargets()) {
     }
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, 'Smoke test and cleanup failed');
+    await assert.rejects(stat(harness.artifactDir), { code: 'ENOENT' });
+    const [artifactRoot, checkout] = await Promise.all([
+      stat(dirname(dirname(harness.artifactDir))),
+      stat(new URL('../', import.meta.url)),
+    ]);
+    assert.equal(artifactRoot.uid, checkout.uid);
+    assert.equal(artifactRoot.gid, checkout.gid);
   });
 }

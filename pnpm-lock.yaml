@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@wdio/utils@9.32.0>@puppeteer/browsers': 3.2.3
+  '@wdio/utils>@puppeteer/browsers': 3.2.3
 
 patchedDependencies:
   vitest@5.0.1: b6d8a743f425e86130d3f33566aab4bcf655a3e123ed518133e9d3c5b28c1863

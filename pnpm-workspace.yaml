@@ -16,7 +16,7 @@ minimumReleaseAge: 10080
 # Security fix for extract-zip (GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3).
 # Remove once WebdriverIO updates @puppeteer/browsers.
 overrides:
-  '@wdio/utils@9.32.0>@puppeteer/browsers': 3.2.3
+  '@wdio/utils>@puppeteer/browsers': 3.2.3
 # Backport of https://github.com/vitest-dev/vitest/pull/11248; remove once Vitest includes this fix.
 patchedDependencies:
   vitest@5.0.1: patches/vitest@5.0.1.patch

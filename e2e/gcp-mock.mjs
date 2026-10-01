@@ -68,7 +68,7 @@ export async function startGcpMock() {
         '-config',
         configPath,
       ],
-      { stdio: 'ignore' },
+      { stdio: ['ignore', 'ignore', 'pipe'] },
     );
     const [key, cert, fixture] = await Promise.all([
       readFile(keyPath),

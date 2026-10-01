@@ -6,7 +6,34 @@ The WebdriverIO suite installs the built Chrome MV3 and Firefox MV2 extensions i
 docker compose --profile e2e run --rm --build e2e
 ```
 
-To run one browser, add `-e E2E_BROWSER=chrome` or `-e E2E_BROWSER=firefox` before `e2e`. The equivalent package scripts are `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox`. Failure screenshots, page captures, and startup diagnostics are saved under `.e2e-artifacts/`.
+To run one browser, add `-e E2E_BROWSER=chrome` or `-e E2E_BROWSER=firefox` before `e2e`. If pnpm is available on the host, the optional launchers are `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox`; the Compose command requires no host pnpm installation. Failed harness runs retain screenshots, page captures, and startup diagnostics under `.e2e-artifacts/`. Successful runs remove their own run directory, leaving earlier failures untouched. When the container runs as root, artifact ownership is restored to the mounted checkout's UID/GID so Linux users can inspect and remove their diagnostics.
+
+## Browser versions and downloads
+
+The default follows Chrome and Firefox `stable` at runtime. This catches compatibility changes in current browsers, but the same commit can fail after a browser or driver release. These downloads are outside `pnpm-lock.yaml` and `minimumReleaseAge`. WebdriverIO does not supply an expected archive hash to the downloader; npm lockfile integrity does not verify these browser archives.
+
+For a reproducible browser selection, pass version overrides to Compose explicitly. For example, these versions were used while developing the suite:
+
+```sh
+docker compose --profile e2e run --rm --build \
+  -e E2E_CHROME_VERSION=154.0.8037.92 \
+  -e E2E_FIREFOX_VERSION=stable_157.0 \
+  -e GECKODRIVER_VERSION=0.37.1 e2e
+```
+
+ChromeDriver follows the resolved Chrome version. Firefox stable versions need the `stable_` prefix; a bare numeric Firefox build ID is interpreted as Nightly by the downloader. Geckodriver selects its own latest release unless `GECKODRIVER_VERSION` is supplied. The Docker base image is also a moving tag, so these overrides do not freeze the entire container environment. Extension discovery uses the browser's extension-manager pages and can require updates when their internal DOM changes.
+
+The parent-scoped `@wdio/utils>@puppeteer/browsers` override keeps `extract-zip` out of the dependency graph across WebdriverIO version updates. CI explicitly checks its absence. The override exceeds WebdriverIO's declared 2.x range, so retain both-browser E2E checks and review compatibility on dependency updates.
+
+This service assumes direct network access for browser downloads. Host `HTTP_PROXY` / `HTTPS_PROXY` variables are not forwarded by default, and the selected Puppeteer downloader has no installed `proxy-agent` peer. Proxy-based browser and driver downloads are not supported or verified by this setup. The browser's local fixture proxy is configured separately and is unrelated to download proxy support.
+
+## Execution and validation
+
+Both browsers run with visible windows on Xvfb; Firefox pointer input depends on that display. The service sets `TZ=Asia/Tokyo`, and the export check fixes a time at which the local and UTC calendar dates differ. Reduced motion is requested explicitly by its separate suite so normal cases keep their transition checks.
+
+The Node runner uses `--test-force-exit` because standalone WebdriverIO can leave browser/driver handles active. In particular, if session creation rejects after a driver starts, no browser object is returned to the harness for `deleteSession()`. `init: true` and the one-shot Compose container bound those processes to the container lifetime; forced exit is not proof that JavaScript cleanup completed. Assertions and awaited harness cleanup still determine the test result.
+
+The `.mjs` harness and specs receive Biome lint and real browser execution; they are outside the application TypeScript check. The default Compose command always rebuilds both artifacts. `test:e2e:run` is an internal command: running it directly can reuse older build output whose manifest version still matches the checkout.
 
 | Spec | Covered behavior |
 | --- | --- |
@@ -24,4 +51,4 @@ Firefox drag/drop coverage uses xdotool/XTest mouse input on the Xvfb display be
 
 Coverage is by the scenarios in the table, not every cross-product of match mode, color, platform, and browser setting. The content suite exercises all eight combinations of the three surface enable flags, but other combinations are representative examples. The run targets Chrome and Firefox in the Linux container; it does not cover every browser release, operating system, profile, or display configuration.
 
-The extension-reload case checks recovery for unversioned, unsupported older, and wholly corrupt storage, plus preservation of current and newer schemas. A partly corrupt current schema remains unchanged in storage while invalid entries are excluded from the rendered UI and invalid fields use sanitized values. The repository currently defines no schema migration steps, so this case does not claim to execute a historical data-shape migration. Parser coverage includes the six `SettingsImportError` refusal reasons; filesystem permission failures and inaccessible-file dialogs are not simulated.
+The extension-reload case checks recovery for unversioned, unsupported older, and wholly corrupt storage, plus retained values of current and newer schemas after visible startup and a bounded observation period. It does not prove that storage writes never occurred; unit tests use a storage spy for that contract. A partly corrupt current schema retains its raw stored values while invalid entries are excluded from the rendered UI and invalid fields use sanitized values. The repository currently defines no schema migration steps, so this case does not claim to execute a historical data-shape migration. Negative origin checks and unrelated-key stability also have finite observation windows, rather than proving that no later change is possible. Stripe E2E checks cover gradient application/removal and fixed alignment; unit tests cover the exact angle, width, and light/dark phase. Parser coverage includes the six `SettingsImportError` refusal reasons; filesystem permission failures and inaccessible-file dialogs are not simulated.
