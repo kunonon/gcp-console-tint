@@ -1,5 +1,10 @@
 # pnpm settings (single-package repository; no `packages` entry needed).
 
+# WebdriverIO downloads the selected driver at test startup; installation needs no driver scripts.
+allowBuilds:
+  edgedriver: false
+  geckodriver: false
+
 # Supply-chain cooldown: a version must have been published for at least a week (10080
 # minutes) before pnpm resolves it, transitive dependencies included. Compromised releases
 # are usually pulled within hours, so this keeps `pnpm add` / `pnpm update` and lockfile
@@ -8,6 +13,10 @@
 # younger than a week is rejected until it ages — or until the package is listed under
 # minimumReleaseAgeExclude. pnpm 11's default is one day.
 minimumReleaseAge: 10080
+# Security fix for extract-zip (GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3).
+# Remove once WebdriverIO updates @puppeteer/browsers.
+overrides:
+  '@wdio/utils@9.32.0>@puppeteer/browsers': 3.2.3
 # Backport of https://github.com/vitest-dev/vitest/pull/11248; remove once Vitest includes this fix.
 patchedDependencies:
   vitest@5.0.1: patches/vitest@5.0.1.patch

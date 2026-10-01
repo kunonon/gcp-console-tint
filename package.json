@@ -20,6 +20,10 @@
     "compile": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "docker compose run --rm --build e2e",
+    "test:e2e:run": "node --test --test-force-exit --test-concurrency=1 e2e/*.e2e.mjs",
+    "test:e2e:chrome": "docker compose run --rm --build -e E2E_BROWSER=chrome e2e",
+    "test:e2e:firefox": "docker compose run --rm --build -e E2E_BROWSER=firefox e2e",
     "lint": "biome ci .",
     "lint:fix": "biome check --write .",
     "postinstall": "wxt prepare"
@@ -45,6 +49,7 @@
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^5.0.1",
+    "webdriverio": "9.32.0",
     "wxt": "^0.21.4"
   }
 }

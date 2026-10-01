@@ -57,3 +57,20 @@ jobs:
 
           - name: Build (Chrome + Firefox)
             run: pnpm build && pnpm build:firefox
+
+      - name: Browser extension end-to-end (Chrome + Firefox)
+        id: e2e
+        timeout-minutes: 30
+        run: docker compose --profile e2e run --rm --build -e E2E_BROWSER=all e2e
+
+      - name: Upload end-to-end diagnostics
+        if: always() && steps.e2e.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-${{ github.run_id }}
+          path: |
+            .e2e-artifacts/*/*/screenshots/**
+            .e2e-artifacts/*/*/startup/**
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
