@@ -24,6 +24,6 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 // react-aria's SharedElementTransition — which drives the Tabs indicator's slide between tabs —
 // calls it on every selection change to wait out any in-flight animation. Returning "nothing is
 // animating" makes that transition resolve immediately, which is what a test wants anyway.
-if (typeof Element.prototype.getAnimations === 'undefined') {
+if (typeof Element !== 'undefined' && typeof Element.prototype.getAnimations === 'undefined') {
   Element.prototype.getAnimations = () => [];
 }
