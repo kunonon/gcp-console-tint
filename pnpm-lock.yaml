@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  vitest@5.0.1: b6d8a743f425e86130d3f33566aab4bcf655a3e123ed518133e9d3c5b28c1863
+
 importers:
 
   .:
@@ -62,7 +65,7 @@ importers:
         version: 8.2.2(@types/node@26.1.1)(jiti@2.7.0)
       vitest:
         specifier: ^5.0.1
-        version: 5.0.1(@types/node@26.1.1)(@vitest/coverage-v8@5.0.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0))
+        version: 5.0.1(patch_hash=b6d8a743f425e86130d3f33566aab4bcf655a3e123ed518133e9d3c5b28c1863)(@types/node@26.1.1)(@vitest/coverage-v8@5.0.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0))
       wxt:
         specifier: ^0.21.4
         version: 0.21.4(rolldown@1.2.5)(typescript@7.0.2)(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0))
@@ -2481,7 +2484,7 @@ snapshots:
       obug: 2.2.1
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 5.0.1(@types/node@26.1.1)(@vitest/coverage-v8@5.0.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0))
+      vitest: 5.0.1(patch_hash=b6d8a743f425e86130d3f33566aab4bcf655a3e123ed518133e9d3c5b28c1863)(@types/node@26.1.1)(@vitest/coverage-v8@5.0.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0))
 
   '@vitest/istanbul-lib-coverage@1.0.1': {}
 
@@ -3302,7 +3305,7 @@ snapshots:
       fsevents: 2.3.3
       jiti: 2.7.0
 
-  vitest@5.0.1(@types/node@26.1.1)(@vitest/coverage-v8@5.0.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0)):
+  vitest@5.0.1(patch_hash=b6d8a743f425e86130d3f33566aab4bcf655a3e123ed518133e9d3c5b28c1863)(@types/node@26.1.1)(@vitest/coverage-v8@5.0.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.0.1(vite@8.2.2(@types/node@26.1.1)(jiti@2.7.0))
