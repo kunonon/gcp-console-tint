@@ -76,8 +76,11 @@ jobs:
             id: e2e_chrome
             timeout-minutes: 30
             run: |
+              pnpm_store_path=$(pnpm store path --silent)
               docker compose --project-name e2e-chrome-${{ github.run_id }}-${{ github.run_attempt }} \
                 --profile e2e run --rm --build \
+                --volume "$(dirname "$pnpm_store_path"):/pnpm-store" \
+                -e pnpm_config_store_dir=/pnpm-store \
                 -e E2E_BROWSER=chrome \
                 -e E2E_CHROME_VERSION=154.0.8037.92 e2e
 
@@ -85,8 +88,11 @@ jobs:
             id: e2e_firefox
             timeout-minutes: 30
             run: |
+              pnpm_store_path=$(pnpm store path --silent)
               docker compose --project-name e2e-firefox-${{ github.run_id }}-${{ github.run_attempt }} \
                 --profile e2e run --rm --build \
+                --volume "$(dirname "$pnpm_store_path"):/pnpm-store" \
+                -e pnpm_config_store_dir=/pnpm-store \
                 -e E2E_BROWSER=firefox \
                 -e E2E_FIREFOX_VERSION=stable_157.0 \
                 -e GECKODRIVER_VERSION=0.37.1 e2e

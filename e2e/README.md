@@ -6,7 +6,7 @@ The WebdriverIO suite installs the built Chrome MV3 and Firefox MV2 extensions i
 docker compose --profile e2e run --rm --build e2e
 ```
 
-CI runs Chrome and Firefox in parallel with separate Compose project names, isolating their `node_modules`, `.wxt`, and `.output` volumes. The default local command above remains serial. For parallel local runs, run these commands in separate terminals with different `--project-name` values:
+CI runs Chrome and Firefox in parallel with separate Compose project names, isolating their `node_modules`, `.wxt`, and `.output` volumes. Each CI container mounts the existing host pnpm store cache; local Compose behavior is unchanged. The default local command above remains serial. For parallel local runs, run these commands in separate terminals with different `--project-name` values:
 
 ```sh
 docker compose --project-name e2e-chrome --profile e2e run --rm --build -e E2E_BROWSER=chrome e2e
