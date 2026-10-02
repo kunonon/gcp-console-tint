@@ -16,7 +16,7 @@ export type SettingsImportFailure =
   | { reason: 'invalid-json' } // the text is not JSON at all
   | { reason: 'not-settings' } // JSON, but not an object carrying a string schemaVersion
   | { reason: 'unsupported-version'; version: string } // schemaVersion below the oldest readable one
-  | { reason: 'newer-version'; version: string } // schemaVersion above what this build can have written: a later release's file
+  | { reason: 'newer-version'; version: string } // schemaVersion above this build's effective schema version ceiling
   // a settings file whose fields are missing, wrongly typed, or hold unusable values
   | { reason: 'invalid-fields'; issues: readonly SettingsImportIssue[] }
   | { reason: 'no-rules' }; // a settings file, but with no rule in it
@@ -62,9 +62,10 @@ export interface SettingsStore {
   // Invokes onChange with current-shape settings whenever the stored value changes.
   // Deletions are ignored. Listeners live for the lifetime of the context.
   watch(onChange: (settings: TintSettings) => void): void;
-  // Serializes settings in the stored JSON shape, stamped with the effective schema version and
-  // pretty-printed (2-space) — the export file format. importJson reads it back, and because it
-  // is the stored shape, load()'s migration chain will read it in any later release too.
+  // Serializes settings in the stored JSON shape, stamped with CURRENT_SCHEMA_VERSION (the data
+  // shape) and pretty-printed (2-space). Storage saves use the effective release version, so
+  // exports from releases with the same shape share a stamp; importJson can migrate legacy
+  // files stamped with a release version within this build's supported schema version range.
   exportJson(settings: TintSettings): string;
   // Parses text written by exportJson (or the stored shape of any past release) into
   // current-shape settings. Strict, unlike load(): every field the export writes must be present

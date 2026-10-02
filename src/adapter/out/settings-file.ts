@@ -31,8 +31,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-// Stage 1. `z.object` ignores unknown keys within the supported schema-version range.
-// Stamps above the export version of this build are rejected before structural validation.
+// Stage 1. `z.object` ignores unknown keys within the supported schema version range.
+// Stamps above this build's effective schema version ceiling are rejected before validation.
 const colorSelectionSchema = z.object({
   // JSON has no undefined: an unset palette reference is written as null.
   paletteId: z.string().nullable(),
@@ -165,10 +165,10 @@ function toRules(file: SettingsFile): { rules: ProjectRule[]; issues: SettingsIm
 // file, a version predating every readable shape or postdating this build, fields that are
 // missing/wrongly typed/unusable, or no rules at all.
 //
-// `currentVersion` is the newest stamp this build can have written itself (the running extension
-// version floored at CURRENT_SCHEMA_VERSION — see effectiveSchemaVersion). A higher stamp is
-// outside this build's supported range and is refused. `steps` is injectable for tests;
-// production uses the registry.
+// `currentVersion` is this build's effective schema version ceiling (the running extension
+// version floored at CURRENT_SCHEMA_VERSION). It bounds legacy release-stamped files; stamps
+// below SCHEMA_MIN_VERSION are also refused. `steps` is injectable for tests; production uses
+// the registry.
 export function parseSettingsFile(
   text: string,
   currentVersion: string,

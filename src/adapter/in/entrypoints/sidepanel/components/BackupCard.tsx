@@ -240,7 +240,9 @@ export default function BackupCard({ settingsStore, settings, onImport }: Backup
                   size="sm"
                   className="mt-2 self-end"
                   onPress={() => {
-                    void navigator.clipboard?.writeText(notice.detail ?? '');
+                    void navigator.clipboard?.writeText(notice.detail ?? '').catch((error) => {
+                      console.error('[gcp-console-tint] clipboard copy failed', error);
+                    });
                   }}
                 >
                   Copy details
