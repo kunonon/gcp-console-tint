@@ -67,22 +67,30 @@ export class TintSettings extends ValueObject<TintSettings> {
     return new TintSettings(this.projectRules.map((rule) => (rule.id.equals(id) ? update(rule) : rule)));
   }
 
-  // Merges `incoming` (e.g. the rules picked from an imported file) into the list, in order: a
-  // rule that duplicates an existing one (ProjectRule.isDuplicateOf) replaces that rule's settings
-  // in place, keeping its id and position; any other rule is appended under a fresh id, so
-  // importing the same file twice never yields two rules with one id. Duplicates inside
-  // `incoming` itself fold left to right, so the later one wins.
+  // Maps each incoming rule to the first unused matching original rule; appended rules are never
+  // replacement targets.
+  replacementTargets(incoming: readonly ProjectRule[]): readonly (number | undefined)[] {
+    const used = new Set<number>();
+    return incoming.map((rule) => {
+      const index = this.projectRules.findIndex((existing, i) => !used.has(i) && existing.isDuplicateOf(rule));
+      if (index === -1) return undefined;
+      used.add(index);
+      return index;
+    });
+  }
+
+  // Merges incoming rules in order: each can replace one original rule's settings in place,
+  // keeping its id and position; unmatched rules append under fresh ids.
   mergeRules(incoming: readonly ProjectRule[]): TintSettings {
     const rules = [...this.projectRules];
-    for (const rule of incoming) {
-      const index = rules.findIndex((existing) => existing.isDuplicateOf(rule));
-      const duplicate = rules[index];
-      if (duplicate) {
-        rules[index] = duplicate.changeSettings(rule.settings);
-      } else {
+    this.replacementTargets(incoming).forEach((index, i) => {
+      const rule = incoming[i]!;
+      if (index === undefined) {
         rules.push(ProjectRule.recreate(ProjectRuleId.create(), rule.matchType, rule.pattern, rule.settings));
+      } else {
+        rules[index] = this.projectRules[index]!.changeSettings(rule.settings);
       }
-    }
+    });
     return new TintSettings(rules);
   }
 }

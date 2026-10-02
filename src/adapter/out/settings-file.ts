@@ -31,8 +31,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-// Stage 1. `z.object` ignores unknown keys on purpose: a file written by a newer release may
-// carry fields this one does not know yet, and that is not a reason to refuse it.
+// Stage 1. `z.object` ignores unknown keys within the supported schema-version range.
+// Stamps above the export version of this build are rejected before structural validation.
 const colorSelectionSchema = z.object({
   // JSON has no undefined: an unset palette reference is written as null.
   paletteId: z.string().nullable(),
@@ -106,7 +106,8 @@ function toRules(file: SettingsFile): { rules: ProjectRule[]; issues: SettingsIm
   // Ids are opaque strings to the domain (recreate() takes any string, including an empty one),
   // so there is no value rule to apply here. A paletteId naming no entry of the rule's own
   // palette is NOT an issue either: the domain treats a dangling reference as legal and falls
-  // back to the custom color (see Palette.resolve).
+  // back to the custom color (see Palette.resolve). Palette-local id uniqueness is checked
+  // below as an import-file constraint, without changing domain ids or storage recovery.
   const selection = (value: { paletteId: string | null; custom: string }, path: string): ColorSelection =>
     new ColorSelection(
       value.paletteId === null ? undefined : PaletteEntryId.recreate(value.paletteId),
@@ -117,6 +118,7 @@ function toRules(file: SettingsFile): { rules: ProjectRule[]; issues: SettingsIm
     const at = `projectRules[${index}]`;
     const settingsAt = `${at}.settings`;
     const { palette, topBar, platformBar, platformBarText } = rule.settings;
+    const paletteEntryIds = new Set<string>();
     return ProjectRule.recreate(
       ProjectRuleId.recreate(rule.id),
       matchType(rule.matchType, `${at}.matchType`),
@@ -126,6 +128,8 @@ function toRules(file: SettingsFile): { rules: ProjectRule[]; issues: SettingsIm
           palette.enabled,
           palette.entries.map((entry, entryIndex) => {
             const entryAt = `${settingsAt}.palette.entries[${entryIndex}]`;
+            if (paletteEntryIds.has(entry.id)) reject(`${entryAt}.id`, 'duplicate palette entry id');
+            paletteEntryIds.add(entry.id);
             return PaletteEntry.recreate(
               PaletteEntryId.recreate(entry.id),
               entry.name,
@@ -162,9 +166,9 @@ function toRules(file: SettingsFile): { rules: ProjectRule[]; issues: SettingsIm
 // missing/wrongly typed/unusable, or no rules at all.
 //
 // `currentVersion` is the newest stamp this build can have written itself (the running extension
-// version floored at CURRENT_SCHEMA_VERSION — see effectiveSchemaVersion). A file stamped newer
-// than that comes from a release this build does not know, whose shape it cannot judge, so it is
-// refused rather than guessed at. `steps` is injectable for tests; production uses the registry.
+// version floored at CURRENT_SCHEMA_VERSION — see effectiveSchemaVersion). A higher stamp is
+// outside this build's supported range and is refused. `steps` is injectable for tests;
+// production uses the registry.
 export function parseSettingsFile(
   text: string,
   currentVersion: string,
@@ -182,6 +186,9 @@ export function parseSettingsFile(
   }
   const schemaVersion = value.schemaVersion;
   if (typeof schemaVersion !== 'string') {
+    throw new SettingsImportError({ reason: 'not-settings' });
+  }
+  if (schemaVersion.split('.').some((part) => part.length === 0 || /[^0-9]/.test(part))) {
     throw new SettingsImportError({ reason: 'not-settings' });
   }
   if (compareVersions(schemaVersion, SCHEMA_MIN_VERSION) === VersionComparisonResult.Older) {

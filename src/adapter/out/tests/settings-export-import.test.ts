@@ -53,7 +53,7 @@ describe('SettingsStoreImpl.exportJson / importJson', () => {
     expect(roundTripped.equals(settings)).toBe(true);
   });
 
-  it('importJson refuses a file stamped newer than the running extension version', () => {
+  it('importJson refuses a file stamped above the version this build can have written', () => {
     const store = new SettingsStoreImpl();
     const text = JSON.stringify(toStored(new TintSettings([]), '0.3.0'));
     expect(() => store.importJson(text)).toThrow(SettingsImportError);
@@ -62,6 +62,23 @@ describe('SettingsStoreImpl.exportJson / importJson', () => {
     } catch (error) {
       expect((error as SettingsImportError).failure).toEqual({ reason: 'newer-version', version: '0.3.0' });
     }
+  });
+
+  it('save resolves after writing the stamped stored shape', async () => {
+    const store = new SettingsStoreImpl();
+    const settings = sampleSettings();
+
+    await store.save(settings);
+
+    expect((await fakeBrowser.storage.local.get('tintSettings')).tintSettings).toEqual(
+      toStored(settings, effectiveSchemaVersion(CURRENT_VERSION)),
+    );
+  });
+
+  it('save rejects synchronous serialization failures', async () => {
+    const store = new SettingsStoreImpl();
+
+    await expect(store.save(null as unknown as TintSettings)).rejects.toThrow();
   });
 
   it('importJson propagates SettingsImportError for text that is not a settings file', () => {

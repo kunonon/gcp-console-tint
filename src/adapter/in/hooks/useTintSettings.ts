@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TintSettings } from '../../../domain/tint-settings';
 import type { SettingsStore } from '../../../port/settings-store';
 
@@ -7,17 +7,46 @@ import type { SettingsStore } from '../../../port/settings-store';
 export function useTintSettings(settingsStore: SettingsStore) {
   // No rules until the store's load() resolves.
   const [settings, setSettings] = useState<TintSettings>(() => new TintSettings([]));
+  const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const saveTail = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
-    settingsStore.load().then(setSettings);
+    let cancelled = false;
+    setStatus('loading');
+    settingsStore
+      .load()
+      .then((loaded) => {
+        if (cancelled) return;
+        setSettings(loaded);
+        setStatus('ready');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setStatus('failed');
+        console.error('[gcp-console-tint] settings load failed', error);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [settingsStore]);
 
   // The persisted schema version is the store's business; local state holds the same
   // domain value that was handed to save().
-  const save = (next: TintSettings) => {
-    setSettings(next);
-    settingsStore.save(next);
+  const enqueueSave = (next: TintSettings, applyAfterSave = false): Promise<void> => {
+    const result = saveTail.current.then(async () => {
+      await settingsStore.save(next);
+      if (applyAfterSave) setSettings(next);
+    });
+    saveTail.current = result.catch(() => undefined);
+    return result;
   };
 
-  return { settings, save };
+  const save = (next: TintSettings) => {
+    setSettings(next);
+    void enqueueSave(next).catch((error) => console.error('[gcp-console-tint] settings save failed', error));
+  };
+
+  const saveThenApply = (next: TintSettings) => enqueueSave(next, true);
+
+  return { settings, status, save, saveThenApply };
 }

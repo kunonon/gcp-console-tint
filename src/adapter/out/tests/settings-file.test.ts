@@ -92,7 +92,7 @@ describe('parseSettingsFile: the file as a whole', () => {
     expect(failureOf(thrownBy(() => parse(text)))).toEqual({ reason: 'no-rules' });
   });
 
-  it('ignores keys it does not know, at every level (a file from a newer release still imports)', () => {
+  it('ignores unknown keys at every level within the supported schema-version range', () => {
     const file = validFile();
     file.somethingNew = true;
     const text = fileWithRule((rule) => {
@@ -254,6 +254,38 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
     expect(settings.projectRules[0]!.settings.palette.entries[0]!.id.toString()).toBe('');
   });
 
+  it('refuses repeated palette entry ids and reports every later id path', () => {
+    const error = thrownBy(() =>
+      parse(
+        fileWithRule((rule) => {
+          rule.settings.palette.entries.push(
+            { ...rule.settings.palette.entries[0] },
+            { ...rule.settings.palette.entries[0] },
+          );
+        }),
+      ),
+    );
+
+    expect(paths(error)).toEqual([
+      'projectRules[0].settings.palette.entries[1].id',
+      'projectRules[0].settings.palette.entries[2].id',
+    ]);
+    expect(issuesOf(error).map((issue) => issue.message)).toEqual([
+      'duplicate palette entry id',
+      'duplicate palette entry id',
+    ]);
+  });
+
+  it('allows the same default palette entry id in separate rule palettes', () => {
+    const file = validFile();
+    const rules = file.projectRules as RawRule[];
+    const second = JSON.parse(JSON.stringify(rules[0])) as RawRule;
+    second.id = 'rule-2';
+    rules.push(second);
+
+    expect(parse(JSON.stringify(file)).projectRules).toHaveLength(2);
+  });
+
   it('accepts a paletteId that references no entry of the rule (a dangling reference is legal)', () => {
     const text = fileWithRule((rule) => {
       rule.settings.topBar.color.paletteId = 'gone';
@@ -285,6 +317,22 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
 
 describe('parseSettingsFile: versions and migrations', () => {
   const stamped = (schemaVersion: string): string => JSON.stringify({ ...validFile(), schemaVersion });
+
+  it.each([
+    ['an empty first component', '.1.0'],
+    ['an empty middle component', '0..0'],
+    ['an empty last component', '0.1.'],
+    ['a trailing newline', '0.1.0\n'],
+    ['a non-ASCII digit', '0.1.٠'],
+  ])('refuses a version with %s as not-settings', (_label, version) => {
+    expect(failureOf(thrownBy(() => parseSettingsFile(stamped(version), CURRENT_SCHEMA_VERSION)))).toEqual({
+      reason: 'not-settings',
+    });
+  });
+
+  it.each(['0.1', '0.1.0.0'])('keeps accepting numeric version stamps with this component count (%s)', (version) => {
+    expect(parseSettingsFile(stamped(version), CURRENT_SCHEMA_VERSION).projectRules).toHaveLength(1);
+  });
 
   it('refuses a file stamped newer than what this build can have written (newer-version)', () => {
     expect(failureOf(thrownBy(() => parseSettingsFile(stamped('0.2.0'), '0.1.5')))).toEqual({

@@ -119,6 +119,8 @@ describe('ProjectRule.isDuplicateOf', () => {
 describe('TintSettings.mergeRules', () => {
   const rule = (id: string, matchType: MatchType, pattern: string, settings: ProjectSettings = DEFAULTS): ProjectRule =>
     ProjectRule.recreate(ProjectRuleId.recreate(id), matchType, pattern, settings);
+  const withColor = (hex: string): ProjectSettings =>
+    DEFAULTS.changeTopBar(DEFAULTS.topBar.changeColor(new ColorSelection(undefined, color(hex))));
 
   it('returns an equal but distinct list when incoming is empty', () => {
     const original = new TintSettings([rule('1', 'exact', 'my-app')]);
@@ -171,17 +173,113 @@ describe('TintSettings.mergeRules', () => {
     expect(replaced.settings).toEqual(newSettings);
   });
 
-  it('folds duplicates inside incoming itself left to right, the later one winning', () => {
+  it('preserves duplicate existing rules in order when a full backup contains both settings', () => {
+    const red = withColor('#ff0000');
+    const blue = withColor('#0000ff');
+    const original = new TintSettings([
+      rule('red', 'exact', 'same-state', red),
+      rule('blue', 'exact', 'same-state', blue),
+    ]);
+    const incoming = [rule('import-red', 'exact', 'same-state', red), rule('import-blue', 'exact', 'same-state', blue)];
+
+    expect(original.replacementTargets(incoming)).toEqual([0, 1]);
+    const merged = original.mergeRules(incoming);
+
+    expect(merged.projectRules).toHaveLength(2);
+    expect(merged.projectRules.map((r) => r.settings.topBar.color.custom.toHex())).toEqual(['#ff0000', '#0000ff']);
+    expect(merged.projectRules[0]!.id.equals(original.projectRules[0]!.id)).toBe(true);
+    expect(merged.projectRules[1]!.id.equals(original.projectRules[1]!.id)).toBe(true);
+  });
+
+  it('appends both duplicate incoming rules when no original rule matches', () => {
     const original = new TintSettings([]);
-    const settingsA = DEFAULTS;
-    const settingsB = DEFAULTS.changeTopBar(DEFAULTS.topBar.disable());
-    const ruleA = rule('a', 'exact', 'my-app', settingsA);
-    const ruleB = rule('b', 'exact', 'my-app', settingsB);
+    const incoming = [
+      rule('import-red', 'exact', 'same-state', withColor('#ff0000')),
+      rule('import-blue', 'exact', 'same-state', withColor('#0000ff')),
+    ];
 
-    const merged = original.mergeRules([ruleA, ruleB]);
+    expect(original.replacementTargets(incoming)).toEqual([undefined, undefined]);
+    const merged = original.mergeRules(incoming);
 
-    expect(merged.projectRules).toHaveLength(1);
-    expect(merged.projectRules[0]!.settings).toEqual(settingsB);
+    expect(merged.projectRules).toHaveLength(2);
+    expect(merged.projectRules[0]!.id.equals(incoming[0]!.id)).toBe(false);
+    expect(merged.projectRules[1]!.id.equals(incoming[1]!.id)).toBe(false);
+    expect(merged.projectRules[0]!.id.equals(merged.projectRules[1]!.id)).toBe(false);
+  });
+
+  it('replaces one of two matching incoming rules and appends the other', () => {
+    const originalRule = rule('existing', 'exact', 'same-state');
+    const original = new TintSettings([originalRule]);
+    const incoming = [
+      rule('import-red', 'exact', 'same-state', withColor('#ff0000')),
+      rule('import-blue', 'exact', 'same-state', withColor('#0000ff')),
+    ];
+
+    expect(original.replacementTargets(incoming)).toEqual([0, undefined]);
+    const merged = original.mergeRules(incoming);
+
+    expect(merged.projectRules).toHaveLength(2);
+    expect(merged.projectRules[0]!.id.equals(originalRule.id)).toBe(true);
+    expect(merged.projectRules[0]!.settings.topBar.color.custom.toHex()).toBe('#ff0000');
+    expect(merged.projectRules[1]!.settings.topBar.color.custom.toHex()).toBe('#0000ff');
+    expect(merged.projectRules[1]!.id.equals(incoming[1]!.id)).toBe(false);
+  });
+
+  it('replaces two original matching rules and appends the third incoming rule', () => {
+    const originals = [rule('one', 'exact', 'same-state'), rule('two', 'exact', 'same-state')];
+    const original = new TintSettings(originals);
+    const incoming = [
+      rule('import-red', 'exact', 'same-state', withColor('#ff0000')),
+      rule('import-blue', 'exact', 'same-state', withColor('#0000ff')),
+      rule('import-green', 'exact', 'same-state', withColor('#00ff00')),
+    ];
+
+    expect(original.replacementTargets(incoming)).toEqual([0, 1, undefined]);
+    const merged = original.mergeRules(incoming);
+
+    expect(merged.projectRules).toHaveLength(3);
+    expect(merged.projectRules[0]!.id.equals(originals[0]!.id)).toBe(true);
+    expect(merged.projectRules[1]!.id.equals(originals[1]!.id)).toBe(true);
+    expect(merged.projectRules[2]!.settings.topBar.color.custom.toHex()).toBe('#00ff00');
+    expect(merged.projectRules[2]!.id.equals(incoming[2]!.id)).toBe(false);
+  });
+
+  it('maps selected rows in their selected order and matches interleaved types to distinct originals', () => {
+    const originals = [
+      rule('exact-first', 'exact', 'same-state'),
+      rule('prefix', 'prefix', 'same-state'),
+      rule('exact-second', 'exact', 'same-state'),
+    ];
+    const original = new TintSettings(originals);
+    const incoming = [
+      rule('import-prefix', 'prefix', 'same-state', withColor('#ff0000')),
+      rule('import-exact-one', 'exact', 'same-state', withColor('#0000ff')),
+      rule('import-exact-two', 'exact', 'same-state', withColor('#00ff00')),
+      rule('import-suffix', 'suffix', 'same-state'),
+      rule('import-prefix-extra', 'prefix', 'same-state'),
+    ];
+
+    expect(original.replacementTargets(incoming)).toEqual([1, 0, 2, undefined, undefined]);
+
+    const selectedSecondOnly = new TintSettings(originals).replacementTargets([incoming[1]!]);
+    expect(selectedSecondOnly).toEqual([0]);
+    const selectedMerge = original.mergeRules([incoming[1]!]);
+    expect(selectedMerge.projectRules[0]!.settings.topBar.color.custom.toHex()).toBe('#0000ff');
+    expect(selectedMerge.projectRules[0]!.id.equals(originals[0]!.id)).toBe(true);
+    expect(selectedMerge.projectRules[1]!.id.equals(originals[1]!.id)).toBe(true);
+  });
+
+  it('does not grow when the same selected subset or an empty selection is imported again', () => {
+    const original = new TintSettings([rule('existing', 'exact', 'existing')]);
+    const selected = [rule('imported', 'exact', 'new-rule')];
+
+    const once = original.mergeRules(selected);
+    const twice = once.mergeRules(selected);
+
+    expect(once.projectRules).toHaveLength(2);
+    expect(twice.projectRules).toHaveLength(2);
+    expect(twice.projectRules[1]!.id.equals(once.projectRules[1]!.id)).toBe(true);
+    expect(twice.mergeRules([]).projectRules).toHaveLength(2);
   });
 });
 
