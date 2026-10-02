@@ -581,10 +581,9 @@ describe('toDomain', () => {
         expect(loadWithSettings({ topBar: { height: 'abc' } }).topBar.height).toBe(DEFAULTS.topBar.height);
       });
 
-      // Height tightening: a number the domain refuses (fractional or outside TopBarHeight's
-      // range) used to survive here and be rounded/clamped by the content script at render time.
-      // It now recovers to the default like any other invalid field, so nothing downstream has to
-      // repair it.
+      // Height tightening: the content script used to round stored numbers, then use the default
+      // if the rounded value fell outside TopBarHeight's range. Invalid raw values now recover to
+      // the default here.
       it.each([
         ['a fractional height', 2.5],
         ['a height above the maximum', 41],

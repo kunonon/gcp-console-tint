@@ -11,7 +11,7 @@ interface BackupCardProps {
   settings: TintSettings;
   /** Merges the picked rules into the current settings and reports what that did, so this card
    * can name the outcome ("1 added and 1 replaced"). */
-  onImport: (selected: readonly ProjectRule[]) => { added: number; replaced: number };
+  onImport: (selected: readonly ProjectRule[]) => Promise<{ added: number; replaced: number }>;
 }
 
 // What the last export/import attempt produced, shown as an Alert below the card until the next
@@ -116,6 +116,7 @@ function failureDetail(error: unknown): string | undefined {
 // the user chooses which rules to take before anything is saved.
 export default function BackupCard({ settingsStore, settings, onImport }: BackupCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileReadSequenceRef = useRef(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<{ fileName: string; rules: readonly ProjectRule[] } | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -141,25 +142,27 @@ export default function BackupCard({ settingsStore, settings, onImport }: Backup
     const input = event.currentTarget;
     const file = input.files?.[0];
     if (!file) return;
+    input.value = '';
+    const sequence = ++fileReadSequenceRef.current;
     setNotice(null);
     try {
-      const settingsFromFile = settingsStore.importJson(await file.text());
+      const contents = await file.text();
+      if (sequence !== fileReadSequenceRef.current) return;
+      const settingsFromFile = settingsStore.importJson(contents);
       setPending({ fileName: file.name, rules: settingsFromFile.projectRules });
       setIsImportOpen(true);
     } catch (error) {
+      if (sequence !== fileReadSequenceRef.current) return;
       // Logged as well as shown: the alert carries the name and message, DevTools keeps the stack.
       console.error('[gcp-console-tint] import failed', error);
       setNotice({ status: 'danger', sentence: failureSentence(file.name, error), detail: failureDetail(error) });
-    } finally {
-      // Cleared once the file has been read, so picking the same file again still fires a change
-      // event — without this, retrying the same path would look like nothing happened.
-      input.value = '';
     }
   };
 
-  const handleImport = (selected: readonly ProjectRule[]) => {
-    const { added, replaced } = onImport(selected);
+  const handleImport = async (selected: readonly ProjectRule[]) => {
+    const { added, replaced } = await onImport(selected);
     setNotice({ status: 'success', fileName: pending?.fileName ?? '', added, replaced });
+    setIsImportOpen(false);
   };
 
   const importedCount = notice?.status === 'success' ? notice.added + notice.replaced : 0;

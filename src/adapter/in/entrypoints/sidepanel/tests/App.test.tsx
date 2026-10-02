@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { TintSettings } from '../../../../../domain/tint-settings';
 import { SettingsStoreImpl } from '../../../../out/browser-settings-store';
 import { effectiveSchemaVersion, toDomain } from '../../../../out/settings-repository';
 import App from '../App';
@@ -1825,6 +1826,40 @@ describe('App', () => {
   });
 
   describe('Settings', () => {
+    it('gates the side panel while the initial settings read is pending', async () => {
+      const store = new SettingsStoreImpl();
+      let resolveLoad!: (settings: TintSettings) => void;
+      const load = new Promise<TintSettings>((resolve) => {
+        resolveLoad = resolve;
+      });
+      vi.spyOn(store, 'load').mockReturnValue(load);
+
+      render(<App settingsStore={store} />);
+
+      expect(screen.getByRole('status').textContent).toContain('Loading settings');
+      expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+
+      await act(async () => {
+        resolveLoad(new TintSettings([]));
+        await load;
+      });
+      expect(await screen.findByRole('button', { name: 'Add rule' })).toBeTruthy();
+    });
+
+    it('shows a failure alert and keeps settings actions gated when the initial read rejects', async () => {
+      const store = new SettingsStoreImpl();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(store, 'load').mockRejectedValue(new Error('storage unavailable'));
+
+      render(<App settingsStore={store} />);
+
+      expect(await screen.findByText('Couldn’t load settings')).toBeTruthy();
+      expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] settings load failed', expect.any(Error));
+    });
+
     it('opens on Rules by default and swaps the Projects card for the Backup card when Settings is picked', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
@@ -1881,6 +1916,8 @@ describe('App', () => {
       expect(within(dialog).getByRole('checkbox', { name: 'alpha' })).toBeTruthy();
       expect(within(dialog).getByRole('checkbox', { name: 'beta' })).toBeTruthy();
       expect(within(dialog).getByText('2 of 2 selected')).toBeTruthy();
+      expect(within(dialog).getByText('File row 1 → Rule row 1')).toBeTruthy();
+      expect(within(dialog).getByText('File row 2 → Add')).toBeTruthy();
       // Only the rule matching an existing match type + pattern is marked as a replacement.
       expect(within(dialog).getAllByRole('img', { name: 'Replaces an existing rule' })).toHaveLength(1);
       expect(within(dialog).getByText('Replaces 1 existing rule')).toBeTruthy();
@@ -1889,9 +1926,12 @@ describe('App', () => {
       await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
       expect(within(dialog).getByText('1 of 2 selected')).toBeTruthy();
       expect(within(dialog).queryByText('Replaces 1 existing rule')).toBeNull();
+      expect(within(dialog).getByText('File row 1 → Not selected')).toBeTruthy();
+      expect(within(dialog).getByText('File row 2 → Add')).toBeTruthy();
       expect(within(dialog).getByRole('button', { name: 'Import 1 rule' })).toBeTruthy();
 
       await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+      expect(within(dialog).getByText('File row 1 → Rule row 1')).toBeTruthy();
       await user.click(within(dialog).getByRole('button', { name: 'Import 2 rules' }));
 
       await waitFor(async () => {
@@ -1907,6 +1947,75 @@ describe('App', () => {
 
       expect(await screen.findByText('Imported 2 rules')).toBeTruthy();
       expect(screen.getByText('1 added and 1 replaced from x.json')).toBeTruthy();
+    });
+
+    it('waits for storage before showing import success and closing the picker', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'existing');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      let resolveSave!: () => void;
+      const save = new Promise<void>((resolve) => {
+        resolveSave = resolve;
+      });
+      vi.spyOn(store, 'save').mockReturnValueOnce(save);
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'deferred.json', settingsFile(newRule(existing, 'imported')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+
+      expect((within(dialog).getByRole('button', { name: 'Importing…' }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByText('Imported 1 rule')).toBeNull();
+      expect(screen.getByRole('dialog')).toBeTruthy();
+
+      await act(async () => {
+        resolveSave();
+        await save;
+      });
+      expect(await screen.findByText('Imported 1 rule')).toBeTruthy();
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
+
+    it('keeps the original settings after a rejected import and allows a normal edit after cancel', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'existing');
+      const before = await getStoredSettings();
+      const existing = before.projectRules[0]!;
+      let rejectSave!: (error: Error) => void;
+      const save = new Promise<void>((_resolve, reject) => {
+        rejectSave = reject;
+      });
+      const observedRejection = save.catch((error: Error) => error);
+      vi.spyOn(store, 'save').mockReturnValueOnce(save);
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'failed.json', settingsFile(newRule(existing, 'from-file')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+      await act(async () => {
+        rejectSave(new Error('quota exceeded'));
+        await observedRejection;
+      });
+
+      expect(await within(dialog).findByText('Couldn’t save imported rules')).toBeTruthy();
+      expect(screen.queryByText('Imported 1 rule')).toBeNull();
+      expect(within(dialog).getByRole('checkbox', { name: 'from-file' })).toBeTruthy();
+      expect(await getStoredSettings()).toEqual(before);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await user.click(screen.getByRole('tab', { name: 'Rules' }));
+      await addRule(user, 'normal-edit');
+
+      expect((await getStoredSettings()).projectRules.map((rule) => rule.pattern)).toEqual(['existing', 'normal-edit']);
     });
 
     it('Select all clears every row, which disables the Import button', async () => {

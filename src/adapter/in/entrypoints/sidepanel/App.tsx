@@ -1,4 +1,4 @@
-import { Button, Card, Input, Switch, Tabs, Tooltip } from '@heroui/react';
+import { Alert, Button, Card, Input, Switch, Tabs, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
 import { Color } from '../../../../domain/color';
 import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
@@ -155,7 +155,7 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
 }
 
 function App({ settingsStore }: { settingsStore: SettingsStore }) {
-  const { settings, save } = useTintSettings(settingsStore);
+  const { settings, status, save, saveThenApply } = useTintSettings(settingsStore);
   const [view, setView] = useState<View>({ type: 'list' });
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -174,6 +174,26 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     }
   }, [view, settings.projectRules]);
 
+  if (status === 'loading') {
+    return (
+      <div role="status" className="p-3 text-sm text-muted">
+        Loading settings…
+      </div>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <Alert status="danger">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Title>Couldn’t load settings</Alert.Title>
+          <Alert.Description>Reload the side panel and try again.</Alert.Description>
+        </Alert.Content>
+      </Alert>
+    );
+  }
+
   // Applies `update` to the currently-edited rule's settings and saves — every surface handler
   // below funnels through here, so composite updates that must land in a single save (e.g.
   // "pick a palette entry AND clear auto") are just a longer chain in one call.
@@ -191,15 +211,10 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     save(settings.addRule(ProjectRule.create(matchType, pattern)));
   };
 
-  // Applies the rules picked in the import modal and reports what the merge did, so BackupCard can
-  // name the outcome. `replaced` is counted against the pre-merge rules, matching
-  // TintSettings.mergeRules' own rule: an incoming rule that duplicates an existing one overwrites
-  // it in place, anything else is appended.
-  const handleImportRules = (selected: readonly ProjectRule[]) => {
-    const replaced = selected.filter((rule) =>
-      settings.projectRules.some((existing) => existing.isDuplicateOf(rule)),
-    ).length;
-    save(settings.mergeRules(selected));
+  // Applies the rules picked in the import modal and reports the persisted merge outcome.
+  const handleImportRules = async (selected: readonly ProjectRule[]) => {
+    const replaced = settings.replacementTargets(selected).filter((target) => target !== undefined).length;
+    await saveThenApply(settings.mergeRules(selected));
     return { added: selected.length - replaced, replaced };
   };
 

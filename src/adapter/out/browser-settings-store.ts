@@ -24,12 +24,12 @@ export class SettingsStoreImpl implements SettingsStore {
     return toDomain(result[STORAGE_KEY]);
   }
 
-  save(next: TintSettings): void {
+  async save(next: TintSettings): Promise<void> {
     // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
     // version here could label current-shape nested data with an older schemaVersion, causing
     // the next load to re-run migrations against already-migrated data and silently reset the
     // user's values to defaults.
-    browser.storage.local.set({ [STORAGE_KEY]: toStored(next, effectiveSchemaVersion(manifestVersion())) });
+    await browser.storage.local.set({ [STORAGE_KEY]: toStored(next, effectiveSchemaVersion(manifestVersion())) });
   }
 
   watch(onChange: (settings: TintSettings) => void): void {
@@ -45,7 +45,7 @@ export class SettingsStoreImpl implements SettingsStore {
   }
 
   importJson(text: string): TintSettings {
-    // The same stamp exportJson writes: anything newer must come from a later release.
+    // Rejects stamps above this build's effective schema version, which exportJson also writes.
     return parseSettingsFile(text, effectiveSchemaVersion(manifestVersion()));
   }
 }

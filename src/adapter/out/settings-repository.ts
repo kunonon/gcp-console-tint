@@ -98,8 +98,8 @@ const topBarObjectSchema = z
     color: colorSelectionSchema(DEFAULTS.topBar.color),
     // Same shape as colorField: the domain's factory judges the value, and anything it refuses
     // (a fraction, 0, 41, a non-number, a missing key) recovers to the default. A stored height
-    // outside the range used to be rounded and clamped back into it by the content script at
-    // render time; it now recovers to the default here instead, like every other invalid field.
+    // was rounded by the content script, then replaced with the default if the rounded value
+    // was outside 1–40; it now defaults here whenever TopBarHeight refuses the raw value.
     height: z
       .unknown()
       .optional()
