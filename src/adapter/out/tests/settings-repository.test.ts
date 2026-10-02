@@ -581,15 +581,29 @@ describe('toDomain', () => {
         expect(loadWithSettings({ topBar: { height: 'abc' } }).topBar.height).toBe(DEFAULTS.topBar.height);
       });
 
-      // Height tightening: the content script used to round stored numbers, then use the default
-      // if the rounded value fell outside TopBarHeight's range. Invalid raw values now recover to
-      // the default here.
       it.each([
-        ['a fractional height', 2.5],
+        ['a lower half-pixel boundary', 0.5, 1],
+        ['a half pixel', 2.5, 3],
+        ['a fractional height', 7.6, 8],
+        ['a fraction that rounds to the maximum', 40.4, 40],
+      ])('rounds %s to an in-range whole pixel', (_label, stored, expected) => {
+        expect(loadWithSettings({ topBar: { height: stored } }).topBar.height.toPixels()).toBe(expected);
+      });
+
+      it.each([
         ['a height above the maximum', 41],
         ['a height below the minimum', 0],
+        ['a negative height', -5],
+        ['a fraction that rounds above the maximum', 40.5],
+        ['NaN', Number.NaN],
+        ['positive infinity', Number.POSITIVE_INFINITY],
+        ['negative infinity', Number.NEGATIVE_INFINITY],
       ])('recovers %s to the default', (_label, stored) => {
         expect(loadWithSettings({ topBar: { height: stored } }).topBar.height.toPixels()).toBe(DEFAULT_TOP_BAR_HEIGHT);
+      });
+
+      it('recovers a missing height to the default', () => {
+        expect(loadWithSettings({ topBar: { enabled: false } }).topBar.height.toPixels()).toBe(DEFAULT_TOP_BAR_HEIGHT);
       });
 
       it('recovers a string field to its default when the stored value is the wrong type', () => {

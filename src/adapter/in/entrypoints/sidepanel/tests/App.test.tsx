@@ -274,9 +274,9 @@ function stubDownloads() {
   return { createObjectURL, revokeObjectURL, clicks };
 }
 
-// jsdom has no Clipboard API; "Copy details" only needs writeText to exist.
+// jsdom has no Clipboard API; "Copy details" expects writeText to return a Promise.
 function stubClipboard() {
-  const writeText = vi.fn();
+  const writeText = vi.fn(() => Promise.resolve());
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
   return writeText;
 }
@@ -2061,6 +2061,47 @@ describe('App', () => {
 
       expect(screen.queryByRole('dialog')).toBeNull();
       consoleError.mockRestore();
+    });
+
+    it('logs copy failures without changing the import notice or stored settings', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const writeText = stubClipboard();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'existing');
+      const before = await getStoredSettings();
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+
+      expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+      const copyError = new Error('clipboard denied');
+      writeText.mockRejectedValueOnce(copyError);
+      consoleError.mockClear();
+      await user.click(screen.getByRole('button', { name: 'Copy details' }));
+
+      await waitFor(() => expect(consoleError).toHaveBeenCalledTimes(1));
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] clipboard copy failed', copyError);
+      expect(screen.getByText('Couldn’t import this file')).toBeTruthy();
+      expect(screen.getByText('broken.json could not be parsed as JSON.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Copy details' })).toBeTruthy();
+      expect(await getStoredSettings()).toEqual(before);
+      const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+      try {
+        await user.click(screen.getByRole('button', { name: 'Copy details' }));
+        expect(screen.getByText('Couldn’t import this file')).toBeTruthy();
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(await getStoredSettings()).toEqual(before);
+      } finally {
+        if (clipboardDescriptor) {
+          Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+        } else {
+          Reflect.deleteProperty(navigator, 'clipboard');
+        }
+      }
     });
 
     it('a file stamped by a newer release than this build is refused, telling the user to update', async () => {

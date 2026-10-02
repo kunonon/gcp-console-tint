@@ -41,11 +41,12 @@ export class SettingsStoreImpl implements SettingsStore {
   }
 
   exportJson(settings: TintSettings): string {
-    return JSON.stringify(toStored(settings, effectiveSchemaVersion(manifestVersion())), null, 2);
+    return JSON.stringify(toStored(settings, CURRENT_SCHEMA_VERSION), null, 2);
   }
 
   importJson(text: string): TintSettings {
-    // Rejects stamps above this build's effective schema version, which exportJson also writes.
+    // Rejects stamps above this build's effective schema version. Older releases may have stamped
+    // exports with their release version, so the cap can admit those files to applicable migrations.
     return parseSettingsFile(text, effectiveSchemaVersion(manifestVersion()));
   }
 }

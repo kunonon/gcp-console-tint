@@ -211,17 +211,16 @@ describe('content script', () => {
     }
   });
 
-  // Nothing rounds any more: TopBarHeight only accepts whole pixels, so a fractional stored
-  // height is refused by the domain and recovers to the default when settings are read.
-  it('falls back to the default height for a fractional topBarHeight (no rounding)', async () => {
-    await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: 7.6 } }));
+  // The storage reader rounds numeric heights before the domain checks its range.
+  it('rounds a fractional stored topBarHeight before applying it', async () => {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: 2.5 } }));
     setTestProjectLocation();
 
     runContentScript();
     await flush();
 
     const { bar } = getElements();
-    expect(bar.style.height).toBe('4px');
+    expect(bar.style.height).toBe('3px');
   });
 
   it.each([1, 4, 12, 40])('sets shared viewport background properties at top bar height %i px', async (height) => {
