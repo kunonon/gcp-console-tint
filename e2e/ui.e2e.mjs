@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Key } from 'webdriverio';
-import { projectSettings, rule, settings, VERSION } from './fixtures.mjs';
+import { projectSettings, rule, SCHEMA_VERSION, settings, VERSION } from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
 
 const MATCH_LABELS = { prefix: 'Starts with', suffix: 'Ends with', exact: 'Exact', regex: 'Regex' };
@@ -883,8 +883,8 @@ for (const browserName of browserTargets()) {
         });
       }
       const exported = JSON.parse(await readFile(join(h.downloadDir, exportedName), 'utf8'));
-      assert.equal(exported.schemaVersion, VERSION);
-      assert.deepEqual(exported, initial);
+      assert.equal(exported.schemaVersion, SCHEMA_VERSION);
+      assert.deepEqual(exported, { ...initial, schemaVersion: SCHEMA_VERSION });
 
       await h.seedSettings(settings());
       await selectTab(browser, 'Settings');
@@ -1051,7 +1051,7 @@ for (const browserName of browserTargets()) {
         { timeout: 10000, timeoutMsg: 'Export did not produce a downloaded JSON file' },
       );
       const exported = JSON.parse(await readFile(join(h.downloadDir, exportedName), 'utf8'));
-      assert.deepEqual(exported, backup);
+      assert.deepEqual(exported, { ...backup, schemaVersion: SCHEMA_VERSION });
 
       await h.seedSettings(changed);
       const seeded = await waitStored(

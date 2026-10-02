@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 export const { version: VERSION } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+export const SCHEMA_VERSION = '0.1.0';
 
 export function projectSettings(overrides = {}) {
   return {
