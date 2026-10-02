@@ -6,13 +6,20 @@ The WebdriverIO suite installs the built Chrome MV3 and Firefox MV2 extensions i
 docker compose --profile e2e run --rm --build e2e
 ```
 
+CI runs Chrome and Firefox in parallel with separate Compose project names, isolating their `node_modules`, `.wxt`, and `.output` volumes. The default local command above remains serial. For parallel local runs, run these commands in separate terminals with different `--project-name` values:
+
+```sh
+docker compose --project-name e2e-chrome --profile e2e run --rm --build -e E2E_BROWSER=chrome e2e
+docker compose --project-name e2e-firefox --profile e2e run --rm --build -e E2E_BROWSER=firefox e2e
+```
+
 To run one browser, add `-e E2E_BROWSER=chrome` or `-e E2E_BROWSER=firefox` before `e2e`. If pnpm is available on the host, the optional launchers are `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox`; the Compose command requires no host pnpm installation. Failed harness runs retain screenshots, page captures, and startup diagnostics under `.e2e-artifacts/`. Successful runs remove their own run directory, leaving earlier failures untouched. When the container runs as root, artifact ownership is restored to the mounted checkout's UID/GID so Linux users can inspect and remove their diagnostics.
 
 ## Browser versions and downloads
 
 Local runs follow Chrome and Firefox `stable` at runtime by default. This catches compatibility changes in current browsers, but the same commit can fail after a browser or driver release. CI pins the browser and Geckodriver versions shown below; update those pins together with a successful both-browser run. These downloads are outside `pnpm-lock.yaml` and `minimumReleaseAge`. WebdriverIO does not supply an expected archive hash to the downloader; npm lockfile integrity does not verify these browser archives.
 
-To use the same browser selection as CI, pass its version overrides to Compose explicitly:
+To use the CI browser and driver versions locally, pass the pinned overrides to Compose explicitly:
 
 ```sh
 docker compose --profile e2e run --rm --build \

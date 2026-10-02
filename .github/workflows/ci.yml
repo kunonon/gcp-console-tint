@@ -70,17 +70,29 @@ jobs:
           - name: Build (Chrome + Firefox)
             run: pnpm build && pnpm build:firefox
 
-      - name: Browser extension end-to-end (Chrome + Firefox)
-        id: e2e
-        timeout-minutes: 30
-        run: |
-          docker compose --profile e2e run --rm --build -e E2E_BROWSER=all \
-            -e E2E_CHROME_VERSION=154.0.8037.92 \
-            -e E2E_FIREFOX_VERSION=stable_157.0 \
-            -e GECKODRIVER_VERSION=0.37.1 e2e
+      # Separate Compose projects isolate the shared node_modules, .wxt, and .output volumes.
+      - parallel:
+          - name: Browser extension end-to-end (Chrome)
+            id: e2e_chrome
+            timeout-minutes: 30
+            run: |
+              docker compose --project-name e2e-chrome-${{ github.run_id }}-${{ github.run_attempt }} \
+                --profile e2e run --rm --build \
+                -e E2E_BROWSER=chrome \
+                -e E2E_CHROME_VERSION=154.0.8037.92 e2e
+
+          - name: Browser extension end-to-end (Firefox)
+            id: e2e_firefox
+            timeout-minutes: 30
+            run: |
+              docker compose --project-name e2e-firefox-${{ github.run_id }}-${{ github.run_attempt }} \
+                --profile e2e run --rm --build \
+                -e E2E_BROWSER=firefox \
+                -e E2E_FIREFOX_VERSION=stable_157.0 \
+                -e GECKODRIVER_VERSION=0.37.1 e2e
 
       - name: Upload end-to-end diagnostics
-        if: always() && steps.e2e.outcome == 'failure'
+        if: always() && (steps.e2e_chrome.outcome == 'failure' || steps.e2e_firefox.outcome == 'failure')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-diagnostics-${{ github.run_id }}
