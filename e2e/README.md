@@ -10,9 +10,9 @@ To run one browser, add `-e E2E_BROWSER=chrome` or `-e E2E_BROWSER=firefox` befo
 
 ## Browser versions and downloads
 
-The default follows Chrome and Firefox `stable` at runtime. This catches compatibility changes in current browsers, but the same commit can fail after a browser or driver release. These downloads are outside `pnpm-lock.yaml` and `minimumReleaseAge`. WebdriverIO does not supply an expected archive hash to the downloader; npm lockfile integrity does not verify these browser archives.
+Local runs follow Chrome and Firefox `stable` at runtime by default. This catches compatibility changes in current browsers, but the same commit can fail after a browser or driver release. CI pins the browser and Geckodriver versions shown below; update those pins together with a successful both-browser run. These downloads are outside `pnpm-lock.yaml` and `minimumReleaseAge`. WebdriverIO does not supply an expected archive hash to the downloader; npm lockfile integrity does not verify these browser archives.
 
-For a reproducible browser selection, pass version overrides to Compose explicitly. For example, these versions were used while developing the suite:
+To use the same browser selection as CI, pass its version overrides to Compose explicitly:
 
 ```sh
 docker compose --profile e2e run --rm --build \
@@ -21,9 +21,11 @@ docker compose --profile e2e run --rm --build \
   -e GECKODRIVER_VERSION=0.37.1 e2e
 ```
 
-ChromeDriver follows the resolved Chrome version. Firefox stable versions need the `stable_` prefix; a bare numeric Firefox build ID is interpreted as Nightly by the downloader. Geckodriver selects its own latest release unless `GECKODRIVER_VERSION` is supplied. The Docker base image is also a moving tag, so these overrides do not freeze the entire container environment. Extension discovery uses the browser's extension-manager pages and can require updates when their internal DOM changes.
+ChromeDriver follows the resolved Chrome version. Firefox stable versions need the `stable_` prefix; a bare numeric Firefox build ID is interpreted as Nightly by the downloader. Geckodriver selects its own latest release unless `GECKODRIVER_VERSION` is supplied. The Docker base image and apt packages can still change, so these overrides do not freeze the entire container environment. Extension discovery uses Chrome's internal developer API and Firefox's internal UUID preference, which can change across browser versions.
 
-The parent-scoped `@wdio/utils>@puppeteer/browsers` override keeps `extract-zip` out of the dependency graph across WebdriverIO version updates. CI explicitly checks its absence. The override exceeds WebdriverIO's declared 2.x range, so retain both-browser E2E checks and review compatibility on dependency updates.
+The service currently targets `linux/amd64`. Apple Silicon hosts run it through x86 emulation, which can make local runs slower; native Linux arm64 execution of this suite has not been verified.
+
+The parent-scoped `@wdio/utils>@puppeteer/browsers` override keeps `extract-zip` out of the dependency graph across WebdriverIO version updates. CI explicitly checks its absence. The override exceeds WebdriverIO's declared 2.x range, so retain both-browser E2E checks and review compatibility on dependency updates. Review this explicit pin manually; do not assume dependency update automation will update or remove it.
 
 This service assumes direct network access for browser downloads. Host `HTTP_PROXY` / `HTTPS_PROXY` variables are not forwarded by default, and the selected Puppeteer downloader has no installed `proxy-agent` peer. Proxy-based browser and driver downloads are not supported or verified by this setup. The browser's local fixture proxy is configured separately and is unrelated to download proxy support.
 
@@ -38,7 +40,7 @@ The `.mjs` harness and specs receive Biome lint and real browser execution; they
 | Spec | Covered behavior |
 | --- | --- |
 | `smoke.e2e.mjs` | Installs and opens each built extension, reaches the local HTTPS fixture through the proxy, checks the expected untinted initial state, and verifies native panel opening. |
-| `ui.e2e.mjs` | Adds rules in all four match modes; validates input, Enter, and Escape; edits, duplicates, reorders, and deletes rules; checks palette and surface controls, input bounds, all three palette-reference clears, and visible control values and swatches after reload. Exports a real JSON backup and checks its payload, schema version, and local-date filename; imports it into empty settings for a full round trip; and checks cancel, zero-selection, select-all/mixed selection, duplicate replacement order, and all six parser refusal reasons with an invalid-field path. It also clicks **Copy details** and verifies the visible parser detail through clipboard paste. |
+| `ui.e2e.mjs` | Adds rules in all four match modes; validates input, Enter, and Escape; edits, duplicates, reorders, and deletes rules; checks palette and surface controls, input bounds, all three palette-reference clears, and visible control values and swatches after reload. Exports a real JSON backup and checks its payload, schema version, and local-date filename; imports it into empty settings for a full round trip; and checks cancel, zero-selection, select-all/mixed selection, one-use replacement targets with excess duplicates appended under fresh IDs, and a full backup restoring distinct settings to two existing duplicate rules. Covers all six parser refusal reasons with an invalid-field path. It also clicks **Copy details** and verifies the visible parser detail through clipboard paste. |
 | `content.e2e.mjs` | Checks match precedence, exact and full-match regex behavior, missing/unmatched projects, origin boundaries, browser-observed HTTP handling, all eight surface enable combinations, palette resolution and fallback, targeted text descendants, stripes and fixed background alignment, automatic contrast, SPA push/replace/back/forward without a document reload, storage changes in two tabs, unrelated-key stability, extension reload with legacy, wholly corrupt, partly corrupt, current, and newer stored schemas, DOM replacement, and reduced-motion styles. The partly corrupt case retains raw storage while checking that invalid rules and palette entries are ignored and sanitized values render. |
 
 ## Scope and limits

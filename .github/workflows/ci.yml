@@ -73,7 +73,11 @@ jobs:
       - name: Browser extension end-to-end (Chrome + Firefox)
         id: e2e
         timeout-minutes: 30
-        run: docker compose --profile e2e run --rm --build -e E2E_BROWSER=all e2e
+        run: |
+          docker compose --profile e2e run --rm --build -e E2E_BROWSER=all \
+            -e E2E_CHROME_VERSION=154.0.8037.92 \
+            -e E2E_FIREFOX_VERSION=stable_157.0 \
+            -e GECKODRIVER_VERSION=0.37.1 e2e
 
       - name: Upload end-to-end diagnostics
         if: always() && steps.e2e.outcome == 'failure'

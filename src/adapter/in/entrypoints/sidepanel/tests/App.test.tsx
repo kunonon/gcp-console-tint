@@ -1975,7 +1975,8 @@ describe('App', () => {
         resolveSave();
         await save;
       });
-      expect(await screen.findByText('Imported 1 rule')).toBeTruthy();
+      const success = await screen.findByRole('status');
+      expect(within(success).getByText('Imported 1 rule')).toBeTruthy();
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     });
 
@@ -2049,9 +2050,10 @@ describe('App', () => {
       await openSettingsTab(user);
       await uploadSettingsFile(user, 'broken.json', '{ not json');
 
-      expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
-      expect(screen.getByText('broken.json could not be parsed as JSON.')).toBeTruthy();
-      const detail = screen.getByText(/^SyntaxError: /);
+      const alert = await screen.findByRole('alert');
+      expect(within(alert).getByText('Couldn’t import this file')).toBeTruthy();
+      expect(within(alert).getByText('broken.json could not be parsed as JSON.')).toBeTruthy();
+      const detail = within(alert).getByText(/^SyntaxError: /);
 
       await user.click(screen.getByRole('button', { name: 'Copy details' }));
       expect(writeText).toHaveBeenCalledWith(detail.textContent);

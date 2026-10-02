@@ -20,14 +20,14 @@ function textColor(color) {
 async function setStored(h, value, extra = {}) {
   const { browser } = h;
   await browser.switchToWindow(h.panelHandle);
-  const result = await browser.executeAsync(
-    async (key, settingsValue, additional, done) => {
+  const result = await browser.execute(
+    async (key, settingsValue, additional) => {
       try {
         const extensionApi = globalThis.browser || globalThis.chrome;
         await extensionApi.storage.local.set({ [key]: settingsValue, ...additional });
-        done({ ok: true });
+        return { ok: true };
       } catch (error) {
-        done({ ok: false, message: String(error) });
+        return { ok: false, message: String(error) };
       }
     },
     'tintSettings',
@@ -647,12 +647,12 @@ for (const browserName of browserTargets()) {
         );
 
         await h.browser.switchToWindow(h.panelHandle);
-        const unrelatedChange = await h.browser.executeAsync(async (done) => {
+        const unrelatedChange = await h.browser.execute(async () => {
           try {
             await (globalThis.browser || globalThis.chrome).storage.local.set({ unrelatedKey: 'ignored' });
-            done({ ok: true });
+            return { ok: true };
           } catch (error) {
-            done({ ok: false, message: String(error) });
+            return { ok: false, message: String(error) };
           }
         });
         assert.equal(unrelatedChange?.ok, true, unrelatedChange?.message || 'Failed to write unrelated storage key');

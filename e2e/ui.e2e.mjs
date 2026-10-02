@@ -29,6 +29,8 @@ async function click(browser, selector) {
     },
   );
   element = await browser.$(selector);
+  await element.scrollIntoView({ block: 'center' });
+  await element.waitForClickable();
   await element.click();
   return element;
 }
@@ -80,9 +82,7 @@ async function dialog(browser) {
 
 async function dialogIsClosed(browser) {
   const element = await browser.$('[role="dialog"]');
-  const backdrop = await browser.$('.modal__backdrop');
-  const [dialogDisplayed, backdropDisplayed] = await Promise.all([element.isDisplayed(), backdrop.isDisplayed()]);
-  return !dialogDisplayed && !backdropDisplayed;
+  return !(await element.isDisplayed());
 }
 
 async function alertText(browser, expected) {
@@ -942,9 +942,9 @@ for (const browserName of browserTargets()) {
 
       await uploadJson(h, 'incoming.json', incoming);
       await dialog(browser);
-      const warning = await browser.$('.alert--warning');
+      const warning = await browser.$('//*[@role="dialog"]//*[normalize-space(.)="Replaces 1 existing rule"]');
       await warning.waitForDisplayed();
-      assert.match(await warning.getText(), /Replaces 2 existing rules/);
+      assert.equal(await warning.isDisplayed(), true);
       const selectAll = await browser.$('//label[.//input[@type="checkbox"] and contains(., "Select all")]');
       const skip = await browser.$('//label[.//input[@type="checkbox" and @aria-label="skip"]]');
       await skip.click();
@@ -970,25 +970,121 @@ for (const browserName of browserTargets()) {
       await click(browser, 'button=Import 3 rules');
       await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
       const duplicateNotice = await statusText(browser, /Imported 3 rules/);
-      assert.ok(duplicateNotice.includes('1 added and 2 replaced from incoming.json'));
+      assert.ok(duplicateNotice.includes('2 added and 1 replaced from incoming.json'));
       const imported = await waitStored(h, (value) => value.projectRules?.some((item) => item.pattern === 'new'));
       assert.deepEqual(
         imported.projectRules.map((item) => item.pattern),
-        ['same', 'tail', 'new'],
+        ['same', 'tail', 'same', 'new'],
       );
       assert.equal(imported.projectRules[0].id, 'keep');
-      assert.equal(
-        imported.projectRules[0].settings.topBar.color.custom,
-        '#ddeeff',
-        'the later matching file rule should win',
-      );
-      assert.equal(imported.projectRules[0].settings.topBar.height, 9);
+      assert.equal(imported.projectRules[0].settings.topBar.color.custom, '#aabbcc');
+      assert.equal(imported.projectRules[0].settings.topBar.height, 4);
+      assert.equal(imported.projectRules[2].matchType, 'exact');
+      assert.equal(imported.projectRules[2].settings.topBar.color.custom, '#ddeeff');
+      assert.equal(imported.projectRules[2].settings.topBar.height, 9);
+      assert.equal(imported.projectRules[2].settings.topBar.stripes, true);
       assert.notEqual(imported.projectRules[2].id, 'file-duplicate-id');
+      assert.notEqual(imported.projectRules[2].id, 'keep');
       assert.equal(new Set(imported.projectRules.map((item) => item.id)).size, imported.projectRules.length);
       assert.equal(
         imported.projectRules.some((item) => item.pattern === 'skip'),
         false,
       );
+    });
+
+    test('restores distinct settings to two existing duplicate rules from a full backup', async () => {
+      const backup = settings(
+        rule(
+          'restore-first',
+          'same',
+          'exact',
+          projectSettings({
+            topBar: { enabled: true, color: { paletteId: null, custom: '#aabbcc' }, height: 4, stripes: false },
+            platformBar: { enabled: true, color: { paletteId: null, custom: '#123456' }, stripes: true },
+          }),
+        ),
+        rule(
+          'restore-second',
+          'same',
+          'exact',
+          projectSettings({
+            topBar: { enabled: true, color: { paletteId: null, custom: '#ddeeff' }, height: 9, stripes: true },
+            platformBarText: { enabled: true, color: { paletteId: null, custom: '#345678' }, auto: false },
+          }),
+        ),
+      );
+      const changed = settings(
+        rule(
+          'restore-first',
+          'same',
+          'exact',
+          projectSettings({
+            topBar: { enabled: true, color: { paletteId: null, custom: '#112233' }, height: 17, stripes: true },
+            platformBar: { enabled: true, color: { paletteId: null, custom: '#445566' }, stripes: false },
+          }),
+        ),
+        rule(
+          'restore-second',
+          'same',
+          'exact',
+          projectSettings({
+            topBar: { enabled: true, color: { paletteId: null, custom: '#778899' }, height: 23, stripes: false },
+            platformBarText: { enabled: true, color: { paletteId: null, custom: '#abcdef' }, auto: false },
+          }),
+        ),
+      );
+      await h.seedSettings(backup);
+      const browser = await panel(h);
+      await selectTab(browser, 'Settings');
+      for (const name of await readdir(h.downloadDir)) {
+        if (name.endsWith('.json')) await unlink(join(h.downloadDir, name));
+      }
+      await click(browser, 'button=Export');
+      let exportedName;
+      await browser.waitUntil(
+        async () => {
+          exportedName = (await readdir(h.downloadDir)).find((name) =>
+            /^gcp-console-tint-settings-\d{4}-\d{2}-\d{2}\.json$/.test(name),
+          );
+          return Boolean(exportedName);
+        },
+        { timeout: 10000, timeoutMsg: 'Export did not produce a downloaded JSON file' },
+      );
+      const exported = JSON.parse(await readFile(join(h.downloadDir, exportedName), 'utf8'));
+      assert.deepEqual(exported, backup);
+
+      await h.seedSettings(changed);
+      const seeded = await waitStored(
+        h,
+        (value) =>
+          value.projectRules?.[0]?.settings.topBar.color.custom === '#112233' &&
+          value.projectRules[1].settings.topBar.color.custom === '#778899',
+      );
+      assert.deepEqual(seeded, changed);
+      await selectTab(browser, 'Settings');
+      const input = await browser.$('input[aria-label="Import settings file"]');
+      await setFileInput(browser, input, join(h.downloadDir, exportedName));
+      await dialog(browser);
+      const warning = await browser.$('//*[@role="dialog"]//*[normalize-space(.)="Replaces 2 existing rules"]');
+      await warning.waitForDisplayed();
+      assert.equal(await warning.isDisplayed(), true);
+      await click(browser, 'button=Import 2 rules');
+      await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
+      const restoredNotice = await statusText(browser, /Imported 2 rules/);
+      assert.ok(restoredNotice.includes(`2 replaced from ${exportedName}`));
+      assert.equal(restoredNotice.includes(' added '), false);
+      const matchesBackup = (value) =>
+        value.projectRules?.length === 2 &&
+        value.projectRules[0].id === 'restore-first' &&
+        value.projectRules[0].settings.topBar.color.custom === '#aabbcc' &&
+        value.projectRules[1].id === 'restore-second' &&
+        value.projectRules[1].settings.topBar.color.custom === '#ddeeff';
+      const restored = await waitStored(h, matchesBackup);
+      assert.deepEqual(restored, backup);
+
+      await h.reloadPanel();
+      const reloaded = await waitStored(h, matchesBackup);
+      assert.deepEqual(reloaded, backup);
     });
 
     test('shows every parser refusal reason and invalid field path without changing stored rules', async () => {

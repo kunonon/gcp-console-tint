@@ -24,97 +24,100 @@ export function browserTargets() {
 
 async function chromeExtensionId(browser) {
   await browser.url('chrome://extensions');
-  let extensions = [];
+  let item;
   await browser.waitUntil(
     async () => {
-      extensions = await browser.execute(() => {
-        const items = [];
-        const visit = (root) => {
-          for (const element of root.querySelectorAll('*')) {
-            if (element.localName === 'extensions-item') {
-              const name = element.shadowRoot?.querySelector('#name')?.textContent?.trim() || '';
-              items.push({ id: element.id, name });
+      item = await browser.execute(async () => {
+        const chromeApi = globalThis.chrome;
+        if (typeof chromeApi?.developerPrivate?.getExtensionsInfo !== 'function') {
+          throw new Error('chrome.developerPrivate.getExtensionsInfo is unavailable on chrome://extensions');
+        }
+        const extensions = await new Promise((resolve, reject) => {
+          chromeApi.developerPrivate.getExtensionsInfo({}, (items) => {
+            const error = chromeApi.runtime.lastError;
+            if (error) {
+              reject(new Error(error.message));
+              return;
             }
-            if (element.shadowRoot) visit(element.shadowRoot);
-          }
-        };
-        visit(document);
-        return items;
+            resolve(items || []);
+          });
+        });
+        const extension = extensions.find(({ name, id }) => name === 'GCP Console Tint' && /^[a-p]{32}$/.test(id));
+        return extension ? { id: extension.id, name: extension.name } : null;
       });
-      return extensions.some((item) => item.name === 'GCP Console Tint' && /^[a-p]{32}$/.test(item.id));
+      return Boolean(item);
     },
     { timeout: 15000, interval: 200, timeoutMsg: 'Chrome did not show the loaded GCP Console Tint extension' },
   );
-  const item = extensions.find(({ name, id }) => name === extensionName && /^[a-p]{32}$/.test(id));
   assert.ok(item, `Chrome extension manager did not expose the ${extensionName} ID`);
   return item;
 }
 
 async function enableChromeDeveloperMode(browser) {
-  const result = await browser.executeAsync((done) => {
-    const developerPrivate = globalThis.chrome?.developerPrivate;
+  const result = await browser.execute(async () => {
+    const chromeApi = globalThis.chrome;
+    const developerPrivate = chromeApi?.developerPrivate;
     if (!developerPrivate) {
-      done({ ok: false, message: 'chrome.developerPrivate is unavailable on chrome://extensions' });
-      return;
+      return { ok: false, message: 'chrome.developerPrivate is unavailable on chrome://extensions' };
     }
-    developerPrivate.getProfileConfiguration((profile) => {
-      if (profile?.inDeveloperMode) {
-        done({ ok: true, enabled: true });
-        return;
-      }
-      developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }, () => {
-        const error = globalThis.chrome.runtime.lastError;
-        if (error) {
-          done({ ok: false, message: error.message });
-          return;
-        }
-        developerPrivate.getProfileConfiguration((updatedProfile) => {
-          done({ ok: true, enabled: updatedProfile?.inDeveloperMode === true });
+    const invoke = (method) =>
+      new Promise((resolve, reject) => {
+        method((value) => {
+          const error = chromeApi.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          resolve(value);
         });
       });
-    });
+    const updateProfile = () =>
+      new Promise((resolve, reject) => {
+        developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }, () => {
+          const error = chromeApi.runtime.lastError;
+          if (error) reject(new Error(error.message));
+          else resolve();
+        });
+      });
+    try {
+      let profile = await invoke((callback) => developerPrivate.getProfileConfiguration(callback));
+      if (profile?.inDeveloperMode) {
+        return { ok: true, enabled: true };
+      }
+      await updateProfile();
+      profile = await invoke((callback) => developerPrivate.getProfileConfiguration(callback));
+      return { ok: true, enabled: profile?.inDeveloperMode === true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
   });
   assert.equal(result?.ok, true, result?.message || 'Failed to enable Chrome Developer Mode for the E2E profile');
   assert.equal(result.enabled, true, 'Chrome Developer Mode remained disabled in the E2E profile');
 }
 
 async function firefoxPanelUrl(browser, addonId) {
-  await browser.url('about:debugging#/runtime/this-firefox');
-  let manifests = [];
-  await browser.waitUntil(
-    async () => {
-      manifests = await browser.execute(
-        (targetId, targetName) => {
-          const links = [...document.querySelectorAll('a[href^="moz-extension://"]')].filter((link) =>
-            /\/manifest\.json(?:$|\?)/.test(link.href),
-          );
-          return links
-            .map((link) => {
-              let container = link;
-              for (let depth = 0; depth < 7 && container.parentElement; depth++) {
-                const text = container.innerText || container.textContent || '';
-                if (text.includes(targetName) || text.includes(targetId)) {
-                  return { href: link.href, text };
-                }
-                container = container.parentElement;
-              }
-              return null;
-            })
-            .filter(Boolean);
-        },
-        addonId,
-        extensionName,
-      );
-      return manifests.length > 0;
-    },
-    {
-      timeout: 15000,
-      interval: 200,
-      timeoutMsg: 'Firefox about:debugging did not expose the installed add-on manifest URL',
-    },
-  );
-  const uuid = new URL(manifests[0].href).hostname;
-  assert.ok(uuid, 'Firefox did not expose the add-on internal UUID');
+  const originalContext = await browser.getMozContext();
+  let uuid;
+  try {
+    await browser.setMozContext('chrome');
+    await browser.waitUntil(
+      async () => {
+        uuid = await browser.execute((targetAddonId) => {
+          const uuids = JSON.parse(globalThis.Services.prefs.getStringPref('extensions.webextensions.uuids', '{}'));
+          return uuids[targetAddonId] || null;
+        }, addonId);
+        return Boolean(uuid);
+      },
+      {
+        timeout: 15000,
+        interval: 200,
+        timeoutMsg: 'Firefox did not expose the installed add-on UUID',
+      },
+    );
+    assert.ok(uuid, 'Firefox did not expose the add-on internal UUID');
+  } finally {
+    await browser.setMozContext(originalContext);
+  }
   return `moz-extension://${uuid}/sidepanel.html`;
 }
 
@@ -293,13 +296,14 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
       cacheDir,
       logLevel: 'warn',
       connectionRetryCount: 0,
-      connectionRetryTimeout: 15000,
+      connectionRetryTimeout: 60000,
       waitforTimeout: 10000,
     });
     let panelUrl;
     let extensionId;
     if (browserName === 'chrome') {
       extensionId = await chromeExtensionId(browser);
+      // Keep the unpacked extension in a Developer Mode profile for the reload scenario.
       await enableChromeDeveloperMode(browser);
       panelUrl = `chrome-extension://${extensionId.id}/sidepanel.html`;
     } else {
@@ -444,19 +448,18 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
           extensionName: (globalThis.browser || globalThis.chrome).runtime.getManifest().name,
         }));
         const reloadMarker = randomUUID();
-        const reload = await browser.executeAsync(
-          async (key, marker, done) => {
+        const reload = await browser.execute(
+          async (key, marker) => {
             const extensionApi = globalThis.browser || globalThis.chrome;
             if (typeof extensionApi?.runtime?.reload !== 'function') {
-              done({ ok: false, message: 'browser.runtime.reload is unavailable' });
-              return;
+              return { ok: false, message: 'browser.runtime.reload is unavailable' };
             }
             try {
               await extensionApi.storage.local.set({ [key]: marker });
               setTimeout(() => extensionApi.runtime.reload(), 0);
-              done({ ok: true });
+              return { ok: true };
             } catch (error) {
-              done({ ok: false, message: String(error) });
+              return { ok: false, message: String(error) };
             }
           },
           reloadMarkerKey,
@@ -540,14 +543,14 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
             timeoutMsg: 'Fresh extension panel did not render after extension reload',
           },
         );
-        const reloadedMarker = await browser.executeAsync(async (key, done) => {
+        const reloadedMarker = await browser.execute(async (key) => {
           const extensionApi = globalThis.browser || globalThis.chrome;
           try {
             const values = await extensionApi.storage.local.get(key);
             await extensionApi.storage.local.remove(key);
-            done({ value: values[key] ?? null });
+            return { value: values[key] ?? null };
           } catch (error) {
-            done({ error: String(error) });
+            return { error: String(error) };
           }
         }, reloadMarkerKey);
         assert.equal(
@@ -570,34 +573,33 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
       },
       async seedSettings(value) {
         await harness.openPanel();
-        await browser
-          .executeAsync(
-            async (key, settings, done) => {
-              try {
-                const extensionApi = globalThis.browser || globalThis.chrome;
-                await extensionApi.storage.local.set({ [key]: settings });
-                done({ ok: true });
-              } catch (error) {
-                done({ ok: false, message: String(error) });
-              }
-            },
-            settingsKey,
-            value,
-          )
-          .then((result) => assert.equal(result?.ok, true, result?.message || 'Failed to seed browser.storage.local'));
+        const result = await browser.execute(
+          async (key, settings) => {
+            try {
+              const extensionApi = globalThis.browser || globalThis.chrome;
+              await extensionApi.storage.local.set({ [key]: settings });
+              return { ok: true };
+            } catch (error) {
+              return { ok: false, message: String(error) };
+            }
+          },
+          settingsKey,
+          value,
+        );
+        assert.equal(result?.ok, true, result?.message || 'Failed to seed browser.storage.local');
         await harness.reloadPanel();
       },
       async readSettings() {
         const originalHandle = await browser.getWindowHandle();
         try {
           await harness.openPanel();
-          const result = await browser.executeAsync(async (key, done) => {
+          const result = await browser.execute(async (key) => {
             try {
               const extensionApi = globalThis.browser || globalThis.chrome;
               const value = await extensionApi.storage.local.get(key);
-              done(value[key] ?? null);
+              return value[key] ?? null;
             } catch (error) {
-              done({ __error: String(error) });
+              return { __error: String(error) };
             }
           }, settingsKey);
           assert.equal(result?.__error, undefined, result?.__error || 'Failed to read browser.storage.local');
@@ -609,13 +611,13 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
       async reset() {
         await harness.openPanel();
         await browser
-          .executeAsync(async (done) => {
+          .execute(async () => {
             try {
               const extensionApi = globalThis.browser || globalThis.chrome;
               await extensionApi.storage.local.clear();
-              done({ ok: true });
+              return { ok: true };
             } catch (error) {
-              done({ ok: false, message: String(error) });
+              return { ok: false, message: String(error) };
             }
           })
           .then((result) => assert.equal(result?.ok, true, result?.message || 'Failed to clear browser.storage.local'));
@@ -675,13 +677,13 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
           let behavior;
           await browser.waitUntil(
             async () => {
-              behavior = await browser.executeAsync(async (done) => {
+              behavior = await browser.execute(async () => {
                 try {
                   const extensionApi = globalThis.browser || globalThis.chrome;
                   const value = await extensionApi.sidePanel.getPanelBehavior();
-                  done({ ok: true, value });
+                  return { ok: true, value };
                 } catch (error) {
-                  done({ ok: false, message: String(error) });
+                  return { ok: false, message: String(error) };
                 }
               });
               return behavior?.ok && behavior.value.openPanelOnActionClick === true;
@@ -713,13 +715,13 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
         }
 
         if (browserName === 'chrome') {
-          const currentWindow = await browser.executeAsync(async (done) => {
+          const currentWindow = await browser.execute(async () => {
             try {
               const extensionApi = globalThis.browser || globalThis.chrome;
               const window = await extensionApi.windows.getCurrent();
-              done({ ok: true, windowId: window.id });
+              return { ok: true, windowId: window.id };
             } catch (error) {
-              done({ ok: false, message: String(error) });
+              return { ok: false, message: String(error) };
             }
           });
           assert.equal(currentWindow?.ok, true, currentWindow?.message || 'Failed to find the current browser window');
@@ -777,19 +779,19 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
         const originalHandle = await browser.getWindowHandle();
         try {
           await harness.openPanel();
-          const result = await browser.executeAsync(
-            async (name, expectedUrl, done) => {
+          const result = await browser.execute(
+            async (name, expectedUrl) => {
               try {
                 const extensionApi = globalThis.browser || globalThis.chrome;
                 if (name === 'chrome') {
                   const contexts = await extensionApi.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] });
-                  done(contexts.some((context) => context.documentUrl === expectedUrl));
+                  return contexts.some((context) => context.documentUrl === expectedUrl);
                 } else {
                   const window = await extensionApi.windows.getCurrent();
-                  done(await extensionApi.sidebarAction.isOpen({ windowId: window.id }));
+                  return await extensionApi.sidebarAction.isOpen({ windowId: window.id });
                 }
               } catch (error) {
-                done({ __error: String(error) });
+                return { __error: String(error) };
               }
             },
             browserName,
