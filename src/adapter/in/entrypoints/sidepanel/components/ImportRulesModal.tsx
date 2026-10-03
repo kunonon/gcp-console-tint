@@ -2,6 +2,7 @@ import { Alert, Button, Checkbox, Modal, Tooltip } from '@heroui/react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ProjectRule } from '../../../../../domain/project-rule';
 import type { TintSettings } from '../../../../../domain/tint-settings';
+import { shortenForDisplay } from '../text';
 
 interface ImportRulesModalProps {
   isOpen: boolean;
@@ -117,7 +118,7 @@ export default function ImportRulesModal({
               <Modal.CloseTrigger />
             </Modal.Header>
             <Modal.Body className="flex flex-col gap-2">
-              <span className="truncate font-mono text-sm">{fileName}</span>
+              <span className="truncate font-mono text-sm">{shortenForDisplay(fileName)}</span>
 
               <div className="flex min-h-8 items-center justify-between gap-2">
                 <Checkbox
@@ -144,39 +145,48 @@ export default function ImportRulesModal({
                   const target = targetByIncomingIndex.get(index);
                   return (
                     // biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed for the lifetime of one import (never reordered, inserted into or filtered), and the rules' own ids come from the imported file, which is free to repeat them
-                    <div key={index} className="flex min-h-6 items-center gap-3">
-                      <Checkbox
-                        aria-label={rule.pattern}
-                        aria-describedby={`${rowLabelId}-row-${index}`}
-                        isSelected={isSelected}
-                        isDisabled={isSaving}
-                        onChange={toggleAt(index)}
-                      >
-                        <Checkbox.Content>
-                          <Checkbox.Control>
-                            <Checkbox.Indicator />
-                          </Checkbox.Control>
-                        </Checkbox.Content>
-                      </Checkbox>
-                      <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
-                      {isSelected && target !== undefined && (
-                        // The icon itself is not interactive, so unlike IconButtonTooltip in App.tsx
-                        // this trigger keeps its default tabIndex: the focusable wrapper it renders is
-                        // the only way to reach the explanation by keyboard.
-                        <Tooltip delay={500}>
-                          <Tooltip.Trigger className="shrink-0">
-                            <TriangleAlertIcon />
-                          </Tooltip.Trigger>
-                          <Tooltip.Content>
-                            Replaces existing rule row {target + 1} with the same match type and pattern.
-                          </Tooltip.Content>
-                        </Tooltip>
-                      )}
-                      <span className="shrink-0 text-xs text-muted">{rule.matchType}</span>
-                      <span id={`${rowLabelId}-row-${index}`} className="shrink-0 text-xs text-muted">
-                        File row {index + 1} →{' '}
-                        {!isSelected ? 'Not selected' : target === undefined ? 'Add' : `Rule row ${target + 1}`}
-                      </span>
+                    <div key={index} className="flex flex-col gap-0.5">
+                      <div className="flex min-h-6 items-center gap-3">
+                        <Checkbox
+                          // A fixed name that never changes with selection: rows can share a pattern
+                          // (or have an empty one), so the row number and match type keep every name
+                          // unique and non-empty, and selection state stays in the description.
+                          aria-label={`File row ${index + 1}, ${rule.matchType}, ${rule.pattern === '' ? '(empty pattern)' : rule.pattern}`}
+                          aria-describedby={`${rowLabelId}-row-${index}`}
+                          isSelected={isSelected}
+                          isDisabled={isSaving}
+                          onChange={toggleAt(index)}
+                        >
+                          <Checkbox.Content>
+                            <Checkbox.Control>
+                              <Checkbox.Indicator />
+                            </Checkbox.Control>
+                          </Checkbox.Content>
+                        </Checkbox>
+                        <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
+                      </div>
+                      {/* Second line, indented past the checkbox (size-4 + gap-3) and free to wrap, so
+                          a long pattern never pushes the match type or target out of a narrow panel. */}
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-7">
+                        {isSelected && target !== undefined && (
+                          // The icon itself is not interactive, so unlike IconButtonTooltip in App.tsx
+                          // this trigger keeps its default tabIndex: the focusable wrapper it renders is
+                          // the only way to reach the explanation by keyboard.
+                          <Tooltip delay={500}>
+                            <Tooltip.Trigger className="shrink-0">
+                              <TriangleAlertIcon />
+                            </Tooltip.Trigger>
+                            <Tooltip.Content>
+                              Replaces existing rule row {target + 1} with the same match type and pattern.
+                            </Tooltip.Content>
+                          </Tooltip>
+                        )}
+                        <span className="text-xs text-muted">{rule.matchType}</span>
+                        <span id={`${rowLabelId}-row-${index}`} className="text-xs text-muted">
+                          File row {index + 1} →{' '}
+                          {!isSelected ? 'Not selected' : target === undefined ? 'Add' : `Rule row ${target + 1}`}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}

@@ -1948,8 +1948,8 @@ describe('App', () => {
 
       const dialog = await screen.findByRole('dialog');
       expect(within(dialog).getByText('x.json')).toBeTruthy();
-      expect(within(dialog).getByRole('checkbox', { name: 'alpha' })).toBeTruthy();
-      expect(within(dialog).getByRole('checkbox', { name: 'beta' })).toBeTruthy();
+      expect(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' })).toBeTruthy();
+      expect(within(dialog).getByRole('checkbox', { name: 'File row 2, exact, beta' })).toBeTruthy();
       expect(within(dialog).getByText('2 of 2 selected')).toBeTruthy();
       expect(within(dialog).getByText('File row 1 → Rule row 1')).toBeTruthy();
       expect(within(dialog).getByText('File row 2 → Add')).toBeTruthy();
@@ -1958,14 +1958,14 @@ describe('App', () => {
       expect(within(dialog).getByText('Replaces 1 existing rule')).toBeTruthy();
 
       // Unchecking one rule updates the counter, the warning and the confirm label.
-      await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+      await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
       expect(within(dialog).getByText('1 of 2 selected')).toBeTruthy();
       expect(within(dialog).queryByText('Replaces 1 existing rule')).toBeNull();
       expect(within(dialog).getByText('File row 1 → Not selected')).toBeTruthy();
       expect(within(dialog).getByText('File row 2 → Add')).toBeTruthy();
       expect(within(dialog).getByRole('button', { name: 'Import 1 rule' })).toBeTruthy();
 
-      await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+      await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
       expect(within(dialog).getByText('File row 1 → Rule row 1')).toBeTruthy();
       await user.click(within(dialog).getByRole('button', { name: 'Import 2 rules' }));
 
@@ -2041,7 +2041,7 @@ describe('App', () => {
 
       expect(await within(dialog).findByText('Couldn’t save imported rules')).toBeTruthy();
       expect(screen.queryByText('Imported 1 rule')).toBeNull();
-      expect(within(dialog).getByRole('checkbox', { name: 'from-file' })).toBeTruthy();
+      expect(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, from-file' })).toBeTruthy();
       expect(await getStoredSettings()).toEqual(before);
       expect(consoleError).toHaveBeenCalledTimes(1);
 
