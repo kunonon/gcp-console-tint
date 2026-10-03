@@ -58,6 +58,22 @@ describe('fitDetail', () => {
     expect(result.length).toBeLessThanOrEqual(16_384);
   });
 
+  it('keeps a later whole line that ends exactly at the budget', () => {
+    // Budget 16,384 - 19 = 16,365. The second newline sits at unit 16,365, so both lines before it fit.
+    const kept = `${'a'.repeat(100)}\n${'b'.repeat(16_264)}`;
+    const result = fitDetail(`${kept}\n${'c'.repeat(100)}`);
+    expect(result).toBe(`${kept}${MARKER}`);
+    expect(result).toHaveLength(16_384);
+  });
+
+  it('keeps a later whole line that ends exactly at the budget left by the footer', () => {
+    // Budget 16,384 - 19 - 65 = 16,300; the second newline sits at unit 16,300.
+    const kept = `${'a'.repeat(100)}\n${'b'.repeat(16_199)}`;
+    const result = fitDetail(`${kept}\n${'c'.repeat(100)}`, FOOTER);
+    expect(result).toBe(`${kept}${MARKER}\n${FOOTER}`);
+    expect(result).toHaveLength(16_384);
+  });
+
   it('reserves room for the footer, not just the marker, before choosing the last whole line', () => {
     // Budget 16,384 - 19 - 65 = 16,300. The second line ends at unit 16,350: inside the budget
     // the marker alone would leave (16,365), outside the one that also holds the footer.

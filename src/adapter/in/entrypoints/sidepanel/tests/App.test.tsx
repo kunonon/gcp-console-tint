@@ -2396,7 +2396,7 @@ describe('App', () => {
     // The refusal here is the disabled button. React re-renders synchronously at the end of a
     // change event, so no Export press can reach the handler between a file being accepted and
     // the button being disabled; the handler's own check for this phase is defensive only.
-    it('keeps Export disabled while a file is being read', async () => {
+    it('keeps Export disabled, and Import usable, while a file is being read', async () => {
       const user = userEvent.setup();
       const store = new SettingsStoreImpl();
       render(<App settingsStore={store} />);
@@ -2409,8 +2409,14 @@ describe('App', () => {
       const exportButton = screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement;
       expect(exportButton.disabled).toBe(true);
       act(() => exportButton.click());
-      // Still readable: picking another file replaces the one being read.
+      // Still readable: picking another file replaces the one being read. The Import button is the
+      // only way a user reaches the hidden input, so it must stay enabled and open the picker.
       expect(fileInput().disabled).toBe(false);
+      const pick = vi.spyOn(fileInput(), 'click');
+      const importButton = screen.getByRole('button', { name: 'Import…' }) as HTMLButtonElement;
+      expect(importButton.disabled).toBe(false);
+      await user.click(importButton);
+      expect(pick).toHaveBeenCalledTimes(1);
 
       await act(async () => {
         held.read.resolve('{ not json');
@@ -2471,6 +2477,8 @@ describe('App', () => {
       const importJson = vi.spyOn(store, 'importJson');
 
       expect(fileInput().disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'Export', hidden: true }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'Import…', hidden: true }) as HTMLButtonElement).disabled).toBe(true);
       const held = heldFile('second.json');
       const input = forceChange(held.file);
 
@@ -2828,7 +2836,7 @@ describe('App', () => {
       expect(consoleError).not.toHaveBeenCalled();
     });
 
-    it('keeps saving a queued import after App unmounts, without updating any notice or modal', async () => {
+    it('keeps saving a queued import, in order, after App unmounts', async () => {
       const user = userEvent.setup();
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const store = new SettingsStoreImpl();
@@ -2870,6 +2878,7 @@ describe('App', () => {
           'imported',
         ]),
       );
+      // Notice/modal suppression after unmount is covered by BackupCard.test.tsx ('reports nothing when an import it started finishes saving after the card is gone').
       expect(document.body.textContent).toBe('');
       expect(consoleError).not.toHaveBeenCalled();
     });
