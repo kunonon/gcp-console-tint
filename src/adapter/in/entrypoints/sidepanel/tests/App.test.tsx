@@ -3200,11 +3200,14 @@ describe('App', () => {
       expect(version).toHaveLength(305);
     });
 
-    it('shortens a long version without splitting an emoji', async () => {
-      const version = `${'9'.repeat(253)}😀${'9'.repeat(40)}`;
+    it.each([
+      // The pair occupies units 254-255, so a 255-unit cut would keep only its high half.
+      ['straddles the cut', `${'9'.repeat(254)}😀${'9'.repeat(40)}`, `${'9'.repeat(254)}…`],
+      ['ends right at the cut', `${'9'.repeat(253)}😀${'9'.repeat(40)}`, `${'9'.repeat(253)}😀…`],
+    ])('shortens a long version without splitting an emoji that %s', async (_case, version, shown) => {
       const opened = await importRefusedWith(new SettingsImportError({ reason: 'unsupported-version', version }));
       expect(opened.alert.textContent).toBe(
-        `Couldn’t import this filebig.json was written by an unsupported version (${'9'.repeat(253)}😀…).`,
+        `Couldn’t import this filebig.json was written by an unsupported version (${shown}).`,
       );
     });
 

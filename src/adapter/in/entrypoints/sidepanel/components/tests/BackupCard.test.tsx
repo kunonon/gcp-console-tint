@@ -127,6 +127,32 @@ describe('BackupCard file reads', () => {
     expect(screen.queryByText('Couldn’t import this file')).toBeNull();
     expect(consoleError).not.toHaveBeenCalled();
   });
+
+  it('refuses a file picked in the same tick as an accepted Export', async () => {
+    const store = createStore();
+    let release!: (settings: TintSettings) => void;
+    vi.spyOn(store, 'load').mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    const importJson = vi.spyOn(store, 'importJson');
+    render(<Harness store={store} />);
+    const text = vi.fn(async () => 'x');
+    let input!: HTMLInputElement;
+    // Export has not re-rendered yet, so the input is still enabled: only the handler's own check
+    // can refuse the file.
+    act(() => {
+      screen.getByRole('button', { name: 'Export' }).click();
+      input = upload('a.json', text);
+    });
+    expect(text).not.toHaveBeenCalled();
+    expect(importJson).not.toHaveBeenCalled();
+    expect(input.value).toBe('');
+    await act(async () => {
+      release(noRules);
+    });
+  });
 });
 
 describe('BackupCard notices', () => {
@@ -276,6 +302,26 @@ describe('BackupCard export focus', () => {
     expect(await screen.findByText('No saved rules to export')).toBeTruthy();
     expect(exportButton.disabled).toBe(false);
     expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('puts focus back only once, not on a later return to idle', async () => {
+    const store = createStore();
+    vi.spyOn(store, 'importJson').mockImplementation(() => {
+      throw new Error('bad file');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<Harness store={store} />);
+    const exportButton = screen.getByRole('button', { name: 'Export' });
+    exportButton.focus();
+    fireEvent.click(exportButton);
+    expect(await screen.findByText('No saved rules to export')).toBeTruthy();
+    expect(document.activeElement).toBe(exportButton);
+
+    exportButton.blur();
+    upload('settings.json', async () => '{}');
+    expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+    await act(async () => {});
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('does not take focus when Export was pressed without it', async () => {

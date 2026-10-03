@@ -74,6 +74,17 @@ describe('fitDetail', () => {
     expect(result).toHaveLength(16_384);
   });
 
+  it('drops a later line whose newline sits one unit past the budget', () => {
+    // Budget 16,365; the second newline sits at unit 16,366, so only the first line fits.
+    expect(fitDetail(`${'a'.repeat(100)}\n${'b'.repeat(16_265)}\n${'c'.repeat(100)}`)).toBe(
+      `${'a'.repeat(100)}${MARKER}`,
+    );
+    // With the footer the budget is 16,300; the second newline sits at unit 16,301.
+    expect(fitDetail(`${'a'.repeat(100)}\n${'b'.repeat(16_200)}\n${'c'.repeat(100)}`, FOOTER)).toBe(
+      `${'a'.repeat(100)}${MARKER}\n${FOOTER}`,
+    );
+  });
+
   it('reserves room for the footer, not just the marker, before choosing the last whole line', () => {
     // Budget 16,384 - 19 - 65 = 16,300. The second line ends at unit 16,350: inside the budget
     // the marker alone would leave (16,365), outside the one that also holds the footer.
