@@ -18,7 +18,7 @@ export function shortenForDisplay(text: string, max = 256): string {
   return `${text.slice(0, backOffSurrogate(text, max - 1))}…`;
 }
 
-export const DETAIL_LIMIT = 16_384;
+const DETAIL_LIMIT = 16_384;
 const TRUNCATION_MARKER = 'Details truncated.';
 
 // Fits an error detail (and an optional closing footer line) into DETAIL_LIMIT UTF-16 units. The

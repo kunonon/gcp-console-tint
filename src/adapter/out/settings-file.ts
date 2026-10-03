@@ -260,8 +260,9 @@ function invalidFields(issues: readonly SettingsImportIssue[], validationStopped
 
 // Parses an imported settings file's text into current-shape settings, throwing
 // SettingsImportError on anything the user needs to be told about: bad JSON, the wrong kind of
-// file, a version predating every readable shape or postdating this build, fields that are
-// missing/wrongly typed/unusable, or no rules at all.
+// file, a version predating every readable shape or postdating this build, a file whose
+// migration to the current shape fails, fields that are missing/wrongly typed/unusable, or no
+// rules at all.
 //
 // `currentVersion` is this build's effective schema version ceiling (the running extension
 // version floored at CURRENT_SCHEMA_VERSION). It bounds legacy release-stamped files; stamps
@@ -301,7 +302,8 @@ export function parseSettingsFile(
   // stamp run (see runMigrations), so a file already in a later shape is not migrated twice.
   // Only a throw from the migration itself is migration-failed, reported against the file's own
   // stamp (the step that threw is an internal detail the user cannot act on); every check after
-  // it keeps its own reason, and an unexpected error from it propagates unchanged.
+  // the migration keeps its own reason, and an unexpected error from one of those checks
+  // propagates unchanged.
   let data: unknown;
   try {
     ({ data } = runMigrations(value, schemaVersion, steps));

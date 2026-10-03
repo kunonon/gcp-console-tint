@@ -176,7 +176,6 @@ export default function BackupCard({
   // again (the user came back to the Settings tab) must not put it in a live region a second time.
   const mountNoticeIdRef = useRef(notice?.id ?? null);
   const [pending, setPending] = useState<{ fileName: string; rules: readonly ProjectRule[] } | null>(null);
-  const [isImportOpen, setIsImportOpen] = useState(false);
 
   useEffect(() => {
     generationRef.current += 1;
@@ -271,7 +270,6 @@ export default function BackupCard({
       if (!isCurrent()) return;
       const settingsFromFile = settingsStore.importJson(contents);
       setPending({ fileName: file.name, rules: settingsFromFile.projectRules });
-      setIsImportOpen(true);
       setPhase('modal');
     } catch (error) {
       if (!isCurrent()) return;
@@ -288,7 +286,6 @@ export default function BackupCard({
   };
 
   const handleImportOpenChange = (isOpen: boolean) => {
-    setIsImportOpen(isOpen);
     if (!isOpen) setPhase('idle');
   };
 
@@ -298,7 +295,6 @@ export default function BackupCard({
     const fileName = pending?.fileName ?? '';
     const { added, replaced } = await onImport(selected);
     if (generation !== generationRef.current) return;
-    setIsImportOpen(false);
     setPhase('idle');
     onNotice({
       tone: 'success',
@@ -415,7 +411,7 @@ export default function BackupCard({
       )}
 
       <ImportRulesModal
-        isOpen={isImportOpen}
+        isOpen={phase === 'modal'}
         onOpenChange={handleImportOpenChange}
         fileName={pending?.fileName ?? ''}
         incoming={pending?.rules ?? []}

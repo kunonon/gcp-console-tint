@@ -40,8 +40,9 @@ body {
 }
 
 /* Same reason as the `.card` rule above — this page carries no shadows — for the result notices
-   the Settings tab renders after an import: HeroUI's `.alert` ships the same `shadow-surface`
-   box-shadow that draws Card's border-like edge. Unlayered for the same cascade reason. */
+   the Settings tab renders after an export or import: HeroUI's `.alert` ships the same
+   `shadow-surface` box-shadow that draws Card's border-like edge. Unlayered for the same cascade
+   reason. */
 .alert {
   box-shadow: none;
 }
