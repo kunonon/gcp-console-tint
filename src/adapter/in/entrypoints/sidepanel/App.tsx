@@ -8,7 +8,7 @@ import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
-import BackupCard from './components/BackupCard';
+import BackupCard, { type Notice, type NoticeInput } from './components/BackupCard';
 import ColorSwatchField from './components/ColorSwatchField';
 import DeleteConfirmPopover from './components/DeleteConfirmPopover';
 import MatchTypeSelect from './components/MatchTypeSelect';
@@ -155,8 +155,13 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
 }
 
 function App({ settingsStore }: { settingsStore: SettingsStore }) {
-  const { settings, status, save, saveThenApply } = useTintSettings(settingsStore);
+  const { settings, status, save, saveThenApply, loadSaved } = useTintSettings(settingsStore);
   const [view, setView] = useState<View>({ type: 'list' });
+  // The Backup card's last outcome lives here rather than in the card, which unmounts whenever the
+  // Rules tab is picked. Ids only ever grow (clearing does not reset them), so the card can tell a
+  // notice raised since it mounted from one that was already showing.
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeIdRef = useRef(0);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // Native HTML5 drag-and-drop only lets an element itself be `draggable`; to restrict drag
@@ -216,6 +221,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     const replaced = settings.replacementTargets(selected).filter((target) => target !== undefined).length;
     await saveThenApply(settings.mergeRules(selected));
     return { added: selected.length - replaced, replaced };
+  };
+
+  const showNotice = (input: NoticeInput) => {
+    noticeIdRef.current += 1;
+    setNotice({ ...input, id: noticeIdRef.current });
   };
 
   const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -736,7 +746,15 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
         {/* BackupCard returns a fragment (card + an optional result Alert), so both land directly
             in this panel and pick up the page column's spacing. */}
         <Tabs.Panel id="settings" className="mt-0 flex flex-col gap-3 p-0">
-          <BackupCard settingsStore={settingsStore} settings={settings} onImport={handleImportRules} />
+          <BackupCard
+            settingsStore={settingsStore}
+            settings={settings}
+            loadSaved={loadSaved}
+            onImport={handleImportRules}
+            notice={notice}
+            onNotice={showNotice}
+            onClearNotice={() => setNotice(null)}
+          />
         </Tabs.Panel>
       </Tabs>
     </div>
