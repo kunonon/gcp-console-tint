@@ -209,3 +209,80 @@ describe('BackupCard after unmounting', () => {
     expect(screen.queryByText(/Imported/)).toBeNull();
   });
 });
+
+// Chromium moves focus off a button that becomes disabled to <body> once the export outlasts a
+// frame; jsdom does not (and ignores blur() on a disabled element). These tests stand in for it by
+// passing focus through a control outside the card and blurring that.
+describe('BackupCard export focus', () => {
+  // Presses a focused Export and holds the saved-settings read open until `settle` is called.
+  function pressExport() {
+    let settle!: (outcome: () => TintSettings) => void;
+    const read = new Promise<TintSettings>((resolve, reject) => {
+      settle = (outcome) => {
+        try {
+          resolve(outcome());
+        } catch (error) {
+          reject(error);
+        }
+      };
+    });
+    const store = createStore();
+    vi.spyOn(store, 'load').mockReturnValueOnce(read);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'blob:settings');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(
+      <>
+        <Harness store={store} />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+    const exportButton = screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement;
+    exportButton.focus();
+    fireEvent.click(exportButton);
+    expect(exportButton.disabled).toBe(true);
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    return { exportButton, elsewhere, settle };
+  }
+
+  it.each([
+    ['a backup is made', () => new TintSettings([ProjectRule.create('exact', 'alpha')]), 'Backup ready'],
+    ['there are no saved rules', () => new TintSettings([]), 'No saved rules to export'],
+    [
+      'the saved settings cannot be read',
+      () => {
+        throw new Error('storage down');
+      },
+      'Couldn’t create a backup',
+    ],
+  ])('puts focus back on Export when %s, after the browser dropped it to <body>', async (_case, outcome, title) => {
+    const { exportButton, elsewhere, settle } = pressExport();
+    elsewhere.focus();
+    elsewhere.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    settle(outcome);
+    expect(await screen.findByText(title)).toBeTruthy();
+    expect(exportButton.disabled).toBe(false);
+    expect(document.activeElement).toBe(exportButton);
+  });
+
+  it('leaves focus where the user moved it while the export ran', async () => {
+    const { exportButton, elsewhere, settle } = pressExport();
+    elsewhere.focus();
+
+    settle(() => new TintSettings([]));
+    expect(await screen.findByText('No saved rules to export')).toBeTruthy();
+    expect(exportButton.disabled).toBe(false);
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('does not take focus when Export was pressed without it', async () => {
+    render(<Harness store={createStore()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+
+    expect(await screen.findByText('No saved rules to export')).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+  });
+});

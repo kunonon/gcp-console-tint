@@ -166,6 +166,8 @@ export default function BackupCard({
   onClearNotice,
 }: BackupCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const refocusExportRef = useRef(false);
   const fileReadSequenceRef = useRef(0);
   const generationRef = useRef(0);
   const phaseRef = useRef<Phase>('idle');
@@ -188,8 +190,17 @@ export default function BackupCard({
     setPhaseState(next);
   };
 
+  // Export is disabled while it runs, and a browser moves focus off a disabled button to <body>.
+  // Once it is enabled again, focus goes back to it, unless the user has moved focus elsewhere.
+  useEffect(() => {
+    if (phase !== 'idle' || !refocusExportRef.current) return;
+    refocusExportRef.current = false;
+    if (document.activeElement === document.body) exportButtonRef.current?.focus();
+  }, [phase]);
+
   const handleExport = async () => {
     if (phaseRef.current !== 'idle') return;
+    refocusExportRef.current = document.activeElement === exportButtonRef.current;
     setPhase('export');
     const generation = generationRef.current;
     onClearNotice();
@@ -322,6 +333,7 @@ export default function BackupCard({
                 <span className="text-xs text-muted">Save all rules to a JSON file</span>
               </div>
               <Button
+                ref={exportButtonRef}
                 variant="outline"
                 size="sm"
                 className="shrink-0"
