@@ -71,5 +71,27 @@ describe('runMigrations', () => {
       expect(result.version).toBe('9.9.9');
       expect(result.data).toEqual({});
     });
+
+    // runMigrations is shared with storage reads (settings-repository's toDomain), where a step's
+    // error propagates unchanged. Only the import wraps it as migration-failed, so the wrapping
+    // must not move in here.
+    it("rethrows a step's error as the same object", () => {
+      const stepError = new TypeError('step broke');
+      const throwing: SchemaMigration = {
+        to: '0.2.0',
+        migrate: () => {
+          throw stepError;
+        },
+      };
+
+      expect(() => runMigrations({}, '0.1.0', [markerStep('0.1.4'), throwing])).toThrow(stepError);
+      let thrown: unknown;
+      try {
+        runMigrations({}, '0.1.0', [throwing]);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBe(stepError);
+    });
   });
 });

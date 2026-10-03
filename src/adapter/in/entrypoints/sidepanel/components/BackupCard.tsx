@@ -86,6 +86,8 @@ function failureSentence(fileName: string, error: unknown): string {
         return `${fileName} was written by an unsupported version (${error.failure.version}).`;
       case 'newer-version':
         return `${fileName} was written by a newer version of GCP Console Tint (${error.failure.version}). Update the extension, then import it again.`;
+      case 'migration-failed':
+        return `${fileName} could not be migrated from version ${error.failure.version}.`;
       case 'invalid-fields':
         return `${fileName} has missing or invalid fields.`;
       case 'no-rules':
