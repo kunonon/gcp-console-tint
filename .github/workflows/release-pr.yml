@@ -90,4 +90,6 @@ jobs:
           # develop push instead.
           elif [ "$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...develop" --jq .ahead_by)" != 0 ]; then
             gh pr create --base main --head develop --title "$title" --body "$body"
+          else
+            echo "develop has no commits main lacks; no release PR to open."
           fi
