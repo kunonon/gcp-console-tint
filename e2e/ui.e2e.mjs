@@ -1087,7 +1087,7 @@ for (const browserName of browserTargets()) {
       assert.deepEqual(reloaded, backup);
     });
 
-    test('shows every parser refusal reason and invalid field path without changing stored rules', async () => {
+    test('shows each reachable parser refusal reason and invalid field path without changing stored rules', async () => {
       const original = settings(rule('safe', 'safe-project'));
       await h.seedSettings(original);
       const browser = await panel(h);
