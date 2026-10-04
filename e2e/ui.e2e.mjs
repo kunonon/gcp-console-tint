@@ -946,7 +946,7 @@ for (const browserName of browserTargets()) {
       await warning.waitForDisplayed();
       assert.equal(await warning.isDisplayed(), true);
       const selectAll = await browser.$('//label[.//input[@type="checkbox"] and contains(., "Select all")]');
-      const skip = await browser.$('//label[.//input[@type="checkbox" and @aria-label="skip"]]');
+      const skip = await browser.$('//label[.//input[@type="checkbox" and @aria-label="File row 4, exact, skip"]]');
       await skip.click();
       await browser.$('//span[normalize-space(.)="3 of 4 selected"]').waitForDisplayed();
       const selectAllState = await browser.execute((label) => {
@@ -1150,7 +1150,11 @@ for (const browserName of browserTargets()) {
         await setFileInput(browser, input, path);
         const currentAlert = await alertText(browser, failure.message);
         assert.match(currentAlert, /Couldn’t import this file/);
-        if (failure.detail) assert.match(currentAlert, failure.detail);
+        // The detail is rendered outside the live region, in its own labelled section.
+        const detailSection = await browser.$('section[aria-label="Error details"]');
+        assert.equal(await detailSection.isExisting(), failure.detail !== undefined);
+        const currentDetail = failure.detail ? await detailSection.getText() : '';
+        if (failure.detail) assert.match(currentDetail, failure.detail);
         const copyDetails = await browser.$('button=Copy details');
         assert.equal(await copyDetails.isExisting(), failure.detail !== undefined);
         if (index === 0) {
@@ -1162,7 +1166,7 @@ for (const browserName of browserTargets()) {
             }
           }, failure.content);
           assert.match(expectedDetails, /^SyntaxError: .+/);
-          assert.ok(currentAlert.includes(expectedDetails), 'the browser JSON parser detail should be visible');
+          assert.ok(currentDetail.includes(expectedDetails), 'the browser JSON parser detail should be visible');
 
           const probeId = 'e2e-clipboard-probe';
           await browser.execute((id) => {

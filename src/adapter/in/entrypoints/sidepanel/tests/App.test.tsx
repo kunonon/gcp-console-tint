@@ -2089,7 +2089,8 @@ describe('App', () => {
       const alert = await screen.findByRole('alert');
       expect(within(alert).getByText('Couldn’t import this file')).toBeTruthy();
       expect(within(alert).getByText('broken.json could not be parsed as JSON.')).toBeTruthy();
-      const detail = within(alert).getByText(/^SyntaxError: /);
+      const detail = screen.getByRole('region', { name: 'Error details' });
+      expect(detail.textContent).toMatch(/^SyntaxError: /);
 
       await user.click(screen.getByRole('button', { name: 'Copy details' }));
       expect(writeText).toHaveBeenCalledWith(detail.textContent);
