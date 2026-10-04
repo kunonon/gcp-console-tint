@@ -1,5 +1,5 @@
 import { ValueObject } from './base/value-object';
-import type { ProjectRule, ProjectRuleId } from './project-rule';
+import { ProjectRule, ProjectRuleId } from './project-rule';
 import type { ProjectSettings } from './project-settings';
 
 export class TintSettings extends ValueObject<TintSettings> {
@@ -65,5 +65,32 @@ export class TintSettings extends ValueObject<TintSettings> {
 
   updateRule(id: ProjectRuleId, update: (rule: ProjectRule) => ProjectRule): TintSettings {
     return new TintSettings(this.projectRules.map((rule) => (rule.id.equals(id) ? update(rule) : rule)));
+  }
+
+  // Maps each incoming rule to the first unused matching original rule; appended rules are never
+  // replacement targets.
+  replacementTargets(incoming: readonly ProjectRule[]): readonly (number | undefined)[] {
+    const used = new Set<number>();
+    return incoming.map((rule) => {
+      const index = this.projectRules.findIndex((existing, i) => !used.has(i) && existing.isDuplicateOf(rule));
+      if (index === -1) return undefined;
+      used.add(index);
+      return index;
+    });
+  }
+
+  // Merges incoming rules in order: each can replace one original rule's settings in place,
+  // keeping its id and position; unmatched rules append under fresh ids.
+  mergeRules(incoming: readonly ProjectRule[]): TintSettings {
+    const rules = [...this.projectRules];
+    this.replacementTargets(incoming).forEach((index, i) => {
+      const rule = incoming[i]!;
+      if (index === undefined) {
+        rules.push(ProjectRule.recreate(ProjectRuleId.create(), rule.matchType, rule.pattern, rule.settings));
+      } else {
+        rules[index] = this.projectRules[index]!.changeSettings(rule.settings);
+      }
+    });
+    return new TintSettings(rules);
   }
 }

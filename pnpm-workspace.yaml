@@ -8,3 +8,6 @@
 # younger than a week is rejected until it ages — or until the package is listed under
 # minimumReleaseAgeExclude. pnpm 11's default is one day.
 minimumReleaseAge: 10080
+# Backport of https://github.com/vitest-dev/vitest/pull/11248; remove once Vitest includes this fix.
+patchedDependencies:
+  vitest@5.0.1: patches/vitest@5.0.1.patch

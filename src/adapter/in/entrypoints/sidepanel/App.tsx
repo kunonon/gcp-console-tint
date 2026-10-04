@@ -1,12 +1,14 @@
-import { Button, Card, Input, Switch, Tooltip } from '@heroui/react';
+import { Alert, Button, Card, Input, Switch, Tabs, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
 import { Color } from '../../../../domain/color';
 import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
 import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../domain/project-rule';
 import { ProjectSettings } from '../../../../domain/project-settings';
+import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
+import BackupCard, { type Notice, type NoticeInput } from './components/BackupCard';
 import ColorSwatchField from './components/ColorSwatchField';
 import DeleteConfirmPopover from './components/DeleteConfirmPopover';
 import MatchTypeSelect from './components/MatchTypeSelect';
@@ -153,8 +155,13 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
 }
 
 function App({ settingsStore }: { settingsStore: SettingsStore }) {
-  const { settings, save } = useTintSettings(settingsStore);
+  const { settings, status, save, saveThenApply, loadSaved } = useTintSettings(settingsStore);
   const [view, setView] = useState<View>({ type: 'list' });
+  // The Backup card's last outcome lives here rather than in the card, which unmounts whenever the
+  // Rules tab is picked. Ids only ever grow (clearing does not reset them), so the card can tell a
+  // notice raised since it mounted from one that was already showing.
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeIdRef = useRef(0);
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // Native HTML5 drag-and-drop only lets an element itself be `draggable`; to restrict drag
@@ -172,6 +179,26 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     }
   }, [view, settings.projectRules]);
 
+  if (status === 'loading') {
+    return (
+      <div role="status" className="p-3 text-sm text-muted">
+        Loading settings…
+      </div>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <Alert status="danger">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Title>Couldn’t load settings</Alert.Title>
+          <Alert.Description>Reload the side panel and try again.</Alert.Description>
+        </Alert.Content>
+      </Alert>
+    );
+  }
+
   // Applies `update` to the currently-edited rule's settings and saves — every surface handler
   // below funnels through here, so composite updates that must land in a single save (e.g.
   // "pick a palette entry AND clear auto") are just a longer chain in one call.
@@ -187,6 +214,18 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
 
   const handleAddRule = (matchType: MatchType, pattern: string) => {
     save(settings.addRule(ProjectRule.create(matchType, pattern)));
+  };
+
+  // Applies the rules picked in the import modal and reports the persisted merge outcome.
+  const handleImportRules = async (selected: readonly ProjectRule[]) => {
+    const replaced = settings.replacementTargets(selected).filter((target) => target !== undefined).length;
+    await saveThenApply(settings.mergeRules(selected));
+    return { added: selected.length - replaced, replaced };
+  };
+
+  const showNotice = (input: NoticeInput) => {
+    noticeIdRef.current += 1;
+    setNotice({ ...input, id: noticeIdRef.current });
   };
 
   const handlePatternChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -441,13 +480,15 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     <input
                       type="number"
                       aria-label="Top bar height"
-                      min={1}
-                      max={40}
-                      value={currentSettings.topBar.height}
+                      min={TopBarHeight.MIN.toPixels()}
+                      max={TopBarHeight.MAX.toPixels()}
+                      value={currentSettings.topBar.height.toPixels()}
                       onChange={(e) => {
-                        const value = e.target.valueAsNumber;
-                        if (Number.isFinite(value))
-                          updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(value)));
+                        // Anything the domain refuses is ignored rather than corrected: an empty
+                        // input (valueAsNumber is NaN) or a value outside the range simply leaves
+                        // the last valid height in place.
+                        const height = TopBarHeight.fromPixels(e.target.valueAsNumber);
+                        if (height) updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(height)));
                       }}
                       className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                     />
@@ -603,81 +644,119 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     <div className="flex flex-col gap-3">
       <h1 className="text-base font-semibold">GCP Console Tint</h1>
 
-      <Card>
-        <Card.Content className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-medium">Projects</div>
-            <AddRuleModal onAdd={handleAddRule}>
-              <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
-                <PlusIcon />
-              </Button>
-            </AddRuleModal>
-          </div>
+      {/* Uncontrolled: returning from the detail view remounts the list and lands on Rules again,
+          which is where a user coming back from editing a rule wants to be anyway.
+          The gray pill track behind the tabs is `.tabs__list-container`, which HeroUI only renders
+          when Tabs.List is wrapped in Tabs.ListContainer; the white selected pill is the
+          Tabs.Indicator inside each tab. The className overrides re-space the component to this
+          page's 12px column gap: HeroUI ships gap-2 on the root and `p-2 mt-4` on each panel, and
+          Tailwind utilities win over its @layer components rules property by property. */}
+      <Tabs defaultSelectedKey="rules" className="gap-3">
+        <Tabs.ListContainer>
+          <Tabs.List aria-label="Side panel sections">
+            <Tabs.Tab id="rules">
+              <Tabs.Indicator />
+              Rules
+            </Tabs.Tab>
+            <Tabs.Tab id="settings">
+              <Tabs.Indicator />
+              Settings
+            </Tabs.Tab>
+          </Tabs.List>
+        </Tabs.ListContainer>
 
-          {settings.projectRules.length > 0 && (
-            <div className="flex flex-col gap-2 border-t border-border pt-2">
-              {settings.projectRules.map((rule, index) => (
-                // biome-ignore lint/a11y/noStaticElementInteractions: native HTML5 drag-and-drop row reordering; no keyboard-accessible equivalent yet
-                <div
-                  key={rule.id.toString()}
-                  draggable
-                  onDragStart={handleRowDragStart(index)}
-                  onDragOver={handleRowDragOver(index)}
-                  onDrop={handleRowDrop(index)}
-                  onDragEnd={handleRowDragEnd}
-                  className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="cursor-grab text-muted"
-                    onMouseDown={handleGripMouseDown}
-                    onMouseUp={handleGripMouseUp}
-                  >
-                    <GripIcon />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
-                  <span className="shrink-0 text-xs text-muted">{rule.matchType}</span>
-                  <IconButtonTooltip label="Edit">
-                    <Button
-                      isIconOnly
-                      variant="outline"
-                      size="sm"
-                      aria-label="Edit"
-                      className="shrink-0"
-                      onPress={() => setView({ type: 'detail', ruleId: rule.id })}
+        <Tabs.Panel id="rules" className="mt-0 p-0">
+          <Card>
+            <Card.Content className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">Projects</div>
+                <AddRuleModal onAdd={handleAddRule}>
+                  <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
+                    <PlusIcon />
+                  </Button>
+                </AddRuleModal>
+              </div>
+
+              {settings.projectRules.length > 0 && (
+                <div className="flex flex-col gap-2 border-t border-border pt-2">
+                  {settings.projectRules.map((rule, index) => (
+                    // biome-ignore lint/a11y/noStaticElementInteractions: native HTML5 drag-and-drop row reordering; no keyboard-accessible equivalent yet
+                    <div
+                      key={rule.id.toString()}
+                      draggable
+                      onDragStart={handleRowDragStart(index)}
+                      onDragOver={handleRowDragOver(index)}
+                      onDrop={handleRowDrop(index)}
+                      onDragEnd={handleRowDragEnd}
+                      className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
                     >
-                      <PencilIcon />
-                    </Button>
-                  </IconButtonTooltip>
-                  <IconButtonTooltip label="Duplicate">
-                    <Button
-                      isIconOnly
-                      variant="outline"
-                      size="sm"
-                      aria-label="Duplicate"
-                      className="shrink-0"
-                      onPress={() => handleDuplicateRule(rule.id)}
-                    >
-                      <DuplicateIcon />
-                    </Button>
-                  </IconButtonTooltip>
-                  <DeleteConfirmPopover
-                    question="Delete this rule?"
-                    target={rule.pattern}
-                    confirmLabel="Delete"
-                    tooltipLabel="Delete"
-                    onConfirm={() => handleDeleteRule(rule.id)}
-                  >
-                    <Button isIconOnly variant="outline" size="sm" aria-label="Delete" className="shrink-0">
-                      <TrashIcon />
-                    </Button>
-                  </DeleteConfirmPopover>
+                      <span
+                        aria-hidden="true"
+                        className="cursor-grab text-muted"
+                        onMouseDown={handleGripMouseDown}
+                        onMouseUp={handleGripMouseUp}
+                      >
+                        <GripIcon />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
+                      <span className="shrink-0 text-xs text-muted">{rule.matchType}</span>
+                      <IconButtonTooltip label="Edit">
+                        <Button
+                          isIconOnly
+                          variant="outline"
+                          size="sm"
+                          aria-label="Edit"
+                          className="shrink-0"
+                          onPress={() => setView({ type: 'detail', ruleId: rule.id })}
+                        >
+                          <PencilIcon />
+                        </Button>
+                      </IconButtonTooltip>
+                      <IconButtonTooltip label="Duplicate">
+                        <Button
+                          isIconOnly
+                          variant="outline"
+                          size="sm"
+                          aria-label="Duplicate"
+                          className="shrink-0"
+                          onPress={() => handleDuplicateRule(rule.id)}
+                        >
+                          <DuplicateIcon />
+                        </Button>
+                      </IconButtonTooltip>
+                      <DeleteConfirmPopover
+                        question="Delete this rule?"
+                        target={rule.pattern}
+                        confirmLabel="Delete"
+                        tooltipLabel="Delete"
+                        onConfirm={() => handleDeleteRule(rule.id)}
+                      >
+                        <Button isIconOnly variant="outline" size="sm" aria-label="Delete" className="shrink-0">
+                          <TrashIcon />
+                        </Button>
+                      </DeleteConfirmPopover>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </Card.Content>
-      </Card>
+              )}
+            </Card.Content>
+          </Card>
+        </Tabs.Panel>
+
+        {/* BackupCard returns a fragment (card + an optional result Alert), so both land directly
+            in this panel and pick up the page column's spacing. */}
+        <Tabs.Panel id="settings" className="mt-0 flex flex-col gap-3 p-0">
+          <BackupCard
+            settingsStore={settingsStore}
+            settings={settings}
+            loadSaved={loadSaved}
+            onImport={handleImportRules}
+            notice={notice}
+            onNotice={showNotice}
+            onClearNotice={() => setNotice(null)}
+          />
+        </Tabs.Panel>
+      </Tabs>
     </div>
   );
 }

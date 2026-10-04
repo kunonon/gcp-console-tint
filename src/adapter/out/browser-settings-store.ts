@@ -2,6 +2,7 @@ import { browser } from 'wxt/browser';
 import type { TintSettings } from '../../domain/tint-settings';
 import type { SettingsStore } from '../../port/settings-store';
 import { CURRENT_SCHEMA_VERSION } from './migrations';
+import { parseSettingsFile } from './settings-file';
 import { effectiveSchemaVersion, toDomain, toStored } from './settings-repository';
 import { compareVersions, VersionComparisonResult } from './version';
 
@@ -23,12 +24,12 @@ export class SettingsStoreImpl implements SettingsStore {
     return toDomain(result[STORAGE_KEY]);
   }
 
-  save(next: TintSettings): void {
+  async save(next: TintSettings): Promise<void> {
     // Floor at CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion): stamping the raw manifest
     // version here could label current-shape nested data with an older schemaVersion, causing
     // the next load to re-run migrations against already-migrated data and silently reset the
     // user's values to defaults.
-    browser.storage.local.set({ [STORAGE_KEY]: toStored(next, effectiveSchemaVersion(manifestVersion())) });
+    await browser.storage.local.set({ [STORAGE_KEY]: toStored(next, effectiveSchemaVersion(manifestVersion())) });
   }
 
   watch(onChange: (settings: TintSettings) => void): void {
@@ -37,6 +38,16 @@ export class SettingsStoreImpl implements SettingsStore {
       const newValue = changes[STORAGE_KEY].newValue;
       if (newValue) onChange(toDomain(newValue));
     });
+  }
+
+  exportJson(settings: TintSettings): string {
+    return JSON.stringify(toStored(settings, CURRENT_SCHEMA_VERSION), null, 2);
+  }
+
+  importJson(text: string): TintSettings {
+    // Rejects stamps above this build's effective schema version. Older releases may have stamped
+    // exports with their release version, so the cap can admit those files to applicable migrations.
+    return parseSettingsFile(text, effectiveSchemaVersion(manifestVersion()));
   }
 }
 

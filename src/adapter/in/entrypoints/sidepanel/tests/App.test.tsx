@@ -1,7 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useLayoutEffect, useRef } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { ProjectRule as DomainProjectRule } from '../../../../../domain/project-rule';
+import { TintSettings } from '../../../../../domain/tint-settings';
+import { SettingsImportError } from '../../../../../port/settings-store';
 import { SettingsStoreImpl } from '../../../../out/browser-settings-store';
 import { effectiveSchemaVersion, toDomain } from '../../../../out/settings-repository';
 import App from '../App';
@@ -253,6 +257,75 @@ function makeDataTransferInit() {
   };
 }
 
+// Switches the list page from the default Rules tab to Settings, and waits for the Backup card.
+async function openSettingsTab(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('tab', { name: 'Settings' }));
+  return screen.findByRole('button', { name: 'Export' });
+}
+
+// The URL statics exactly as the environment provides them, captured before any test touches them:
+// in this Vitest jsdom environment createObjectURL is URL's own static and revokeObjectURL is
+// inherited, and both must look like that again after every test.
+const URL_API = {
+  createObjectURL: URL.createObjectURL,
+  createObjectURLOwn: Object.hasOwn(URL, 'createObjectURL'),
+  createObjectURLDescriptor: Object.getOwnPropertyDescriptor(URL, 'createObjectURL'),
+  revokeObjectURL: URL.revokeObjectURL,
+  revokeObjectURLOwn: Object.hasOwn(URL, 'revokeObjectURL'),
+  revokeObjectURLDescriptor: Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL'),
+  inheritedRevokeObjectURLDescriptor: Object.getOwnPropertyDescriptor(Object.getPrototypeOf(URL), 'revokeObjectURL'),
+};
+
+// jsdom performs no real download, so Export's last two steps are spied on: the Blob handed to
+// createObjectURL and the anchor that was clicked are captured for assertions. vi.spyOn (not
+// assignment) is what lets the shared afterEach's vi.restoreAllMocks put the real methods back,
+// which the URL restore check below verifies after every test.
+function stubDownloads() {
+  const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockImplementation((_blob) => 'blob:settings');
+  const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  const clicks: HTMLAnchorElement[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function captureClick(this: HTMLAnchorElement) {
+    clicks.push(this);
+  });
+  return { createObjectURL, revokeObjectURL, clicks };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+// Picks a file in the Backup card's (visually hidden, but labelled) file input.
+async function uploadSettingsFile(user: ReturnType<typeof userEvent.setup>, fileName: string, contents: string) {
+  const input = screen.getByLabelText('Import settings file');
+  await user.upload(input as HTMLInputElement, new File([contents], fileName, { type: 'application/json' }));
+}
+
+// An export file in the stored shape, built from real stored rules so it stays schema-valid.
+function settingsFile(...projectRules: ProjectRule[]): string {
+  return JSON.stringify({ schemaVersion: CURRENT_VERSION, projectRules } satisfies StoredTintSettings);
+}
+
+// Same match type and pattern as `rule` — so importing it replaces that rule rather than adding
+// one — under a different id and with one visibly different setting.
+function replacementFor(rule: ProjectRule, topBarHeight: number): ProjectRule {
+  return {
+    ...rule,
+    id: 'file-alpha',
+    settings: { ...rule.settings, topBar: { ...rule.settings.topBar, height: topBarHeight } },
+  };
+}
+
+// A rule the current settings don't have, carrying an id the merge must not reuse.
+function newRule(rule: ProjectRule, pattern: string): ProjectRule {
+  return { ...rule, id: 'file-beta', pattern };
+}
+
 const TOP_INDICATOR = 'shadow-[inset_0_2px_0_0_var(--focus)]';
 const BOTTOM_INDICATOR = 'shadow-[inset_0_-2px_0_0_var(--focus)]';
 
@@ -266,8 +339,23 @@ beforeEach(() => {
   });
 });
 
+// Registered before the shared afterEach on purpose: Vitest runs afterEach hooks in reverse
+// registration order (sequence.hooks 'stack'), so this check runs after vi.restoreAllMocks.
+afterEach(() => {
+  expect(URL.createObjectURL).toBe(URL_API.createObjectURL);
+  expect(Object.hasOwn(URL, 'createObjectURL')).toBe(URL_API.createObjectURLOwn);
+  expect(Object.getOwnPropertyDescriptor(URL, 'createObjectURL')).toEqual(URL_API.createObjectURLDescriptor);
+  expect(URL.revokeObjectURL).toBe(URL_API.revokeObjectURL);
+  expect(Object.hasOwn(URL, 'revokeObjectURL')).toBe(URL_API.revokeObjectURLOwn);
+  expect(Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')).toEqual(URL_API.revokeObjectURLDescriptor);
+  expect(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(URL), 'revokeObjectURL')).toEqual(
+    URL_API.inheritedRevokeObjectURLDescriptor,
+  );
+});
+
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 describe('App', () => {
@@ -1236,7 +1324,7 @@ describe('App', () => {
     expect(stored.schemaVersion).toBe('0.1.5');
 
     const reloaded = toDomain(stored);
-    expect(reloaded.projectRules[0]!.settings.topBar.height).toBe(19);
+    expect(reloaded.projectRules[0]!.settings.topBar.height.toPixels()).toBe(19);
   });
 
   it('loads settings once on mount; external storage changes made afterward are not reflected in the UI (no live storage.onChanged listener, unlike content.ts)', async () => {
@@ -1767,6 +1855,1375 @@ describe('App', () => {
         // The other rule keeps its own default reference untouched.
         expect(beta.settings.topBar.color.paletteId).toBe('default');
       });
+    });
+  });
+
+  describe('Settings', () => {
+    it('gates the side panel while the initial settings read is pending', async () => {
+      const store = new SettingsStoreImpl();
+      let resolveLoad!: (settings: TintSettings) => void;
+      const load = new Promise<TintSettings>((resolve) => {
+        resolveLoad = resolve;
+      });
+      vi.spyOn(store, 'load').mockReturnValue(load);
+
+      render(<App settingsStore={store} />);
+
+      expect(screen.getByRole('status').textContent).toContain('Loading settings');
+      expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+
+      await act(async () => {
+        resolveLoad(new TintSettings([]));
+        await load;
+      });
+      expect(await screen.findByRole('button', { name: 'Add rule' })).toBeTruthy();
+    });
+
+    it('shows a failure alert and keeps settings actions gated when the initial read rejects', async () => {
+      const store = new SettingsStoreImpl();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(store, 'load').mockRejectedValue(new Error('storage unavailable'));
+
+      render(<App settingsStore={store} />);
+
+      expect(await screen.findByText('Couldn’t load settings')).toBeTruthy();
+      expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] settings load failed', expect.any(Error));
+    });
+
+    it('opens on Rules by default and swaps the Projects card for the Backup card when Settings is picked', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      // The pill track behind the tabs only exists when Tabs.List is wrapped in
+      // Tabs.ListContainer, so its presence is what proves the intended composition.
+      expect(document.querySelector('.tabs__list-container')).toBeTruthy();
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs.map((tab) => tab.textContent)).toEqual(['Rules', 'Settings']);
+      expect((tabs[0] as HTMLElement).getAttribute('aria-selected')).toBe('true');
+
+      await openSettingsTab(user);
+
+      expect(screen.getByRole('button', { name: 'Import…' })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+    });
+
+    it('Export downloads the saved settings as pretty-printed JSON under a dated file name, and releases the blob URL', async () => {
+      const user = userEvent.setup();
+      const { createObjectURL, revokeObjectURL, clicks } = stubDownloads();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await openSettingsTab(user);
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+
+      // Export first reads storage back (asynchronously), so the download happens later.
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      const blob = createObjectURL.mock.calls[0]![0] as Blob;
+      expect(blob.type).toBe('application/json');
+      expect(await blob.text()).toBe(JSON.stringify(await getStoredSettings(), null, 2));
+
+      const link = clicks[0]!;
+      expect(link.download).toMatch(/^gcp-console-tint-settings-\d{4}-\d{2}-\d{2}\.json$/);
+      // Revocation is deferred to the next tick (see BackupCard.handleExport), hence the wait.
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith(createObjectURL.mock.results[0]!.value));
+      expect(screen.getByRole('status').textContent).toBe('Backup readyPrepared a backup of 1 saved rule.');
+    });
+
+    it('Import lists every rule in the file, flags the one that would replace an existing rule, and merges the picked rules on confirm', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const before = await getStoredSettings();
+      const existing = before.projectRules[0]!;
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'x.json', settingsFile(replacementFor(existing, 21), newRule(existing, 'beta')));
+
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText('x.json')).toBeTruthy();
+      expect(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' })).toBeTruthy();
+      expect(within(dialog).getByRole('checkbox', { name: 'File row 2, exact, beta' })).toBeTruthy();
+      expect(within(dialog).getByText('2 of 2 selected')).toBeTruthy();
+      expect(within(dialog).getByText('File row 1 → Rule row 1')).toBeTruthy();
+      expect(within(dialog).getByText('File row 2 → Add')).toBeTruthy();
+      // Only the rule matching an existing match type + pattern is marked as a replacement.
+      expect(within(dialog).getAllByRole('img', { name: 'Replaces an existing rule' })).toHaveLength(1);
+      expect(within(dialog).getByText('Replaces 1 existing rule')).toBeTruthy();
+
+      // Unchecking one rule updates the counter, the warning and the confirm label.
+      await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
+      expect(within(dialog).getByText('1 of 2 selected')).toBeTruthy();
+      expect(within(dialog).queryByText('Replaces 1 existing rule')).toBeNull();
+      expect(within(dialog).getByText('File row 1 → Not selected')).toBeTruthy();
+      expect(within(dialog).getByText('File row 2 → Add')).toBeTruthy();
+      expect(within(dialog).getByRole('button', { name: 'Import 1 rule' })).toBeTruthy();
+
+      await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
+      expect(within(dialog).getByText('File row 1 → Rule row 1')).toBeTruthy();
+      await user.click(within(dialog).getByRole('button', { name: 'Import 2 rules' }));
+
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules).toHaveLength(2);
+      });
+      const after = await getStoredSettings();
+      // The duplicate replaced the existing rule in place: same id, same position, new settings.
+      expect(after.projectRules[0]!.id).toBe(existing.id);
+      expect(after.projectRules[0]!.settings.topBar.height).toBe(21);
+      // The new rule was appended under a fresh id, not the file's.
+      expect(after.projectRules[1]!.pattern).toBe('beta');
+      expect(after.projectRules[1]!.id).not.toBe('file-beta');
+
+      expect(await screen.findByText('Imported 2 rules')).toBeTruthy();
+      expect(screen.getByText('1 added and 1 replaced from x.json')).toBeTruthy();
+    });
+
+    it('waits for storage before showing import success and closing the picker', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'existing');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      let resolveSave!: () => void;
+      const save = new Promise<void>((resolve) => {
+        resolveSave = resolve;
+      });
+      vi.spyOn(store, 'save').mockReturnValueOnce(save);
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'deferred.json', settingsFile(newRule(existing, 'imported')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+
+      expect((within(dialog).getByRole('button', { name: 'Importing…' }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByText('Imported 1 rule')).toBeNull();
+      expect(screen.getByRole('dialog')).toBeTruthy();
+
+      await act(async () => {
+        resolveSave();
+        await save;
+      });
+      expect(await screen.findByText('Imported 1 rule')).toBeTruthy();
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
+
+    it('keeps the original settings after a rejected import and allows a normal edit after cancel', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'existing');
+      const before = await getStoredSettings();
+      const existing = before.projectRules[0]!;
+      let rejectSave!: (error: Error) => void;
+      const save = new Promise<void>((_resolve, reject) => {
+        rejectSave = reject;
+      });
+      const observedRejection = save.catch((error: Error) => error);
+      vi.spyOn(store, 'save').mockReturnValueOnce(save);
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'failed.json', settingsFile(newRule(existing, 'from-file')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+      await act(async () => {
+        rejectSave(new Error('quota exceeded'));
+        await observedRejection;
+      });
+
+      expect(await within(dialog).findByText('Couldn’t save imported rules')).toBeTruthy();
+      expect(screen.queryByText('Imported 1 rule')).toBeNull();
+      expect(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, from-file' })).toBeTruthy();
+      expect(await getStoredSettings()).toEqual(before);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await user.click(screen.getByRole('tab', { name: 'Rules' }));
+      await addRule(user, 'normal-edit');
+
+      expect((await getStoredSettings()).projectRules.map((rule) => rule.pattern)).toEqual(['existing', 'normal-edit']);
+    });
+
+    it('Select all clears every row, which disables the Import button', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'x.json', settingsFile(existing, newRule(existing, 'beta')));
+
+      const dialog = await screen.findByRole('dialog');
+      const selectAll = within(dialog).getByRole('checkbox', { name: 'Select all' });
+      expect((selectAll as HTMLInputElement).checked).toBe(true);
+
+      await user.click(selectAll);
+
+      expect(within(dialog).getByText('0 of 2 selected')).toBeTruthy();
+      expect((within(dialog).getByRole('button', { name: 'Import 0 rules' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('a file that is not JSON is refused with the reason, a copyable detail block and a console.error', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      // user-event installs a Clipboard stub on navigator; spy on that rather than replacing it.
+      const writeText = vi.spyOn(navigator.clipboard, 'writeText');
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+
+      expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+      expect(screen.getByText('broken.json could not be parsed as JSON.')).toBeTruthy();
+      const detail = screen.getByText(/^SyntaxError: /);
+
+      await user.click(screen.getByRole('button', { name: 'Copy details' }));
+      expect(writeText).toHaveBeenCalledWith(detail.textContent);
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] import failed', expect.anything());
+
+      expect(screen.queryByRole('dialog')).toBeNull();
+      consoleError.mockRestore();
+    });
+
+    it('logs copy failures without changing the import notice or stored settings', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const writeText = vi.spyOn(navigator.clipboard, 'writeText');
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'existing');
+      const before = await getStoredSettings();
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+
+      expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+      const copyError = new Error('clipboard denied');
+      writeText.mockRejectedValueOnce(copyError);
+      consoleError.mockClear();
+      await user.click(screen.getByRole('button', { name: 'Copy details' }));
+
+      await waitFor(() => expect(consoleError).toHaveBeenCalledTimes(1));
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] clipboard copy failed', copyError);
+      expect(screen.getByText('Couldn’t import this file')).toBeTruthy();
+      expect(screen.getByText('broken.json could not be parsed as JSON.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Copy details' })).toBeTruthy();
+      expect(await getStoredSettings()).toEqual(before);
+      const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+      try {
+        await user.click(screen.getByRole('button', { name: 'Copy details' }));
+        expect(screen.getByText('Couldn’t import this file')).toBeTruthy();
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(await getStoredSettings()).toEqual(before);
+      } finally {
+        if (clipboardDescriptor) {
+          Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+        } else {
+          Reflect.deleteProperty(navigator, 'clipboard');
+        }
+      }
+    });
+
+    it('a file stamped by a newer release than this build is refused, telling the user to update', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      const before = await getStoredSettings();
+      // The manifest here is CURRENT_VERSION ('0.1.0'); a file this build could not have written.
+      const fromTheFuture = JSON.parse(settingsFile(existing));
+      fromTheFuture.schemaVersion = '9.9.9';
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'newer.json', JSON.stringify(fromTheFuture));
+
+      expect(
+        await screen.findByText(
+          'newer.json was written by a newer version of GCP Console Tint (9.9.9). Update the extension, then import it again.',
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(await getStoredSettings()).toEqual(before);
+      consoleError.mockRestore();
+    });
+
+    it('a file whose fields are missing or invalid is refused, listing each offending field path', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      const before = await getStoredSettings();
+      // Structurally wrong: height is a string where the format requires a number. Nothing is
+      // repaired, so the whole file is refused rather than silently importing a default height.
+      const broken = JSON.parse(settingsFile(existing));
+      broken.projectRules[0].settings.topBar.height = '4';
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken-fields.json', JSON.stringify(broken));
+
+      expect(await screen.findByText('broken-fields.json has missing or invalid fields.')).toBeTruthy();
+      expect(screen.getByText(/projectRules\[0\]\.settings\.topBar\.height/)).toBeTruthy();
+      // Refused outright: no rule picker, and storage is exactly what it was before the upload.
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(await getStoredSettings()).toEqual(before);
+      consoleError.mockRestore();
+    });
+
+    it('JSON that is not a settings file is refused with the reason only, without a detail block', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'other.json', '[]');
+
+      expect(await screen.findByText('other.json isn’t a GCP Console Tint settings file.')).toBeTruthy();
+      // No underlying error to show, so no detail block and nothing to copy.
+      expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+      consoleError.mockRestore();
+    });
+
+    it.each([
+      ['nothing was ever saved', false],
+      ['the only rule failed to save', true],
+    ])(
+      'Export with no saved rules makes no file and says so, replacing the previous notice (%s)',
+      async (_case, failFirstSave) => {
+        const user = userEvent.setup();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const { createObjectURL, clicks } = stubDownloads();
+        const store = new SettingsStoreImpl();
+        render(<App settingsStore={store} />);
+        await screen.findByRole('button', { name: 'Add rule' });
+        if (failFirstSave) {
+          vi.spyOn(store, 'save').mockRejectedValueOnce(new Error('quota exceeded'));
+          const dialog = await openAddRuleModal(user);
+          fireEvent.change(within(dialog).getByLabelText('Project ID'), { target: { value: 'unsaved' } });
+          await user.click(within(dialog).getByRole('button', { name: 'Add' }));
+          await waitFor(() =>
+            expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] settings save failed', expect.any(Error)),
+          );
+          // The panel shows the rule; storage does not have it.
+          expect(getAllRuleRows()).toHaveLength(1);
+        }
+
+        await openSettingsTab(user);
+        await uploadSettingsFile(user, 'broken.json', '{ not json');
+        expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+
+        const load = vi.spyOn(store, 'load');
+        await user.click(screen.getByRole('button', { name: 'Export' }));
+
+        // The notice is the signal that the (asynchronous) export has finished.
+        await waitFor(() => expect(screen.getAllByRole('status')).toHaveLength(1));
+        expect(screen.getByRole('status').textContent).toBe(
+          'No saved rules to exportAdd and save a rule, then try again.',
+        );
+        expect(screen.queryByText('Couldn’t import this file')).toBeNull();
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(createObjectURL).not.toHaveBeenCalled();
+        expect(clicks).toHaveLength(0);
+        expect(document.querySelector('a[download]')).toBeNull();
+
+        // The card is idle again in this same mount: a second Export is accepted and reads again.
+        const first = screen.getByRole('status');
+        expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(false);
+        await user.click(screen.getByRole('button', { name: 'Export' }));
+        await waitFor(() => expect(screen.getByRole('status')).not.toBe(first));
+        expect(load).toHaveBeenCalledTimes(2);
+        expect(createObjectURL).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('Settings backup: operations', () => {
+    // A File whose read is held until the test settles it.
+    function heldFile(name: string) {
+      const read = deferred<string>();
+      const file = new File([''], name, { type: 'application/json' });
+      const text = vi.fn(() => read.promise);
+      Object.defineProperty(file, 'text', { value: text });
+      return { file, read, text };
+    }
+
+    function fileInput() {
+      return screen.getByLabelText('Import settings file') as HTMLInputElement;
+    }
+
+    // Fires the input's change handler even though the card has disabled the input, the way a
+    // stale or synthetic event could, to prove the handler refuses on its own.
+    async function forceUpload(user: ReturnType<typeof userEvent.setup>, file: File) {
+      const input = fileInput();
+      input.disabled = false;
+      await user.upload(input, file);
+      return input;
+    }
+
+    // Same, for while the import modal is open. user.upload would press the input first, and a
+    // press outside the modal dismisses it (in the real panel the backdrop covers the input), so
+    // the pick is simulated directly: a selection that, as in a browser, clearing the value empties.
+    function forceChange(file: File) {
+      const input = fileInput();
+      input.disabled = false;
+      let files: File[] = [file];
+      Object.defineProperty(input, 'files', { configurable: true, get: () => files });
+      Object.defineProperty(input, 'value', {
+        configurable: true,
+        get: () => (files.length > 0 ? `C:\\fakepath\\${file.name}` : ''),
+        set: (value: string) => {
+          if (value === '') files = [];
+        },
+      });
+      fireEvent.change(input);
+      return input;
+    }
+
+    it('starts one read for two Export presses dispatched before a re-render', async () => {
+      const user = userEvent.setup();
+      const { createObjectURL } = stubDownloads();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      await openSettingsTab(user);
+      const load = vi.spyOn(store, 'load');
+
+      const exportButton = screen.getByRole('button', { name: 'Export' });
+      act(() => {
+        exportButton.click();
+        exportButton.click();
+      });
+
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('status').textContent).toBe('Backup readyPrepared a backup of 1 saved rule.');
+    });
+
+    it('refuses an Import press dispatched before a re-render after an accepted Export', async () => {
+      const user = userEvent.setup();
+      stubDownloads();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+      const pick = vi.spyOn(fileInput(), 'click');
+
+      // Export has not re-rendered yet, so the Import button is still enabled: only its own
+      // handler's check can refuse the press.
+      const exportButton = screen.getByRole('button', { name: 'Export' });
+      const importButton = screen.getByRole('button', { name: 'Import…' });
+      act(() => {
+        exportButton.click();
+        importButton.click();
+      });
+
+      expect(pick).not.toHaveBeenCalled();
+      expect((await screen.findByRole('status')).textContent).toBe(
+        'No saved rules to exportAdd and save a rule, then try again.',
+      );
+      // Once idle the same press opens the picker, so the spy above would have seen one.
+      await user.click(screen.getByRole('button', { name: 'Import…' }));
+      expect(pick).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the previous notice as soon as an Export is accepted, before the read finishes', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      stubDownloads();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+      expect(await screen.findByText('Couldn’t import this file')).toBeTruthy();
+      const read = deferred<TintSettings>();
+      vi.spyOn(store, 'load').mockReturnValueOnce(read.promise);
+
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+
+      expect(screen.queryByText('Couldn’t import this file')).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+      await act(async () => {
+        read.resolve(new TintSettings([]));
+        await read.promise;
+      });
+      expect(await screen.findByText('No saved rules to export')).toBeTruthy();
+    });
+
+    it('clears the previous notice as soon as a file is accepted, before it has been read', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+      expect(await screen.findByText('broken.json could not be parsed as JSON.')).toBeTruthy();
+      const held = heldFile('slow.json');
+
+      await user.upload(fileInput(), held.file);
+
+      expect(screen.queryByText('Couldn’t import this file')).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+      await act(async () => {
+        held.read.resolve('{ not json');
+        await held.read.promise;
+      });
+      expect(await screen.findByText('slow.json could not be parsed as JSON.')).toBeTruthy();
+    });
+
+    // The refusal here is the disabled button. React re-renders synchronously at the end of a
+    // change event, so no Export press can reach the handler between a file being accepted and
+    // the button being disabled; the handler's own check for this phase is defensive only.
+    it('keeps Export disabled, and Import usable, while a file is being read', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+      const load = vi.spyOn(store, 'load');
+      const held = heldFile('slow.json');
+
+      await user.upload(fileInput(), held.file);
+      const exportButton = screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement;
+      expect(exportButton.disabled).toBe(true);
+      act(() => exportButton.click());
+      // Still readable: picking another file replaces the one being read. The Import button is the
+      // only way a user reaches the hidden input, so it must stay enabled and open the picker.
+      expect(fileInput().disabled).toBe(false);
+      const pick = vi.spyOn(fileInput(), 'click');
+      const importButton = screen.getByRole('button', { name: 'Import…' }) as HTMLButtonElement;
+      expect(importButton.disabled).toBe(false);
+      await user.click(importButton);
+      expect(pick).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        held.read.resolve('{ not json');
+        await held.read.promise;
+      });
+      expect(await screen.findByText('slow.json could not be parsed as JSON.')).toBeTruthy();
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it('refuses a file picked while an export is running, without reading it or touching the notice', async () => {
+      const user = userEvent.setup();
+      const { createObjectURL } = stubDownloads();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      await openSettingsTab(user);
+      const read = deferred<TintSettings>();
+      const realLoad = store.load.bind(store);
+      vi.spyOn(store, 'load').mockImplementationOnce(() => read.promise.then(() => realLoad()));
+      const importJson = vi.spyOn(store, 'importJson');
+
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      expect(fileInput().tabIndex).toBe(-1);
+      expect(fileInput().disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'Import…' }) as HTMLButtonElement).disabled).toBe(true);
+      const held = heldFile('during-export.json');
+      const input = await forceUpload(user, held.file);
+
+      expect(held.text).not.toHaveBeenCalled();
+      expect(importJson).not.toHaveBeenCalled();
+      expect(input.value).toBe('');
+      expect(input.files).toHaveLength(0);
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+      // Still exporting.
+      expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(true);
+
+      await act(async () => {
+        read.resolve(new TintSettings([]));
+        await read.promise;
+      });
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole('status').textContent).toBe('Backup readyPrepared a backup of 1 saved rule.');
+      expect(held.text).not.toHaveBeenCalled();
+    });
+
+    it('refuses a file picked while the import modal is open, keeping the modal and its file', async () => {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'first.json', settingsFile(newRule(existing, 'beta')));
+      const dialog = await screen.findByRole('dialog');
+      const importJson = vi.spyOn(store, 'importJson');
+
+      expect(fileInput().disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'Export', hidden: true }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'Import…', hidden: true }) as HTMLButtonElement).disabled).toBe(true);
+      const held = heldFile('second.json');
+      const input = forceChange(held.file);
+
+      expect(held.text).not.toHaveBeenCalled();
+      expect(importJson).not.toHaveBeenCalled();
+      expect(input.value).toBe('');
+      expect(input.files).toHaveLength(0);
+      expect(screen.getByRole('dialog')).toBe(dialog);
+      expect(within(dialog).getByText('first.json')).toBeTruthy();
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it.each(['resolves', 'rejects'] as const)(
+      'keeps a later read busy when an earlier one %s first, then opens the later file',
+      async (outcome) => {
+        const user = userEvent.setup();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const store = new SettingsStoreImpl();
+        render(<App settingsStore={store} />);
+        await screen.findByRole('button', { name: 'Add rule' });
+        await addRule(user, 'alpha');
+        const existing = (await getStoredSettings()).projectRules[0]!;
+        await openSettingsTab(user);
+        const a = heldFile('a.json');
+        const b = heldFile('b.json');
+
+        await user.upload(fileInput(), a.file);
+        await user.upload(fileInput(), b.file);
+        await act(async () => {
+          if (outcome === 'resolves') a.read.resolve(settingsFile(newRule(existing, 'from-a')));
+          else a.read.reject(new Error('a vanished'));
+          await a.read.promise.catch(() => {});
+        });
+
+        // B is still being read: Export stays refused and nothing from A shows up.
+        expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(consoleError).not.toHaveBeenCalled();
+
+        await act(async () => {
+          b.read.resolve(settingsFile(newRule(existing, 'from-b')));
+          await b.read.promise;
+        });
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('b.json')).toBeTruthy();
+        expect(within(dialog).getByText('from-b')).toBeTruthy();
+      },
+    );
+
+    it.each(['resolves', 'rejects'] as const)(
+      'leaves the later file’s modal open and input disabled when an earlier read %s afterwards',
+      async (outcome) => {
+        const user = userEvent.setup();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const store = new SettingsStoreImpl();
+        render(<App settingsStore={store} />);
+        await screen.findByRole('button', { name: 'Add rule' });
+        await addRule(user, 'alpha');
+        const existing = (await getStoredSettings()).projectRules[0]!;
+        await openSettingsTab(user);
+        const importJson = vi.spyOn(store, 'importJson');
+        const a = heldFile('a.json');
+        const b = heldFile('b.json');
+
+        await user.upload(fileInput(), a.file);
+        await user.upload(fileInput(), b.file);
+        await act(async () => {
+          b.read.resolve(settingsFile(newRule(existing, 'from-b')));
+          await b.read.promise;
+        });
+        const dialog = await screen.findByRole('dialog');
+        await act(async () => {
+          if (outcome === 'resolves') a.read.resolve(settingsFile(newRule(existing, 'from-a')));
+          else a.read.reject(new Error('a vanished'));
+          await a.read.promise.catch(() => {});
+        });
+
+        expect(screen.getByRole('dialog')).toBe(dialog);
+        expect(within(dialog).getByText('b.json')).toBeTruthy();
+        expect(importJson).toHaveBeenCalledTimes(1);
+        expect(fileInput().disabled).toBe(true);
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(consoleError).not.toHaveBeenCalled();
+
+        // The modal still blocks a new file the same way it did before A settled.
+        const c = heldFile('c.json');
+        const input = forceChange(c.file);
+        expect(input.files).toHaveLength(0);
+        expect(c.text).not.toHaveBeenCalled();
+        expect(within(screen.getByRole('dialog')).getByText('b.json')).toBeTruthy();
+      },
+    );
+
+    it('accepts the next operation after each way one ends: failed export, cancelled import, finished import', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { createObjectURL } = stubDownloads();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      await openSettingsTab(user);
+      const readError = new Error('storage unavailable');
+      const load = vi.spyOn(store, 'load').mockRejectedValueOnce(readError);
+      const text = vi.spyOn(File.prototype, 'text');
+
+      // A failed export: its own alert, with no detail block and nothing to copy.
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toBe(
+        'Couldn’t create a backupSaved settings could not be read or exported. Try again.',
+      );
+      expect(screen.queryByRole('region', { name: 'Error details' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] export failed', readError);
+
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      expect(load).toHaveBeenCalledTimes(2);
+
+      await uploadSettingsFile(user, 'x.json', settingsFile(newRule(existing, 'beta')));
+      await screen.findByRole('dialog');
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await uploadSettingsFile(user, 'x.json', settingsFile(newRule(existing, 'beta')));
+      const dialog = await screen.findByRole('dialog');
+      expect(text).toHaveBeenCalledTimes(2);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+      expect(await screen.findByText('Imported 1 rule')).toBeTruthy();
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(2));
+      expect(load).toHaveBeenCalledTimes(3);
+      expect(screen.getByRole('status').textContent).toBe('Backup readyPrepared a backup of 2 saved rules.');
+    });
+
+    it('exports what storage holds, not the screen, after an ordinary save failed', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { createObjectURL } = stubDownloads();
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      const saved = await getStoredSettings();
+      vi.spyOn(store, 'save').mockRejectedValueOnce(new Error('quota exceeded'));
+
+      await confirmDelete(user, within(getRuleRow('beta')).getByRole('button', { name: 'Delete' }), 'Delete');
+      await waitFor(() =>
+        expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] settings save failed', expect.any(Error)),
+      );
+      expect(getAllRuleRows()).toHaveLength(1);
+
+      await openSettingsTab(user);
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      const blob = createObjectURL.mock.calls[0]![0] as Blob;
+      expect(JSON.parse(await blob.text()).projectRules).toEqual(saved.projectRules);
+      expect(screen.getByRole('status').textContent).toBe('Backup readyPrepared a backup of 2 saved rules.');
+    });
+  });
+
+  describe('Settings backup: leaving the tab and unmounting', () => {
+    async function leaveAndReturn(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('tab', { name: 'Rules' }));
+      await screen.findByRole('button', { name: 'Add rule' });
+      expect(screen.queryByRole('button', { name: 'Export' })).toBeNull();
+      await openSettingsTab(user);
+    }
+
+    it.each(['resolves', 'rejects'] as const)(
+      'drops an export started before leaving Settings when its read %s after a newer export finished',
+      async (outcome) => {
+        const user = userEvent.setup();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const { createObjectURL } = stubDownloads();
+        const store = new SettingsStoreImpl();
+        render(<App settingsStore={store} />);
+        await screen.findByRole('button', { name: 'Add rule' });
+        await addRule(user, 'alpha');
+        await openSettingsTab(user);
+        const staleRead = deferred<TintSettings>();
+        const load = vi.spyOn(store, 'load').mockReturnValueOnce(staleRead.promise);
+
+        await user.click(screen.getByRole('button', { name: 'Export' }));
+        await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+        await leaveAndReturn(user);
+        // The new card starts idle even though the old read is still out.
+        await user.click(screen.getByRole('button', { name: 'Export' }));
+        await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+        const status = screen.getByRole('status');
+        expect(status.textContent).toBe('Backup readyPrepared a backup of 1 saved rule.');
+
+        await act(async () => {
+          // A different value than the newer export wrote, so a leak would show in the Blob.
+          if (outcome === 'resolves')
+            staleRead.resolve(
+              new TintSettings([DomainProjectRule.create('exact', 'stale'), DomainProjectRule.create('exact', 'old')]),
+            );
+          else staleRead.reject(new Error('stale read failed'));
+          await staleRead.promise.catch(() => {});
+        });
+        await flush();
+
+        expect(createObjectURL).toHaveBeenCalledTimes(1);
+        const blob = createObjectURL.mock.calls[0]![0] as Blob;
+        expect(await blob.text()).toBe(JSON.stringify(await getStoredSettings(), null, 2));
+        expect(screen.getByRole('status')).toBe(status);
+        expect(status.textContent).toBe('Backup readyPrepared a backup of 1 saved rule.');
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(false);
+        expect(consoleError).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['resolves', 'rejects'] as const)(
+      'drops a file read started before leaving Settings when it %s after a newer import finished',
+      async (outcome) => {
+        const user = userEvent.setup();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const store = new SettingsStoreImpl();
+        render(<App settingsStore={store} />);
+        await screen.findByRole('button', { name: 'Add rule' });
+        await addRule(user, 'alpha');
+        const existing = (await getStoredSettings()).projectRules[0]!;
+        await openSettingsTab(user);
+        const importJson = vi.spyOn(store, 'importJson');
+        const staleRead = deferred<string>();
+        const staleFile = new File([''], 'stale.json', { type: 'application/json' });
+        Object.defineProperty(staleFile, 'text', { value: () => staleRead.promise });
+
+        await user.upload(screen.getByLabelText('Import settings file') as HTMLInputElement, staleFile);
+        await leaveAndReturn(user);
+        await uploadSettingsFile(user, 'new.json', settingsFile(newRule(existing, 'from-new')));
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        const status = screen.getByRole('status');
+        expect(status.textContent).toBe('Imported 1 rule1 added from new.json');
+
+        await act(async () => {
+          if (outcome === 'resolves') staleRead.resolve(settingsFile(newRule(existing, 'from-stale')));
+          else staleRead.reject(new Error('stale file vanished'));
+          await staleRead.promise.catch(() => {});
+        });
+        await flush();
+
+        expect(importJson).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(screen.getByRole('status')).toBe(status);
+        expect(status.textContent).toBe('Imported 1 rule1 added from new.json');
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(consoleError).not.toHaveBeenCalled();
+        expect((await getStoredSettings()).projectRules.map((rule) => rule.pattern)).toEqual(['alpha', 'from-new']);
+      },
+    );
+
+    it('still releases a created blob URL when the card unmounts before the deferred revoke', async () => {
+      const user = userEvent.setup();
+      const { createObjectURL, revokeObjectURL, clicks } = stubDownloads();
+      const store = new SettingsStoreImpl();
+      const { unmount } = render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      await openSettingsTab(user);
+      const read = deferred<void>();
+      const realLoad = store.load.bind(store);
+      const load = vi.spyOn(store, 'load').mockImplementationOnce(() => read.promise.then(() => realLoad()));
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+
+      // Only setTimeout is faked, so the revoke stays queued until the test advances it.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          read.resolve();
+          for (let i = 0; i < 20 && createObjectURL.mock.calls.length === 0; i++) await Promise.resolve();
+        });
+        expect(createObjectURL).toHaveBeenCalledTimes(1);
+        expect(clicks).toHaveLength(1);
+        expect(revokeObjectURL).not.toHaveBeenCalled();
+
+        unmount();
+        vi.runOnlyPendingTimers();
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith(createObjectURL.mock.results[0]!.value);
+      expect(document.querySelector('a[download]')).toBeNull();
+    });
+
+    it('runs its mount effects twice under StrictMode and still exports and imports normally', async () => {
+      const user = userEvent.setup();
+      const { createObjectURL } = stubDownloads();
+      const store = new SettingsStoreImpl();
+      const load = vi.spyOn(store, 'load');
+      render(<App settingsStore={store} />, { reactStrictMode: true });
+      // StrictMode replays the mount effect: the initial read runs twice.
+      expect(load).toHaveBeenCalledTimes(2);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      await openSettingsTab(user);
+
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole('status').textContent).toBe('Backup readyPrepared a backup of 1 saved rule.');
+
+      await uploadSettingsFile(user, 'x.json', settingsFile(newRule(existing, 'beta')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(screen.getByRole('status').textContent).toBe('Imported 1 rule1 added from x.json');
+      expect((await getStoredSettings()).projectRules.map((rule) => rule.pattern)).toEqual(['alpha', 'beta']);
+    });
+
+    it('counts a single initial read without StrictMode', async () => {
+      const store = new SettingsStoreImpl();
+      const load = vi.spyOn(store, 'load');
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it('finishes nothing visible once App unmounts during an export', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { createObjectURL } = stubDownloads();
+      const store = new SettingsStoreImpl();
+      const { unmount } = render(<App settingsStore={store} />, { reactStrictMode: true });
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      await openSettingsTab(user);
+      const read = deferred<TintSettings>();
+      const load = vi.spyOn(store, 'load').mockReturnValueOnce(read.promise);
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+
+      unmount();
+      await act(async () => {
+        read.resolve(new TintSettings([DomainProjectRule.create('exact', 'late')]));
+        await read.promise;
+      });
+      await flush();
+
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(document.querySelector('a[download]')).toBeNull();
+      expect(consoleError).not.toHaveBeenCalled();
+    });
+
+    it('keeps saving a queued import, in order, after App unmounts', async () => {
+      const user = userEvent.setup();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const store = new SettingsStoreImpl();
+      const { unmount } = render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'existing');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      const gate = deferred<void>();
+      const realSave = store.save.bind(store);
+      const save = vi.spyOn(store, 'save').mockImplementationOnce(async (next) => {
+        await gate.promise;
+        await realSave(next);
+      });
+
+      // An ordinary edit whose save is held, so the import's save queues behind it.
+      const addDialog = await openAddRuleModal(user);
+      fireEvent.change(within(addDialog).getByLabelText('Project ID'), { target: { value: 'edit' } });
+      await user.click(within(addDialog).getByRole('button', { name: 'Add' }));
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'x.json', settingsFile(newRule(existing, 'imported')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+      expect(save).toHaveBeenCalledTimes(1);
+
+      unmount();
+      await act(async () => {
+        gate.resolve();
+        await gate.promise;
+      });
+
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+      const imported = save.mock.calls[1]![0];
+      expect(imported.projectRules.map((rule) => rule.pattern)).toEqual(['existing', 'edit', 'imported']);
+      await waitFor(async () =>
+        expect((await getStoredSettings()).projectRules.map((rule) => rule.pattern)).toEqual([
+          'existing',
+          'edit',
+          'imported',
+        ]),
+      );
+      // Notice/modal suppression after unmount is covered by BackupCard.test.tsx ('reports nothing when an import it started finishes saving after the card is gone').
+      expect(document.body.textContent).toBe('');
+      expect(consoleError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Settings backup: notices', () => {
+    const LIVE = '[role="alert"], [role="status"], [aria-live]';
+
+    // Watches `target` for anything that could make an assistive technology announce: a role or
+    // aria-live attribute being set or removed anywhere below it, or an inserted subtree carrying a
+    // live role. Must be attached before the change it is meant to catch.
+    function watchLiveRegions(target: Node) {
+      const records: MutationRecord[] = [];
+      const observer = new MutationObserver((batch) => records.push(...batch));
+      observer.observe(target, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['role', 'aria-live'],
+        attributeOldValue: true,
+      });
+      return () => {
+        records.push(...observer.takeRecords());
+        observer.disconnect();
+        return records;
+      };
+    }
+
+    function expectNoLiveRegionActivity(records: MutationRecord[]) {
+      // The observer only reports role and aria-live. Inside a notice any such change counts;
+      // elsewhere only live values do (switching tabs legitimately drops the old panel's tabpanel).
+      const isLive = (value: string | null) => value === 'alert' || value === 'status';
+      const attributeChanges = records
+        .filter((record) => {
+          if (record.type !== 'attributes') return false;
+          const target = record.target as Element;
+          const value = target.getAttribute(record.attributeName!);
+          return (
+            target.closest('[data-slot="alert-root"]') !== null ||
+            record.attributeName === 'aria-live' ||
+            isLive(record.oldValue) ||
+            isLive(value)
+          );
+        })
+        .map(
+          (record) =>
+            `${record.attributeName}: ${record.oldValue} -> ${(record.target as Element).getAttribute(record.attributeName!)}`,
+        );
+      const addedLive = records.flatMap((record) =>
+        Array.from(record.addedNodes).filter(
+          (node): node is Element =>
+            node instanceof Element && (node.matches(LIVE) || node.querySelector(LIVE) !== null),
+        ),
+      );
+      expect(attributeChanges).toEqual([]);
+      expect(addedLive).toEqual([]);
+    }
+
+    // The way not to do it: a past notice rendered with a live role that an effect strips right
+    // after the first commit. The role existed in the DOM, however briefly.
+    function RoleRemovedAfterCommit() {
+      const ref = useRef<HTMLDivElement>(null);
+      useLayoutEffect(() => {
+        ref.current?.removeAttribute('role');
+      }, []);
+      return (
+        <div ref={ref} role="status">
+          past notice
+        </div>
+      );
+    }
+
+    async function showImportFailure(user: ReturnType<typeof userEvent.setup>) {
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+      return screen.findByRole('alert');
+    }
+
+    it('puts only the title and description in the live region, and the detail with its copy button outside it', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+
+      const alert = await showImportFailure(user);
+      expect(screen.getAllByRole('alert')).toHaveLength(1);
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(alert.textContent).toBe('Couldn’t import this filebroken.json could not be parsed as JSON.');
+      expect(within(alert).queryByRole('button', { name: 'Copy details' })).toBeNull();
+      const details = screen.getByRole('region', { name: 'Error details' });
+      expect(details.textContent).toMatch(/^SyntaxError: /);
+      expect(alert.contains(details)).toBe(false);
+      expect(details.contains(alert)).toBe(false);
+      const copy = screen.getByRole('button', { name: 'Copy details' });
+      expect(details.contains(copy)).toBe(false);
+      expect(alert.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(details.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      // A refusal without an underlying error has neither.
+      await uploadSettingsFile(user, 'other.json', '[]');
+      await screen.findByText('other.json isn’t a GCP Console Tint settings file.');
+      expect(screen.queryByRole('region', { name: 'Error details' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+    });
+
+    it('renders a success notice with one status region and no detail', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      await openSettingsTab(user);
+      await uploadSettingsFile(user, 'x.json', settingsFile(newRule(existing, 'beta')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+      expect(screen.getAllByRole('status')).toHaveLength(1);
+      expect(screen.getByRole('status').textContent).toBe('Imported 1 rule1 added from x.json');
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Error details' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
+    });
+
+    it('shows a notice raised before leaving Settings without any live role when coming back, from the first commit', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { container } = render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+      await showImportFailure(user);
+      await user.click(screen.getByRole('tab', { name: 'Rules' }));
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      const stop = watchLiveRegions(container);
+      await openSettingsTab(user);
+      expect(await screen.findByText('broken.json could not be parsed as JSON.')).toBeTruthy();
+      expectNoLiveRegionActivity(stop());
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('region', { name: 'Error details' })).toBeTruthy();
+
+      // The same operation again is a new notice, announced once.
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+      await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
+      expect(screen.getByRole('alert').textContent).toBe(
+        'Couldn’t import this filebroken.json could not be parsed as JSON.',
+      );
+    });
+
+    it('announces the same kind of status notice again after leaving and coming back', async () => {
+      const user = userEvent.setup();
+      stubDownloads();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await screen.findByRole('status');
+      await user.click(screen.getByRole('tab', { name: 'Rules' }));
+      await openSettingsTab(user);
+      expect(screen.getByText('No saved rules to export')).toBeTruthy();
+      expect(screen.queryByRole('status')).toBeNull();
+
+      await user.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(screen.getAllByRole('status')).toHaveLength(1));
+      expect(screen.getByRole('status').textContent).toBe(
+        'No saved rules to exportAdd and save a rule, then try again.',
+      );
+    });
+
+    it('catches a live role that is removed after the first commit (negative control for the check above)', () => {
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      try {
+        const stop = watchLiveRegions(host);
+        render(<RoleRemovedAfterCommit />, { container: host });
+        const records = stop();
+        expect(host.querySelector(LIVE)).toBeNull();
+        expect(() => expectNoLiveRegionActivity(records)).toThrow();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('replaces the live region element even when the next notice has the same text', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+
+      const first = await showImportFailure(user);
+      await uploadSettingsFile(user, 'broken.json', '{ not json');
+      await waitFor(() => expect(screen.getByRole('alert')).not.toBe(first));
+      const second = screen.getByRole('alert');
+      expect(second.textContent).toBe(first.textContent);
+      expect(first.isConnected).toBe(false);
+    });
+  });
+
+  describe('Settings backup: long failure text', () => {
+    const MARKER = '\nDetails truncated.';
+    const FOOTER = '\nValidation stopped after 100 issues; fix these and import again.';
+
+    // Lines of exactly 199 units ("projectRules[NNN].pattern: " is 27 units, the message the rest).
+    const issueLines = (count: number) =>
+      Array.from({ length: count }, (_, index) => {
+        const path = `projectRules[${String(index).padStart(3, '0')}].pattern`;
+        return { path, message: `${'m'.repeat(199 - path.length - 2)}` };
+      });
+    const asLines = (issues: { path: string; message: string }[]) =>
+      issues.map((issue) => `${issue.path}: ${issue.message}`);
+
+    async function importRefusedWith(error: unknown, fileName = 'big.json') {
+      const user = userEvent.setup();
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const store = new SettingsStoreImpl();
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+      vi.spyOn(store, 'importJson').mockImplementation(() => {
+        throw error;
+      });
+      const writeText = vi.spyOn(navigator.clipboard, 'writeText');
+      await uploadSettingsFile(user, fileName, '{}');
+      const alert = await screen.findByRole('alert');
+      return { user, alert, writeText };
+    }
+
+    async function expectDetail(expected: string, opened: Awaited<ReturnType<typeof importRefusedWith>>) {
+      const details = screen.getByRole('region', { name: 'Error details' });
+      expect(details.textContent).toBe(expected);
+      expect(expected.length).toBeLessThanOrEqual(16_384);
+      await opened.user.click(screen.getByRole('button', { name: 'Copy details' }));
+      expect(opened.writeText).toHaveBeenCalledWith(expected);
+    }
+
+    it('cuts 100 long issues at a line, then marks the cut and keeps the stop footer', async () => {
+      const issues = issueLines(100);
+      const error = new SettingsImportError({ reason: 'invalid-fields', issues, validationStopped: true });
+      const opened = await importRefusedWith(error);
+      // 16,384 - 19 (marker) - 65 (footer) leaves 16,300 units: 81 lines of 199 plus newlines.
+      await expectDetail(`${asLines(issues).slice(0, 81).join('\n')}${MARKER}${FOOTER}`, opened);
+      expect(error.failure).toEqual({ reason: 'invalid-fields', issues, validationStopped: true });
+      expect((error.failure as { issues: unknown }).issues).toBe(issues);
+      expect(issues).toHaveLength(100);
+    });
+
+    it('cuts 100 long issues without a footer when validation did not stop', async () => {
+      const issues = issueLines(100);
+      const opened = await importRefusedWith(new SettingsImportError({ reason: 'invalid-fields', issues }));
+      await expectDetail(`${asLines(issues).slice(0, 81).join('\n')}${MARKER}`, opened);
+    });
+
+    it('adds the stop footer without a truncation marker when everything fits', async () => {
+      const issues = issueLines(3);
+      const opened = await importRefusedWith(
+        new SettingsImportError({ reason: 'invalid-fields', issues, validationStopped: true }),
+      );
+      await expectDetail(`${asLines(issues).join('\n')}${FOOTER}`, opened);
+    });
+
+    it('names the file root "Settings file" for an issue with an empty path', async () => {
+      const issues = [{ path: '', message: 'Invalid input: expected object, received string' }];
+      const error = new SettingsImportError({ reason: 'invalid-fields', issues });
+      const opened = await importRefusedWith(error);
+      await expectDetail('Settings file: Invalid input: expected object, received string', opened);
+      expect(error.failure).toEqual({
+        reason: 'invalid-fields',
+        issues: [{ path: '', message: 'Invalid input: expected object, received string' }],
+      });
+    });
+
+    it('cuts a 20,000-character migration cause inside its single line, with no footer', async () => {
+      const cause = new Error('c'.repeat(20_000));
+      const error = new SettingsImportError({ reason: 'migration-failed', version: '0.1.0' }, { cause });
+      const opened = await importRefusedWith(error);
+      expect(opened.alert.textContent).toBe(
+        'Couldn’t import this filebig.json could not be migrated from version 0.1.0.',
+      );
+      await expectDetail(`Error: ${'c'.repeat(16_365 - 7)}${MARKER}`, opened);
+      expect(error.cause).toBe(cause);
+      expect(cause.message).toHaveLength(20_000);
+    });
+
+    it('cuts a 20,000-character plain error the same way', async () => {
+      const opened = await importRefusedWith(new RangeError('r'.repeat(20_000)));
+      expect(opened.alert.textContent).toBe('Couldn’t import this filebig.json could not be read.');
+      await expectDetail(`RangeError: ${'r'.repeat(16_365 - 12)}${MARKER}`, opened);
+    });
+
+    it.each([
+      // "Error: " is 7 units; the cut is at 16,365.
+      ['splits the pair', 16_365 - 7 - 1, `Error: ${'e'.repeat(16_357)}${MARKER}`],
+      ['ends right after the pair', 16_365 - 7 - 2, `Error: ${'e'.repeat(16_356)}😀${MARKER}`],
+    ])('never leaves half an emoji where the cut %s', async (_case, padding, expected) => {
+      await expectDetail(expected, await importRefusedWith(new Error(`${'e'.repeat(padding)}${'😀'.repeat(3000)}`)));
+    });
+
+    it('shortens a long file name in the failure sentence, without splitting an emoji', async () => {
+      const name = `${'n'.repeat(254)}😀${'n'.repeat(60)}.json`;
+      const opened = await importRefusedWith(new SyntaxError('bad'), name);
+      expect(opened.alert.textContent).toBe(`Couldn’t import this file${'n'.repeat(254)}… could not be read.`);
+    });
+
+    it.each([
+      ['unsupported-version', (version: string) => `big.json was written by an unsupported version (${version}).`],
+      [
+        'newer-version',
+        (version: string) =>
+          `big.json was written by a newer version of GCP Console Tint (${version}). Update the extension, then import it again.`,
+      ],
+      ['migration-failed', (version: string) => `big.json could not be migrated from version ${version}.`],
+    ] as const)('shortens a long %s version for display only', async (reason, sentence) => {
+      const version = `0.1.0${'.0'.repeat(150)}`;
+      const error = new SettingsImportError({ reason, version });
+      const opened = await importRefusedWith(error);
+      expect(opened.alert.textContent).toBe(`Couldn’t import this file${sentence(`${version.slice(0, 255)}…`)}`);
+      expect((error.failure as { version: string }).version).toBe(version);
+      expect(version).toHaveLength(305);
+    });
+
+    it.each([
+      // The pair occupies units 254-255, so a 255-unit cut would keep only its high half.
+      ['straddles the cut', `${'9'.repeat(254)}😀${'9'.repeat(40)}`, `${'9'.repeat(254)}…`],
+      ['ends right at the cut', `${'9'.repeat(253)}😀${'9'.repeat(40)}`, `${'9'.repeat(253)}😀…`],
+    ])('shortens a long version without splitting an emoji that %s', async (_case, version, shown) => {
+      const opened = await importRefusedWith(new SettingsImportError({ reason: 'unsupported-version', version }));
+      expect(opened.alert.textContent).toBe(
+        `Couldn’t import this filebig.json was written by an unsupported version (${shown}).`,
+      );
+    });
+
+    it('shortens a long file name in the success description', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'alpha');
+      const existing = (await getStoredSettings()).projectRules[0]!;
+      await openSettingsTab(user);
+      const name = `${'s'.repeat(300)}.json`;
+      await uploadSettingsFile(user, name, settingsFile(newRule(existing, 'beta')));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(screen.getByRole('status').textContent).toBe(`Imported 1 rule1 added from ${'s'.repeat(255)}…`);
     });
   });
 });

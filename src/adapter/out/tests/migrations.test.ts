@@ -3,18 +3,13 @@ import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIGRATIONS, type SchemaMi
 import { compareVersions, VersionComparisonResult } from '../version';
 
 describe('runMigrations', () => {
-  // SCHEMA_MIGRATIONS is currently EMPTY (see migrations.ts): the extension is unreleased, so
-  // pre-release schema changes are destructive-read instead of migrated (see the settings
-  // repository tests'
-  // "destructive pre-release read" tests). This assertion documents that invariant directly and
-  // stays correct once real steps are added: it falls back to the empty-registry baseline only
-  // while the registry is still empty.
-  it("CURRENT_SCHEMA_VERSION equals the last migration step's `to` whenever steps exist, or the pre-release baseline while the registry is empty", () => {
+  // The registry is empty and CURRENT_SCHEMA_VERSION remains at its 0.1.0 baseline.
+  it("CURRENT_SCHEMA_VERSION equals the last migration step's `to` whenever steps exist, or the baseline schema while the registry is empty", () => {
     const expected = SCHEMA_MIGRATIONS.length > 0 ? SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]!.to : '0.1.0';
     expect(CURRENT_SCHEMA_VERSION).toBe(expected);
   });
 
-  it('SCHEMA_MIGRATIONS is ordered ascending by `to` (vacuously true while the registry is empty)', () => {
+  it('SCHEMA_MIGRATIONS is ordered ascending by release version in `to` (vacuously true while empty)', () => {
     for (let i = 1; i < SCHEMA_MIGRATIONS.length; i++) {
       expect(compareVersions(SCHEMA_MIGRATIONS[i - 1]!.to, SCHEMA_MIGRATIONS[i]!.to)).toBe(
         VersionComparisonResult.Older,
@@ -29,11 +24,8 @@ describe('runMigrations', () => {
     expect(runMigrations(data, '9.9.9')).toEqual({ data, version: '9.9.9' });
   });
 
-  // The registry is empty today, but the folding service itself (this function plus the
-  // injectable `steps` param) is dormant infrastructure for the first post-release migration.
-  // These tests exercise that general capability against a synthetic multi-step chain so it's
-  // proven correct now rather than only once a real step exists to test it against.
-  describe('with an injected synthetic multi-step chain (proving the service for future post-release use)', () => {
+  // Synthetic release versions exercise the first post-baseline migration and a major release.
+  describe('with an injected release-version migration chain', () => {
     // Each step appends its own `to` to a `markers` array, so both WHICH steps ran and the
     // ORDER they ran in are directly observable in the output data.
     const markerStep = (to: string): SchemaMigration => ({
@@ -43,23 +35,30 @@ describe('runMigrations', () => {
         markers: [...(Array.isArray(data.markers) ? data.markers : []), to],
       }),
     });
-    const steps: SchemaMigration[] = [markerStep('0.1.1'), markerStep('0.2.0'), markerStep('0.3.0')];
+    const steps: SchemaMigration[] = [markerStep('0.1.4'), markerStep('0.2.0'), markerStep('0.3.0')];
 
-    it('applies every step in order from the very first version (0.1.0)', () => {
+    it('applies every step in order from the baseline schema version (0.1.0)', () => {
       const result = runMigrations({}, '0.1.0', steps);
 
       expect(result.version).toBe('0.3.0');
-      expect(result.data.markers).toEqual(['0.1.1', '0.2.0', '0.3.0']);
+      expect(result.data.markers).toEqual(['0.1.4', '0.2.0', '0.3.0']);
     });
 
-    it('applies only the steps newer than an intermediate fromVersion, skipping earlier ones (0.1.5 skips the 0.1.1 step)', () => {
+    it('migrates 0.1.3 data stamped with its release version at the shape change in 0.1.4', () => {
+      const result = runMigrations({}, '0.1.3', [markerStep('0.1.4')]);
+
+      expect(result.version).toBe('0.1.4');
+      expect(result.data.markers).toEqual(['0.1.4']);
+    });
+
+    it('applies only steps newer than an intermediate release stamp (0.1.5 skips the 0.1.4 step)', () => {
       const result = runMigrations({}, '0.1.5', steps);
 
       expect(result.version).toBe('0.3.0');
       expect(result.data.markers).toEqual(['0.2.0', '0.3.0']);
     });
 
-    it("applies no steps when fromVersion is already at the last step's `to`", () => {
+    it("applies no steps when fromVersion is already at the last migration's release version", () => {
       const result = runMigrations({}, '0.3.0', steps);
 
       expect(result.version).toBe('0.3.0');
@@ -71,6 +70,28 @@ describe('runMigrations', () => {
 
       expect(result.version).toBe('9.9.9');
       expect(result.data).toEqual({});
+    });
+
+    // runMigrations is shared with storage reads (settings-repository's toDomain), where a step's
+    // error propagates unchanged. Only the import wraps it as migration-failed, so the wrapping
+    // must not move in here.
+    it("rethrows a step's error as the same object", () => {
+      const stepError = new TypeError('step broke');
+      const throwing: SchemaMigration = {
+        to: '0.2.0',
+        migrate: () => {
+          throw stepError;
+        },
+      };
+
+      expect(() => runMigrations({}, '0.1.0', [markerStep('0.1.4'), throwing])).toThrow(stepError);
+      let thrown: unknown;
+      try {
+        runMigrations({}, '0.1.0', [throwing]);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBe(stepError);
     });
   });
 });

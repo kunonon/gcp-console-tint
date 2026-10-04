@@ -10,6 +10,7 @@ import {
   type TopBarSettings,
 } from '../../../domain/project-settings';
 import type { TintSettings } from '../../../domain/tint-settings';
+import { TopBarHeight } from '../../../domain/top-bar-height';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
 import { effectiveSchemaVersion, toDomain } from '../settings-repository';
 
@@ -18,6 +19,10 @@ import { effectiveSchemaVersion, toDomain } from '../settings-repository';
 const DEFAULT_COLOR = '#ff6d00';
 const DEFAULT_TEXT_COLOR = '#ffffff';
 const DEFAULT_TOP_BAR_HEIGHT = 4;
+
+// Every test height here is a real in-range whole number of pixels: TopBarHeight has no other
+// way in.
+const height = (pixels: number): TopBarHeight => TopBarHeight.fromPixels(pixels)!;
 
 const DEFAULTS = ProjectSettings.DEFAULT;
 
@@ -474,7 +479,7 @@ describe('toDomain', () => {
       it('merges a partial section (non-color fields), keeping defaults for the rest', () => {
         expect(loadWithSettings({ topBar: { height: 20 } }).topBar).toEqual({
           ...DEFAULTS.topBar,
-          height: 20,
+          height: height(20),
         });
       });
 
@@ -493,7 +498,7 @@ describe('toDomain', () => {
       it('defaults the color selection entirely when it is not an object', () => {
         expect(loadWithSettings({ topBar: { color: 'not-an-object', height: 20 } }).topBar).toEqual({
           ...DEFAULTS.topBar,
-          height: 20,
+          height: height(20),
         });
       });
     });
@@ -555,7 +560,7 @@ describe('toDomain', () => {
 
       expect(settings.topBar).toEqual({
         ...DEFAULTS.topBar,
-        height: 30,
+        height: height(30),
         color: new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#fedcba')),
       });
     });
@@ -574,6 +579,31 @@ describe('toDomain', () => {
 
       it('recovers a number field to its default when the stored value is the wrong type', () => {
         expect(loadWithSettings({ topBar: { height: 'abc' } }).topBar.height).toBe(DEFAULTS.topBar.height);
+      });
+
+      it.each([
+        ['a lower half-pixel boundary', 0.5, 1],
+        ['a half pixel', 2.5, 3],
+        ['a fractional height', 7.6, 8],
+        ['a fraction that rounds to the maximum', 40.4, 40],
+      ])('rounds %s to an in-range whole pixel', (_label, stored, expected) => {
+        expect(loadWithSettings({ topBar: { height: stored } }).topBar.height.toPixels()).toBe(expected);
+      });
+
+      it.each([
+        ['a height above the maximum', 41],
+        ['a height below the minimum', 0],
+        ['a negative height', -5],
+        ['a fraction that rounds above the maximum', 40.5],
+        ['NaN', Number.NaN],
+        ['positive infinity', Number.POSITIVE_INFINITY],
+        ['negative infinity', Number.NEGATIVE_INFINITY],
+      ])('recovers %s to the default', (_label, stored) => {
+        expect(loadWithSettings({ topBar: { height: stored } }).topBar.height.toPixels()).toBe(DEFAULT_TOP_BAR_HEIGHT);
+      });
+
+      it('recovers a missing height to the default', () => {
+        expect(loadWithSettings({ topBar: { enabled: false } }).topBar.height.toPixels()).toBe(DEFAULT_TOP_BAR_HEIGHT);
       });
 
       it('recovers a string field to its default when the stored value is the wrong type', () => {
@@ -640,7 +670,7 @@ describe('ProjectSettings.DEFAULT (the values this repository recovers to)', () 
       topBar: {
         enabled: true,
         color: { paletteId: PaletteEntryId.recreate('default'), custom: color(DEFAULT_COLOR) },
-        height: DEFAULT_TOP_BAR_HEIGHT,
+        height: height(DEFAULT_TOP_BAR_HEIGHT),
         stripes: false,
       },
       platformBar: {

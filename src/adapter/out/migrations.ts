@@ -1,23 +1,30 @@
 import { compareVersions, VersionComparisonResult } from './version';
 
-// One schema upgrade step. `migrate` receives settings data in the shape that immediately
-// precedes `to` and returns data in the `to` shape. Steps only reshape the data — they may
-// leave fields missing; settings-repository's toDomain validates and fills defaults after the
-// chain runs.
+// One schema upgrade step. `to` is the extension release version that first ships the target
+// shape; do not use an independent schema counter. `migrate` receives data in the shape that
+// immediately precedes `to` and returns data in the `to` shape. The full chain must yield the
+// complete current shape: settings-repository's toDomain fills defaults
+// for missing values when reading storage, but settings-file's import is strict, so a chain that
+// leaves a field missing makes older files fail to import.
 export interface SchemaMigration {
   to: string;
   migrate(data: Record<string, unknown>): Record<string, unknown>;
 }
 
-// Ascending by `to`. Empty while the extension is unreleased: pre-release schema changes
-// are destructive (old-shaped fields are simply ignored on read and defaults fill in), so
-// no steps exist yet. From the first public release onward, every shape change must ship
-// as a step here — and bump CURRENT_SCHEMA_VERSION to match its `to`.
+// Ascending by `to`. Empty while CURRENT_SCHEMA_VERSION remains at the 0.1.0 baseline schema.
+// A shape change must ship with a step whose `to` is the first extension release that
+// introduces it (and is therefore above every prior release); update CURRENT_SCHEMA_VERSION
+// to that same release version.
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [];
 
+// The oldest schemaVersion the migration chain can read. Anything below (or missing, or
+// invalid) predates every released shape: storage falls back to fresh defaults, an imported
+// file is refused as unsupported-version.
+export const SCHEMA_MIN_VERSION = '0.1.0';
+
 // The version of the current schema shape. Must equal the last SCHEMA_MIGRATIONS entry's
-// `to` whenever steps exist (asserted in tests); stays at the initial version while the
-// registry is empty.
+// `to` whenever steps exist (asserted in tests); stays at the 0.1.0 baseline while the
+// registry is empty. Bump it only in the release that introduces a new shape.
 export const CURRENT_SCHEMA_VERSION = '0.1.0';
 
 // Applies every migration step newer than `fromVersion`, in order, so data recorded under

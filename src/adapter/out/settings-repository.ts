@@ -10,12 +10,9 @@ import {
   TopBarSettings,
 } from '../../domain/project-settings';
 import { TintSettings } from '../../domain/tint-settings';
-import { CURRENT_SCHEMA_VERSION, runMigrations } from './migrations';
+import { TopBarHeight } from '../../domain/top-bar-height';
+import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIN_VERSION } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
-
-// The oldest schemaVersion the migration chain can read. Anything below (or missing, or
-// invalid) predates every released shape and is replaced by fresh defaults.
-const SCHEMA_MIN_VERSION = '0.1.0';
 
 // The domain owns the default VALUES, this module owns which field recovers to what: every
 // `.catch()` below reads its fallback out of ProjectSettings.DEFAULT rather than restating it.
@@ -99,7 +96,16 @@ const topBarObjectSchema = z
   .object({
     enabled: z.boolean().catch(DEFAULTS.topBar.enabled),
     color: colorSelectionSchema(DEFAULTS.topBar.color),
-    height: z.number().catch(DEFAULTS.topBar.height),
+    // Stored numeric heights are rounded before the domain enforces its 1–40 pixel range;
+    // invalid types and rounded values outside that range recover to the default.
+    height: z
+      .unknown()
+      .optional()
+      .transform(
+        (value) =>
+          (typeof value === 'number' ? TopBarHeight.fromPixels(Math.round(value)) : undefined) ??
+          DEFAULTS.topBar.height,
+      ),
     stripes: z.boolean().catch(DEFAULTS.topBar.stripes),
   })
   .transform((value) => new TopBarSettings(value.enabled, value.color, value.height, value.stripes));
@@ -149,8 +155,8 @@ const projectRuleSchema = z
   })
   .transform((value) => ProjectRule.recreate(value.id, value.matchType, value.pattern, value.settings));
 
-// The schemaVersion to stamp on anything we write: the running release version, floored at
-// CURRENT_SCHEMA_VERSION. The floor is the invariant that matters — data written in the
+// The schemaVersion for storage writes and the import ceiling: the running release version,
+// floored at CURRENT_SCHEMA_VERSION. The floor is the invariant that matters — data written in the
 // current shape must never carry a label older than that shape's schema version, or the
 // next load would re-run migration steps against already-migrated data and silently reset
 // the user's values (reachable if a new migration step ships without the manifest version
@@ -166,9 +172,9 @@ export function effectiveSchemaVersion(currentVersion: string): string {
 //   migrate from),
 // - otherwise the migration chain folds the data forward version by version, then each rule
 //   is parsed by projectRuleSchema (dropping only the ones whose pattern isn't a string;
-//   every other field recovers via its own default) and merged with defaults. While the
-//   chain is empty (pre-release), old-shaped fields are simply not recognized by the schemas
-//   and defaults fill in — destructive by design; rules' id/matchType/pattern still survive.
+//   every other field recovers via its own default) and merged with defaults. Without an
+//   applicable migration, unrecognized legacy fields fall back to defaults; valid rules still
+//   retain their id/matchType/pattern.
 // Pure: never writes storage. The background script persists the migrated form once via
 // migrateStoredSettings (browser-settings-store.ts).
 export function toDomain(stored: unknown): TintSettings {
@@ -218,7 +224,7 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
         topBar: {
           enabled: rule.settings.topBar.enabled,
           color: storedSelection(rule.settings.topBar.color),
-          height: rule.settings.topBar.height,
+          height: rule.settings.topBar.height.toPixels(),
           stripes: rule.settings.topBar.stripes,
         },
         platformBar: {
