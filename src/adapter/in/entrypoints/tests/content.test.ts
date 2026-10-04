@@ -211,15 +211,16 @@ describe('content script', () => {
     }
   });
 
-  it('rounds a fractional topBarHeight to the nearest integer', async () => {
-    await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: 7.6 } }));
+  // The storage reader rounds numeric heights before the domain checks its range.
+  it('rounds a fractional stored topBarHeight before applying it', async () => {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: 2.5 } }));
     setTestProjectLocation();
 
     runContentScript();
     await flush();
 
     const { bar } = getElements();
-    expect(bar.style.height).toBe('8px');
+    expect(bar.style.height).toBe('3px');
   });
 
   it.each([1, 4, 12, 40])('sets shared viewport background properties at top bar height %i px', async (height) => {
@@ -991,7 +992,7 @@ describe('content script', () => {
     expect(styleEl.textContent).toBe('');
   });
 
-  it('applies topBarHeight at the clamp boundaries (1 and 40) without adjustment', async () => {
+  it('applies topBarHeight at the range boundaries (1 and 40) without adjustment', async () => {
     for (const boundary of [1, 40]) {
       document.documentElement.innerHTML = '<head></head><body></body>';
       await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: boundary } }));

@@ -7,6 +7,11 @@ import { ProjectSettings } from './project-settings';
 export const MATCH_TYPES = ['prefix', 'suffix', 'exact', 'regex'] as const;
 export type MatchType = (typeof MATCH_TYPES)[number];
 
+// Guard for untrusted input (an imported settings file): whether a string names a match type.
+export function isMatchType(value: string): value is MatchType {
+  return (MATCH_TYPES as readonly string[]).includes(value);
+}
+
 // Identity of a ProjectRule. The raw string is private so this type stays nominally distinct
 // from other ids; only the boundaries (settings repository, React keys) read it via toString().
 export class ProjectRuleId extends ValueObject<ProjectRuleId> {
@@ -49,6 +54,13 @@ export class ProjectRule extends Entity<ProjectRule> {
   // Entity identity: same id means the same rule, whatever its current attributes.
   equals(other: ProjectRule): boolean {
     return this.id.equals(other.id);
+  }
+
+  // Two rules with the same match type and pattern select exactly the same project ids; the
+  // later one in the list can never win. Import uses this to decide which incoming rules replace
+  // an existing one instead of being added.
+  isDuplicateOf(other: ProjectRule): boolean {
+    return this.matchType === other.matchType && this.pattern === other.pattern;
   }
 
   // A brand-new rule under a fresh identity, starting from the default settings.
