@@ -18,13 +18,14 @@ function renderModal(
     incoming?: readonly ProjectRule[];
     onImport?: (selected: readonly ProjectRule[]) => Promise<void>;
     onOpenChange?: (isOpen: boolean) => void;
+    fileName?: string;
   } = {},
 ) {
   return render(
     <ImportRulesModal
       isOpen
       onOpenChange={overrides.onOpenChange ?? (() => {})}
-      fileName="settings.json"
+      fileName={overrides.fileName ?? 'settings.json'}
       incoming={overrides.incoming ?? incoming}
       current={overrides.current ?? new TintSettings([])}
       onImport={overrides.onImport ?? (async () => {})}
@@ -41,8 +42,8 @@ describe('ImportRulesModal', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Import rules')).toBeTruthy();
     expect(within(dialog).getByText('settings.json')).toBeTruthy();
-    expect(within(dialog).getByRole('checkbox', { name: 'alpha' })).toBeTruthy();
-    expect(within(dialog).getByRole('checkbox', { name: '^beta-.*$' })).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' })).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: 'File row 2, regex, ^beta-.*$' })).toBeTruthy();
     // Nothing outside the dialog could have opened it.
     expect(screen.queryByRole('button', { name: /Import…/ })).toBeNull();
   });
@@ -57,8 +58,8 @@ describe('ImportRulesModal', () => {
     const importButton = within(dialog).getByRole('button', { name: 'Import 2 rules' }) as HTMLButtonElement;
     expect(importButton.disabled).toBe(false);
 
-    await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
-    await user.click(within(dialog).getByRole('checkbox', { name: '^beta-.*$' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 2, regex, ^beta-.*$' }));
 
     expect(within(dialog).getByText('0 of 2 selected')).toBeTruthy();
     expect((within(dialog).getByRole('button', { name: 'Import 0 rules' }) as HTMLButtonElement).disabled).toBe(true);
@@ -71,7 +72,7 @@ describe('ImportRulesModal', () => {
     renderModal({ onImport });
 
     const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
     await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
 
     expect(onImport).toHaveBeenCalledTimes(1);
@@ -88,7 +89,7 @@ describe('ImportRulesModal', () => {
     expect(within(dialog).getAllByRole('img', { name: 'Replaces an existing rule' })).toHaveLength(1);
     expect(within(dialog).getByText('Replaces 1 existing rule')).toBeTruthy();
 
-    await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
 
     expect(within(dialog).queryByText('Replaces 1 existing rule')).toBeNull();
   });
@@ -108,14 +109,14 @@ describe('ImportRulesModal', () => {
     const secondRowTarget = within(dialog).getByText('File row 2 → Rule row 2');
     expect(secondRowTarget).toBeTruthy();
     expect(
-      (within(dialog).getAllByRole('checkbox', { name: 'alpha' })[1] as HTMLInputElement).getAttribute(
+      (within(dialog).getByRole('checkbox', { name: 'File row 2, exact, alpha' }) as HTMLInputElement).getAttribute(
         'aria-describedby',
       ),
     ).toBe(secondRowTarget.id);
     expect(within(dialog).getByText('File row 3 → Add')).toBeTruthy();
     expect(within(dialog).getAllByRole('img', { name: 'Replaces an existing rule' })).toHaveLength(2);
 
-    await user.click(within(dialog).getAllByRole('checkbox', { name: 'alpha' })[0]!);
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
 
     expect(within(dialog).getByText('File row 1 → Not selected')).toBeTruthy();
     expect(within(dialog).getByText('File row 2 → Rule row 1')).toBeTruthy();
@@ -131,16 +132,16 @@ describe('ImportRulesModal', () => {
     renderModal({ current, onImport });
 
     const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
     await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
 
     expect(await within(dialog).findByText('Couldn’t save imported rules')).toBeTruthy();
-    expect(within(dialog).getByRole('checkbox', { name: '^beta-.*$' })).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: 'File row 2, regex, ^beta-.*$' })).toBeTruthy();
     expect(onImport).toHaveBeenNthCalledWith(1, [incoming[1]]);
     expect(current.projectRules.map((rule) => rule.pattern)).toEqual(['existing']);
 
-    await user.click(within(dialog).getByRole('checkbox', { name: '^beta-.*$' }));
-    await user.click(within(dialog).getByRole('checkbox', { name: 'alpha' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 2, regex, ^beta-.*$' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' }));
     await user.click(within(dialog).getByRole('button', { name: 'Import 1 rule' }));
 
     await waitFor(() => expect(onImport).toHaveBeenCalledTimes(2));
@@ -165,7 +166,9 @@ describe('ImportRulesModal', () => {
 
     expect(onImport).toHaveBeenCalledTimes(1);
     expect((importButton as HTMLButtonElement).disabled).toBe(true);
-    const alphaCheckbox = within(dialog).getByRole('checkbox', { name: 'alpha' }) as HTMLInputElement;
+    const alphaCheckbox = within(dialog).getByRole('checkbox', {
+      name: 'File row 1, exact, alpha',
+    }) as HTMLInputElement;
     expect(alphaCheckbox.disabled).toBe(true);
     expect(alphaCheckbox.checked).toBe(true);
     await user.click(importButton);
@@ -183,5 +186,57 @@ describe('ImportRulesModal', () => {
       await save;
     });
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  // Expected names are written out as literals rather than built with the component's own template,
+  // so a change to the name format fails here instead of being mirrored by the oracle.
+  it('names each row checkbox by row number, match type and pattern, with a placeholder for an empty pattern', async () => {
+    renderModal({ incoming: [ProjectRule.create('exact', ''), ProjectRule.create('prefix', ' team-')] });
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, (empty pattern)' })).toBeTruthy();
+    // The pattern is not trimmed: the raw label keeps its spaces even though the computed
+    // accessible name collapses them.
+    expect(within(dialog).getByRole('checkbox', { name: 'File row 2, prefix, team-' }).getAttribute('aria-label')).toBe(
+      'File row 2, prefix,  team-',
+    );
+  });
+
+  it('keeps the checkbox name fixed while selection moves to its description', async () => {
+    const user = userEvent.setup();
+    renderModal();
+
+    const dialog = await screen.findByRole('dialog');
+    const alpha = within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' });
+    expect(within(dialog).getByText('File row 1 → Add').id).toBe(alpha.getAttribute('aria-describedby'));
+
+    await user.click(alpha);
+
+    expect(within(dialog).getByRole('checkbox', { name: 'File row 1, exact, alpha' })).toBe(alpha);
+    expect((alpha as HTMLInputElement).checked).toBe(false);
+    expect(within(dialog).getByText('File row 1 → Not selected').id).toBe(alpha.getAttribute('aria-describedby'));
+  });
+
+  it('shows the file name whole up to 256 units and shortens a longer one with an ellipsis', async () => {
+    const exact = `${'a'.repeat(251)}.json`;
+    const { unmount } = renderModal({ fileName: exact });
+    expect(within(await screen.findByRole('dialog')).getByText(exact)).toBeTruthy();
+    unmount();
+
+    renderModal({ fileName: `${'b'.repeat(300)}.json` });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(`${'b'.repeat(255)}…`)).toBeTruthy();
+    expect(within(dialog).queryByText(/\.json$/)).toBeNull();
+  });
+
+  it('drops an emoji whole rather than splitting it when shortening the file name', async () => {
+    // 254 units then a two-unit emoji: a plain 255-unit cut would end on its high surrogate.
+    const { unmount } = renderModal({ fileName: `${'c'.repeat(254)}😀${'c'.repeat(10)}.json` });
+    expect(within(await screen.findByRole('dialog')).getByText(`${'c'.repeat(254)}…`)).toBeTruthy();
+    unmount();
+
+    // One unit earlier the whole emoji fits inside the kept 255 units.
+    renderModal({ fileName: `${'d'.repeat(253)}😀${'d'.repeat(10)}.json` });
+    expect(within(await screen.findByRole('dialog')).getByText(`${'d'.repeat(253)}😀…`)).toBeTruthy();
   });
 });

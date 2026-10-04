@@ -48,5 +48,15 @@ export function useTintSettings(settingsStore: SettingsStore) {
 
   const saveThenApply = (next: TintSettings) => enqueueSave(next, true);
 
-  return { settings, status, save, saveThenApply };
+  // Reads what is persisted once every save queued before this call has settled (a failed one
+  // included, as the queue itself carries on past failures). Read-only: it neither joins the save
+  // queue, so later saves are not held up behind it, nor touches settings/status — after a failed
+  // optimistic save the stored value can differ from what the panel shows, and only the caller
+  // decides what to do with that.
+  const loadSaved = () => {
+    const tail = saveTail.current;
+    return tail.then(() => settingsStore.load());
+  };
+
+  return { settings, status, save, saveThenApply, loadSaved };
 }

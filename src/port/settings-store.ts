@@ -17,8 +17,13 @@ export type SettingsImportFailure =
   | { reason: 'not-settings' } // JSON, but not an object carrying a string schemaVersion
   | { reason: 'unsupported-version'; version: string } // schemaVersion below the oldest readable one
   | { reason: 'newer-version'; version: string } // schemaVersion above this build's effective schema version ceiling
-  // a settings file whose fields are missing, wrongly typed, or hold unusable values
-  | { reason: 'invalid-fields'; issues: readonly SettingsImportIssue[] }
+  // a migration step threw while folding the file forward; `version` is the file's own stamp and
+  // the step's error is the SettingsImportError's cause
+  | { reason: 'migration-failed'; version: string }
+  // a settings file whose fields are missing, wrongly typed, or hold unusable values. Validation
+  // keeps at most 100 issues; `validationStopped` is set (never false) when a 101st issue was hit
+  // and the file was not examined further, so the shown list is known to be incomplete.
+  | { reason: 'invalid-fields'; issues: readonly SettingsImportIssue[]; validationStopped?: true }
   | { reason: 'no-rules' }; // a settings file, but with no rule in it
 
 function importFailureMessage(failure: SettingsImportFailure): string {
@@ -31,8 +36,10 @@ function importFailureMessage(failure: SettingsImportFailure): string {
       return `Settings file version ${failure.version} is not supported`;
     case 'newer-version':
       return `Settings file version ${failure.version} is newer than this extension`;
+    case 'migration-failed':
+      return `Settings file version ${failure.version} could not be migrated`;
     case 'invalid-fields':
-      return `Missing or invalid fields (${failure.issues.length})`;
+      return `Missing or invalid fields (${failure.issues.length}${failure.validationStopped ? '+' : ''})`;
     case 'no-rules':
       return 'No rules found in the file';
     default:

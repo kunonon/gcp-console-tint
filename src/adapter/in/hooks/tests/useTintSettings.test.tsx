@@ -256,4 +256,111 @@ describe('useTintSettings', () => {
     });
     expect(result.current.settings).toBe(retry);
   });
+
+  describe('loadSaved', () => {
+    it.each(['resolves', 'rejects'] as const)(
+      'leaves settings and status alone while the read is pending and after it %s, without holding up a later save',
+      async (outcome) => {
+        const initial = withRule('initial');
+        const read = deferred<TintSettings>();
+        const load = vi.fn<SettingsStore['load']>().mockResolvedValueOnce(initial).mockReturnValueOnce(read.promise);
+        const save = vi.fn(async (_settings: TintSettings) => {});
+        const store = makeStore({ load, save });
+        // Every status rendered, so a brief flip to loading and back would still show up.
+        const statuses: string[] = [];
+        const { result } = renderHook(() => {
+          const hook = useTintSettings(store);
+          statuses.push(hook.status);
+          return hook;
+        });
+        await waitFor(() => expect(result.current.status).toBe('ready'));
+        const rendersBeforeRead = statuses.length;
+
+        let pendingRead!: Promise<TintSettings>;
+        act(() => {
+          pendingRead = result.current.loadSaved();
+        });
+        await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+        const edited = withRule('edited');
+        act(() => result.current.save(edited));
+        // The save behind the still-unsettled read goes ahead.
+        await waitFor(() => expect(save).toHaveBeenCalledWith(edited));
+        expect(result.current.status).toBe('ready');
+        expect(result.current.settings).toBe(edited);
+
+        const error = new Error('read failed');
+        await act(async () => {
+          if (outcome === 'resolves') {
+            read.resolve(initial);
+            await expect(pendingRead).resolves.toBe(initial);
+          } else {
+            read.reject(error);
+            await expect(pendingRead).rejects.toBe(error);
+          }
+        });
+        expect(result.current.status).toBe('ready');
+        expect(result.current.settings).toBe(edited);
+        expect(statuses.slice(rendersBeforeRead).every((status) => status === 'ready')).toBe(true);
+      },
+    );
+
+    it('resolves with what was stored when it ran, without waiting for a slow save queued after it', async () => {
+      const first = withRule('first');
+      let stored = first;
+      const slowWrite = deferred<void>();
+      // Answers with the value persisted at the moment load() runs.
+      const load = vi.fn(async () => stored);
+      const save = vi.fn(async (next: TintSettings) => {
+        await slowWrite.promise;
+        stored = next;
+      });
+      const store = makeStore({ load, save });
+      const { result } = renderHook(() => useTintSettings(store));
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      let pendingRead!: Promise<TintSettings>;
+      act(() => {
+        pendingRead = result.current.loadSaved();
+      });
+      act(() => result.current.save(withRule('later')));
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await expect(pendingRead).resolves.toBe(first);
+      });
+      // The later save is still in flight: the read did not wait for it.
+      expect(stored).toBe(first);
+      await act(async () => {
+        slowWrite.resolve(undefined);
+        await slowWrite.promise;
+      });
+    });
+
+    it('waits for a save queued before it, even one that fails', async () => {
+      const write = deferred<void>();
+      const save = vi.fn((_settings: TintSettings) => write.promise);
+      const load = vi.fn(async () => noSettings());
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const store = makeStore({ load, save });
+      const { result } = renderHook(() => useTintSettings(store));
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      act(() => result.current.save(withRule('edit')));
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+      let pendingRead!: Promise<TintSettings>;
+      act(() => {
+        pendingRead = result.current.loadSaved();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(load).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        write.reject(new Error('write failed'));
+        await pendingRead;
+      });
+      expect(load).toHaveBeenCalledTimes(2);
+    });
+  });
 });
