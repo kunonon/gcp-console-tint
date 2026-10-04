@@ -36,7 +36,7 @@ docker compose run --rm dev sh -c "corepack enable && pnpm install && pnpm build
 
 ## Development
 
-All package-manager and runtime work happens inside the Docker container. Make shortcuts:
+Local dependency installation and the development server run inside Docker. Browser end-to-end tests use a separate Linux container so Chrome and Firefox run in a consistent environment. Make shortcuts:
 
 ```sh
 make up      # start the dev stack in the background (docker compose up -d)
@@ -52,7 +52,7 @@ docker compose up
 
 This installs dependencies and starts the WXT dev server (HMR on port 3000). Load `.output/chrome-mv3-dev` as an unpacked extension to develop against the live build.
 
-The container keeps its `node_modules` in a named Docker volume (`node_modules`), separate from any `node_modules` a host-side `pnpm install` may have created: pnpm installs the native binaries (lightningcss, rolldown, Biome, TypeScript, Tailwind's oxide) for one platform only, so sharing a single directory between macOS and the Linux container breaks whichever side installed second. `docker compose down -v` drops the volume; the next `make up` reinstalls.
+The container keeps its `node_modules` in a named Docker volume (`node_modules`), separate from any `node_modules` a host-side `pnpm install` may have created: pnpm installs the native binaries (lightningcss, rolldown, Biome, TypeScript, Tailwind's oxide) for one platform only, so sharing a single directory between macOS and the Linux container breaks whichever side installed second. `docker compose down -v` removes this project’s Compose named volumes, including the separate E2E dependency and build volumes; the next `make up` reinstalls the dev dependencies.
 
 With the stack running:
 
@@ -64,13 +64,25 @@ docker compose exec dev pnpm lint:fix   # Biome with autofixes
 docker compose exec dev pnpm build      # production build (add :firefox for Firefox)
 ```
 
+### Browser extension tests
+
+The WebdriverIO tests load the production Chrome and Firefox extensions against a local HTTPS Google Cloud Console mock. They do not require a Google account. Run both browsers with:
+
+```sh
+docker compose --profile e2e run --rm --build e2e
+```
+
+The service installs dependencies, builds both extension artifacts, and runs the browsers under Xvfb. Use `docker compose --profile e2e run --rm --build -e E2E_BROWSER=chrome e2e` or the same command with `E2E_BROWSER=firefox` to select one browser. If pnpm is already available on the host, `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox` are optional launchers for those Compose runs; host dependency installation is unnecessary. Browser binaries and dependencies use dedicated Docker volumes, separate from the development container and host `node_modules`. Failed runs retain screenshots and startup diagnostics in `.e2e-artifacts/`; successful harness runs remove their own artifacts.
+
+See [E2E coverage and scope](e2e/README.md) for the scenarios and browser-coverage limits.
+
 If dev-mode styles look stale after larger edits, restart the server: `docker compose restart dev` (the dev side panel loads a pre-render chunk that is fixed at server start).
 
 Dependency updates sit behind a one-week cooldown: `minimumReleaseAge` in `pnpm-workspace.yaml` makes pnpm resolve only versions published at least 7 days ago (transitive dependencies included), so a compromised release that gets pulled within hours never lands in the lockfile. pnpm applies the same check to the versions already in `pnpm-lock.yaml` on every install, so a lockfile that carries a younger version (for example from a dependency PR resolved elsewhere) fails to install — in CI and in the dev container — until that version is a week old. For an urgent fix, add the package to `minimumReleaseAgeExclude` in the same file.
 
 ## CI
 
-GitHub Actions runs on every pull request and push to `main`: Biome lint, typecheck, the Vitest suite, and both browser builds, executed as a parallel step group. Commits on `develop` are validated by the pull-request runs (feature PRs, and the release PR whose head is `develop`), so there is no separate develop push run. CodeQL code scanning (GitHub default setup: JavaScript/TypeScript and Actions workflows) runs independently on pushes and pull requests.
+GitHub Actions runs on every pull request and push to `main`: Biome lint, typecheck, the Vitest suite, and both browser builds run as a parallel step group, followed by the Chrome and Firefox extension end-to-end tests. On failure, the workflow uploads only the E2E screenshots and startup diagnostics. Commits on `develop` are validated by the pull-request runs (feature PRs, and the release PR whose head is `develop`), so there is no separate develop push run. CodeQL code scanning (GitHub default setup: JavaScript/TypeScript and Actions workflows) runs independently on pushes and pull requests.
 
 ## Branching and releases
 
@@ -84,7 +96,7 @@ To ship a release:
 2. On the release PR, click **Approve and run** on its held CI run (bot-opened PRs are held with `action_required` until a maintainer approves the run) and wait for green. The required version bump check fails here if step 1 was skipped.
 3. Approve the release PR (the `main` ruleset requires one approving review, and approvals reset whenever `develop` moves), then merge it using **Create a merge commit** — the only method the `main` ruleset allows, since squashing would break the invariant that `develop`'s history is a superset of `main`'s.
 
-Merging the release PR triggers CI to tag `v{version}`, build the Chrome and Firefox zips, and publish a GitHub Release with generated notes and the zips attached.
+The merge starts the separate `Release` workflow on the push to `main`. It tags `v{version}`, builds the Chrome and Firefox zips, and publishes a GitHub Release with generated notes and the zips attached; it does not depend on the main-push CI run or its result.
 
 Store submission is a separate, manual step: publishing to the Chrome Web Store (or AMO) happens independently of the GitHub Release and on its own timing.
 

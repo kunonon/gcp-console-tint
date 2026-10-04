@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GCP Console mock</title>
+    <style>
+      body { margin: 0; color: #222; font: 14px Arial, sans-serif; }
+      #ocb-platform-bar { display: flex; height: 48px; align-items: center; justify-content: space-between; padding: 0 16px; background: #eee; }
+      .cfc-platform-bar-left, .cfc-platform-bar-right, .pcc-platform-bar-button { display: flex; gap: 8px; align-items: center; }
+      #main-content { padding: 24px; }
+      #unaffected-content { color: #202124; }
+    </style>
+  </head>
+  <body>
+    <header id="ocb-platform-bar">
+      <div class="cfc-platform-bar-left"><span id="platform-left-text">Google Cloud</span></div>
+      <div class="cfc-platform-bar-right"><span id="platform-right-text">Help</span></div>
+      <div class="pcc-platform-bar-button"><button id="platform-button-text" type="button">Project selector</button></div>
+    </header>
+    <main id="main-content">
+      <p id="current-url"></p>
+      <p id="unaffected-content">This content is outside the platform bar.</p>
+      <button id="navigate-project" type="button">Navigate to beta</button>
+      <button id="navigate-home" type="button">Navigate to alpha</button>
+      <button id="replace-project" type="button">Replace with beta</button>
+      <button id="navigate-missing" type="button">Navigate to an unknown project</button>
+      <a id="navigate-outside" href="https://outside.example.test/">Outside origin</a>
+    </main>
+    <script>
+      const showUrl = () => { document.querySelector('#current-url').textContent = location.pathname + location.search; };
+      const changeProject = (id, replace = false) => {
+        const method = replace ? 'replaceState' : 'pushState';
+        history[method]({}, '', `/?project=${encodeURIComponent(id)}`);
+        showUrl();
+      };
+      document.querySelector('#navigate-project').addEventListener('click', () => changeProject('beta'));
+      document.querySelector('#navigate-home').addEventListener('click', () => changeProject('alpha'));
+      document.querySelector('#replace-project').addEventListener('click', () => changeProject('beta', true));
+      document.querySelector('#navigate-missing').addEventListener('click', () => changeProject('missing'));
+      showUrl();
+    </script>
+  </body>
+</html>

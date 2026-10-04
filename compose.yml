@@ -16,5 +16,30 @@ services:
     environment:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
 
+  e2e:
+    profiles: [e2e]
+    platform: linux/amd64
+    build:
+      context: ./e2e
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    init: true
+    shm_size: 2gb
+    command: sh -c "pnpm install --frozen-lockfile && pnpm build && pnpm zip:firefox && xvfb-run -s '-screen 0 1600x1200x24' -a pnpm test:e2e:run"
+    volumes:
+      - .:/workspace
+      - e2e_node_modules:/workspace/node_modules
+      - e2e_wxt:/workspace/.wxt
+      - e2e_output:/workspace/.output
+      - ./.e2e-artifacts:/artifacts
+    environment:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      E2E_ARTIFACT_DIR: /artifacts
+      E2E_CONTAINER: "1"
+      TZ: Asia/Tokyo
+
 volumes:
   node_modules:
+  e2e_node_modules:
+  e2e_wxt:
+  e2e_output:
