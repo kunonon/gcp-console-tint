@@ -40,6 +40,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check browser download dependencies
+        run: |
+          pnpm list extract-zip --depth Infinity --json --lockfile-only | node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const containsExtractZip = (value) => value !== null && typeof value === "object" &&
+              (value.from === "extract-zip" || Object.hasOwn(value, "extract-zip") ||
+                Object.values(value).some(containsExtractZip));
+            assert.equal(containsExtractZip(JSON.parse(readFileSync(0, "utf8"))), false,
+              "extract-zip was reintroduced; review the browser download override");
+          '
+
       # The checks are independent of each other, so they run as one parallel group
       # (each member becomes a background step with an implicit wait at the end; if one
       # fails, the rest still finish and the job fails at the group boundary). The two
@@ -57,3 +69,42 @@ jobs:
 
           - name: Build (Chrome + Firefox)
             run: pnpm build && pnpm build:firefox
+
+      # Separate Compose projects isolate the shared node_modules, .wxt, and .output volumes.
+      - parallel:
+          - name: Browser extension end-to-end (Chrome)
+            id: e2e_chrome
+            timeout-minutes: 30
+            run: |
+              pnpm_store_path=$(pnpm store path --silent)
+              docker compose --project-name e2e-chrome-${{ github.run_id }}-${{ github.run_attempt }} \
+                --profile e2e run --rm --build \
+                --volume "$(dirname "$pnpm_store_path"):/pnpm-store" \
+                -e pnpm_config_store_dir=/pnpm-store \
+                -e E2E_BROWSER=chrome \
+                -e E2E_CHROME_VERSION=154.0.8037.92 e2e
+
+          - name: Browser extension end-to-end (Firefox)
+            id: e2e_firefox
+            timeout-minutes: 30
+            run: |
+              pnpm_store_path=$(pnpm store path --silent)
+              docker compose --project-name e2e-firefox-${{ github.run_id }}-${{ github.run_attempt }} \
+                --profile e2e run --rm --build \
+                --volume "$(dirname "$pnpm_store_path"):/pnpm-store" \
+                -e pnpm_config_store_dir=/pnpm-store \
+                -e E2E_BROWSER=firefox \
+                -e E2E_FIREFOX_VERSION=stable_157.0 \
+                -e GECKODRIVER_VERSION=0.37.1 e2e
+
+      - name: Upload end-to-end diagnostics
+        if: always() && (steps.e2e_chrome.outcome == 'failure' || steps.e2e_firefox.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics-${{ github.run_id }}
+          path: |
+            .e2e-artifacts/*/*/screenshots/**
+            .e2e-artifacts/*/*/startup/**
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7

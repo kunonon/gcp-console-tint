@@ -1,7 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "files": {
-    "includes": ["**", "!**/.output", "!**/.wxt", "!**/.playwright-mcp", "!**/coverage", "!**/.pnpm-store"]
+    "includes": [
+      "**",
+      "!**/.output",
+      "!**/.wxt",
+      "!**/.playwright-mcp",
+      "!**/.e2e-artifacts",
+      "!**/coverage",
+      "!**/.pnpm-store"
+    ]
   },
   "formatter": {
     "enabled": true,
