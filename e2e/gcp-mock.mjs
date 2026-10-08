@@ -118,6 +118,9 @@ export async function startGcpMock() {
       socket.once('close', () => sockets.delete(socket));
     });
     proxy.on('connect', (req, client, head) => {
+      // Node drops its own 'error' listener when it hands over a CONNECT socket; an unhandled
+      // reset from the browser would otherwise surface as an uncaught exception.
+      client.on('error', () => client.destroy());
       const [host, rawPort] = req.url.split(':');
       if (!ALLOWED_HOSTS.has(host.toLowerCase()) || rawPort !== '443') {
         client.end('HTTP/1.1 502 External network disabled\r\nConnection: close\r\n\r\n');
