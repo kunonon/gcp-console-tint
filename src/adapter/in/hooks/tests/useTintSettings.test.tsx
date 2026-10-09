@@ -15,8 +15,8 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const noSettings = () => new TintSettings([]);
-const withRule = (pattern: string) => new TintSettings([ProjectRule.create('exact', pattern)]);
+const noSettings = () => new TintSettings([], 'auto');
+const withRule = (pattern: string) => new TintSettings([ProjectRule.create('exact', pattern)], 'auto');
 
 function makeStore(overrides: Partial<SettingsStore> = {}): SettingsStore {
   return {

@@ -66,10 +66,13 @@ interface ProjectRule {
 
 interface TintSettings {
   schemaVersion: string;
+  theme: string;
   projectRules: ProjectRule[];
 }
 
-const CURRENT_VERSION = '0.1.0';
+// The manifest version these tests run under: equal to CURRENT_SCHEMA_VERSION, so defaulted
+// fixtures are current-schema data that no migration step touches.
+const CURRENT_VERSION = '0.3.0';
 
 // Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
 // The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
@@ -131,7 +134,7 @@ function tintSettings(partial: {
   schemaVersion?: string;
   projectRules?: { id?: string; matchType: MatchType; pattern: string; settings?: ProjectSettingsOverrides }[];
 }) {
-  return { tintSettings: { schemaVersion: CURRENT_VERSION, ...partial } as unknown as TintSettings };
+  return { tintSettings: { schemaVersion: CURRENT_VERSION, theme: 'auto', ...partial } as unknown as TintSettings };
 }
 
 // Schema change: `defaultProject` (the fallback project) has been removed entirely — a
@@ -623,6 +626,8 @@ describe('content script', () => {
     expect(styleEl.textContent).toBe('');
   });
 
+  // SCHEMA_MIN_VERSION data goes through the 0.3.0 step, which only adds the theme; the rules
+  // are already in the current nested shape and apply unchanged.
   it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION (data already in the current nested shape)', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
@@ -646,11 +651,11 @@ describe('content script', () => {
     expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
   });
 
-  // Pre-release: SCHEMA_MIGRATIONS is currently empty, so no migration ever runs. Old
-  // flat-shaped settings (the pre-nested-schema shape) stored at schemaVersion 0.1.0 are read
+  // Pre-release: no SCHEMA_MIGRATIONS step reshapes rules (the 0.3.0 step only adds the theme).
+  // Old flat-shaped settings (the pre-nested-schema shape) stored at schemaVersion 0.1.0 are read
   // destructively -- none of the old flat keys match the Zod schemas' expected nested shape, so
   // every surface falls back to its default rather than picking up the stored custom color.
-  it('ignores old flat-shaped settings at schemaVersion 0.1.0 now that no migration runs; the default color applies instead', async () => {
+  it('ignores old flat-shaped settings at schemaVersion 0.1.0 since no migration reshapes them; the default color applies instead', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         schemaVersion: '0.1.0',

@@ -145,7 +145,7 @@ function failureDetail(error: unknown): string | undefined {
   return underlying instanceof Error ? fitDetail(`${underlying.name}: ${underlying.message}`) : undefined;
 }
 
-// The Settings tab's only card: writing the saved rules out to a JSON file and reading one back
+// The Settings tab's Backup card: writing the saved rules out to a JSON file and reading one back
 // in. Export writes what storage holds once queued saves have settled, not the rules on screen:
 // after a failed (optimistic) save the two differ, and the file has the saved ones. It downloads
 // straight from a blob URL (no downloads permission needed). Import routes the picked file through

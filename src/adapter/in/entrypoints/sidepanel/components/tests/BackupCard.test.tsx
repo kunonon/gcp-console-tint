@@ -13,15 +13,15 @@ afterEach(() => {
 
 function createStore(): SettingsStore {
   return {
-    load: async () => new TintSettings([]),
+    load: async () => new TintSettings([], 'auto'),
     save: async () => {},
     watch: () => {},
     exportJson: () => '',
-    importJson: (text) => new TintSettings([ProjectRule.create('exact', text)]),
+    importJson: (text) => new TintSettings([ProjectRule.create('exact', text)], 'auto'),
   };
 }
 
-const noRules = new TintSettings([]);
+const noRules = new TintSettings([], 'auto');
 
 // Stands in for App, which owns the notice (and numbers it) so it outlives the card; `mounted`
 // plays the part of the Settings tab being picked or left.
@@ -273,8 +273,8 @@ describe('BackupCard export focus', () => {
   }
 
   it.each([
-    ['a backup is made', () => new TintSettings([ProjectRule.create('exact', 'alpha')]), 'Backup ready'],
-    ['there are no saved rules', () => new TintSettings([]), 'No saved rules to export'],
+    ['a backup is made', () => new TintSettings([ProjectRule.create('exact', 'alpha')], 'auto'), 'Backup ready'],
+    ['there are no saved rules', () => new TintSettings([], 'auto'), 'No saved rules to export'],
     [
       'the saved settings cannot be read',
       () => {
@@ -298,7 +298,7 @@ describe('BackupCard export focus', () => {
     const { exportButton, elsewhere, settle } = pressExport();
     elsewhere.focus();
 
-    settle(() => new TintSettings([]));
+    settle(() => new TintSettings([], 'auto'));
     expect(await screen.findByText('No saved rules to export')).toBeTruthy();
     expect(exportButton.disabled).toBe(false);
     expect(document.activeElement).toBe(elsewhere);

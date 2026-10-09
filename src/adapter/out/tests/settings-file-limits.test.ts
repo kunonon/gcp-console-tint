@@ -16,6 +16,7 @@ import { parseSettingsFile } from '../settings-file';
 // (it would read every element and spoil their counts).
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
 const oracleSchema = z.object({
+  theme: z.string(),
   projectRules: z.array(
     z.object({
       id: z.string(),
@@ -111,7 +112,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
     ];
     last.settings.topBar.height = '4';
     last.settings.topBar.stripes = 'no';
-    const data = { projectRules: [...idInvalidRules(97), last] };
+    const data = { theme: 'auto', projectRules: [...idInvalidRules(97), last] };
     const oracle = oracleIssues(data);
 
     const { failure, message } = invalidFieldsOf(data);
@@ -134,7 +135,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
       if (entries === undefined) delete last.settings.palette.entries;
       else last.settings.palette.entries = entries;
       last.settings.topBar.height = '4';
-      const data = { projectRules: [...idInvalidRules(98), last] };
+      const data = { theme: 'auto', projectRules: [...idInvalidRules(98), last] };
       const oracle = oracleIssues(data);
 
       const { failure } = invalidFieldsOf(data);
@@ -151,7 +152,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
     [100, 100, undefined, 'Missing or invalid fields (100)'],
     [101, 100, true, 'Missing or invalid fields (100+)'],
   ])('with %i faulty rules keeps %i issues (validationStopped: %s)', (faulty, kept, stopped, expectedMessage) => {
-    const data = { projectRules: idInvalidRules(faulty) };
+    const data = { theme: 'auto', projectRules: idInvalidRules(faulty) };
 
     const { failure, message } = invalidFieldsOf(data);
 
@@ -163,7 +164,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
   });
 
   it('keeps reading valid rules after exactly 100 issues, and does not report a stop', () => {
-    const data = { projectRules: [...idInvalidRules(100), ...validRules(400)] };
+    const data = { theme: 'auto', projectRules: [...idInvalidRules(100), ...validRules(400)] };
 
     const { failure, message } = invalidFieldsOf(data);
 
@@ -175,7 +176,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
   it('stops inside one rule with 150 faulty palette entries, keeping entries[0..99]', () => {
     const rule = validRule('only');
     rule.settings.palette.entries = Array.from({ length: 150 }, () => ({ id: 1, name: 'n', color: '#000000' }));
-    const data = { projectRules: [rule] };
+    const data = { theme: 'auto', projectRules: [rule] };
 
     const { failure } = invalidFieldsOf(data);
 
@@ -192,11 +193,11 @@ describe('structure stage: elements are read once each, and none after the 101st
     const items = idInvalidRules(150);
     const rules = recordingArray(items);
 
-    const { failure } = invalidFieldsOf({ projectRules: rules.proxy });
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: rules.proxy });
 
     expect(rules.maxIndex()).toBe(100);
     expect(rules.reads).toHaveLength(101);
-    expect(failure.issues).toEqual(oracleIssues({ projectRules: items }).slice(0, 100));
+    expect(failure.issues).toEqual(oracleIssues({ theme: 'auto', projectRules: items }).slice(0, 100));
   });
 
   it('reads entries[0..100] once each when every entry of one rule is faulty (150 entries)', () => {
@@ -206,7 +207,7 @@ describe('structure stage: elements are read once each, and none after the 101st
     rule.settings.palette.entries = entries.proxy;
     const rules = recordingArray([rule]);
 
-    const { failure } = invalidFieldsOf({ projectRules: rules.proxy });
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: rules.proxy });
 
     expect(rules.maxIndex()).toBe(0);
     expect(rules.reads).toHaveLength(1);
@@ -214,13 +215,13 @@ describe('structure stage: elements are read once each, and none after the 101st
     expect(entries.reads).toHaveLength(101);
     const plainRule = validRule('only');
     plainRule.settings.palette.entries = entryItems;
-    expect(failure.issues).toEqual(oracleIssues({ projectRules: [plainRule] }).slice(0, 100));
+    expect(failure.issues).toEqual(oracleIssues({ theme: 'auto', projectRules: [plainRule] }).slice(0, 100));
   });
 
   it('reads each of 150 valid rules exactly once', () => {
     const rules = recordingArray(validRules(150));
 
-    expect(parseMigrated({ projectRules: rules.proxy }).projectRules).toHaveLength(150);
+    expect(parseMigrated({ theme: 'auto', projectRules: rules.proxy }).projectRules).toHaveLength(150);
 
     expect(rules.maxIndex()).toBe(149);
     expect(rules.reads).toHaveLength(150);
@@ -233,7 +234,9 @@ describe('structure stage: elements are read once each, and none after the 101st
     const rule = validRule('only');
     rule.settings.palette.entries = entries.proxy;
 
-    expect(parseMigrated({ projectRules: [rule] }).projectRules[0]!.settings.palette.entries).toHaveLength(150);
+    expect(
+      parseMigrated({ theme: 'auto', projectRules: [rule] }).projectRules[0]!.settings.palette.entries,
+    ).toHaveLength(150);
 
     expect(entries.maxIndex()).toBe(149);
     expect(entries.reads).toHaveLength(150);
@@ -244,7 +247,7 @@ describe('structure stage: elements are read once each, and none after the 101st
     const last = { ...validRule('unused'), id: 1 };
     last.settings.palette.entries = entries.proxy;
 
-    const { message } = invalidFieldsOf({ projectRules: [...idInvalidRules(100), last] });
+    const { message } = invalidFieldsOf({ theme: 'auto', projectRules: [...idInvalidRules(100), last] });
 
     expect(message).toBe('Missing or invalid fields (100+)');
     expect(entries.reads).toEqual([]);
@@ -254,7 +257,7 @@ describe('structure stage: elements are read once each, and none after the 101st
     const tail = 50;
     const rules = recordingArray([...idInvalidRules(100), ...validRules(tail)]);
 
-    const { failure } = invalidFieldsOf({ projectRules: rules.proxy });
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: rules.proxy });
 
     expect(failure.issues).toHaveLength(100);
     expect(rules.reads).toHaveLength(100 + tail);
@@ -294,7 +297,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     }));
     clearSpies();
 
-    const { failure, message } = invalidFieldsOf({ projectRules: rules });
+    const { failure, message } = invalidFieldsOf({ theme: 'auto', projectRules: rules });
 
     expect(calls()).toEqual([101, 300, 100]);
     expect(failure.issues).toEqual(
@@ -313,7 +316,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
       matchType: 'glob',
       settings: { ...rule.settings, palette: { enabled: true, entries: [] } },
     }));
-    const data = { projectRules: [...faulty, ...validRules(50, 100)] };
+    const data = { theme: 'auto', projectRules: [...faulty, ...validRules(50, 100)] };
     clearSpies();
 
     const { failure, message } = invalidFieldsOf(data);
@@ -331,7 +334,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     rule.settings.palette.entries = Array.from({ length: 102 }, () => ({ id: 'same', name: 'n', color: '#000000' }));
     clearSpies();
 
-    const { failure } = invalidFieldsOf({ projectRules: [rule] });
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
 
     expect(calls()).toEqual([1, 101, 0]);
     expect(failure.issues).toEqual(
@@ -348,7 +351,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     rule.settings.palette.entries = Array.from({ length: 150 }, (_, j) => ({ id: `e${j}`, name: 'n', color: 'bad' }));
     clearSpies();
 
-    const { failure } = invalidFieldsOf({ projectRules: [rule] });
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
 
     expect(calls()).toEqual([1, 101, 0]);
     expect(failure.issues).toEqual(
@@ -369,7 +372,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     rule.settings.platformBarText.color.custom = '#0000bb';
     clearSpies();
 
-    const { failure } = invalidFieldsOf({ projectRules: [rule] });
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
 
     expect(calls()).toEqual([1, 101, 1]);
     expect(fromHex.mock.calls.map(([hex]) => hex)).not.toContain('#0000aa');
@@ -389,7 +392,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     rules[149].settings.topBar.height = '4';
     clearSpies();
 
-    const { failure } = invalidFieldsOf({ projectRules: rules });
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: rules });
 
     expect(failure.issues).toEqual([
       { path: 'projectRules[149].settings.topBar.height', message: 'Invalid input: expected number, received string' },

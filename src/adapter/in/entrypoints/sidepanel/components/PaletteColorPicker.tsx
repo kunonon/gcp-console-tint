@@ -47,11 +47,11 @@ export default function PaletteColorPicker({
         <button
           type="button"
           aria-label={ariaLabel}
-          className="flex h-8 cursor-pointer items-center gap-2 rounded-md border border-border bg-transparent px-2"
+          className="outlined-control flex h-8 cursor-pointer items-center gap-2 rounded-md border border-border bg-transparent px-2"
         >
           <span
             aria-hidden="true"
-            className="h-5 w-5 rounded-full border border-border"
+            className="color-chip h-5 w-5 rounded-full border"
             style={{ backgroundColor: effectiveColor }}
           />
           <span className="font-mono text-sm text-muted">{triggerLabel}</span>
@@ -66,7 +66,7 @@ export default function PaletteColorPicker({
                 type="button"
                 aria-label="Auto"
                 onClick={() => onSelectAuto?.()}
-                className={`cursor-pointer rounded-md border border-border px-2 py-1 text-left text-sm ${
+                className={`outlined-control cursor-pointer rounded-md border border-border px-2 py-1 text-left text-sm ${
                   autoSelected ? 'ring-2 ring-focus' : ''
                 }`}
               >
@@ -84,8 +84,10 @@ export default function PaletteColorPicker({
                     type="button"
                     aria-label={entry.name || '(unnamed)'}
                     onClick={() => onSelectPaletteEntry(entry.id)}
-                    className={`h-7 w-7 cursor-pointer rounded-full border border-border ${
-                      !autoSelected && paletteId?.equals(entry.id) ? 'ring-2 ring-focus' : ''
+                    className={`color-chip h-7 w-7 cursor-pointer rounded-full border ${
+                      !autoSelected && paletteId?.equals(entry.id)
+                        ? 'ring-2 ring-focus ring-offset-2 ring-offset-overlay'
+                        : ''
                     }`}
                     style={{ backgroundColor: entry.color.toHex() }}
                   />

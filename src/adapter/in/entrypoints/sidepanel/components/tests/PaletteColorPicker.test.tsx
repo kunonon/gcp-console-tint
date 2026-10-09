@@ -108,6 +108,72 @@ describe('PaletteColorPicker', () => {
     expect(customLabel!.className).not.toContain('ring-2');
   });
 
+  it("offsets the selected palette option's ring from the dot with a gap in the popover's surface colour (\"ring-offset-2 ring-offset-overlay\"), so the ring stays visible whatever the dot's colour", async () => {
+    const user = userEvent.setup();
+    const twoEntries = [
+      ...palette,
+      PaletteEntry.recreate(PaletteEntryId.recreate('second'), 'Secondary', Color.fromHex('#d50000')!),
+    ];
+    render(
+      <PaletteColorPicker
+        ariaLabel="Test color"
+        paletteEnabled
+        palette={twoEntries}
+        paletteId={defaultEntryId}
+        customColor="#123456"
+        effectiveColor="#ff6d00"
+        onSelectPaletteEntry={() => {}}
+        onSelectCustomColor={() => {}}
+      />,
+    );
+
+    const dialog = await openDialog(user, 'Test color');
+
+    const selected = within(dialog).getByRole('button', { name: 'Primary' });
+    for (const className of ['ring-2', 'ring-focus', 'ring-offset-2', 'ring-offset-overlay']) {
+      expect(selected.classList.contains(className), className).toBe(true);
+    }
+    const other = within(dialog).getByRole('button', { name: 'Secondary' });
+    for (const className of ['ring-2', 'ring-offset-2']) {
+      expect(other.classList.contains(className), className).toBe(false);
+    }
+  });
+
+  it('marks the trigger and the "Match contrast" button with "outlined-control", and the trigger\'s dot and every palette option with "color-chip", the hooks style.css uses for the dark-theme control border and the bead rim', async () => {
+    const user = userEvent.setup();
+    const twoEntries = [
+      ...palette,
+      PaletteEntry.recreate(PaletteEntryId.recreate('second'), 'Secondary', Color.fromHex('#d50000')!),
+    ];
+    render(
+      <PaletteColorPicker
+        ariaLabel="Test color"
+        paletteEnabled
+        palette={twoEntries}
+        paletteId={defaultEntryId}
+        customColor="#123456"
+        effectiveColor="#ff6d00"
+        onSelectPaletteEntry={() => {}}
+        onSelectCustomColor={() => {}}
+        supportsAuto
+        onSelectAuto={() => {}}
+      />,
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Test color' });
+    expect(trigger.classList.contains('outlined-control')).toBe(true);
+    const dot = trigger.querySelector('[aria-hidden="true"]');
+    expect(dot).toBeTruthy();
+    expect(dot!.classList.contains('color-chip')).toBe(true);
+
+    const dialog = await openDialog(user, 'Test color');
+
+    expect(within(dialog).getByRole('button', { name: 'Auto' }).classList.contains('outlined-control')).toBe(true);
+    for (const name of ['Primary', 'Secondary']) {
+      expect(within(dialog).getByRole('button', { name }).classList.contains('color-chip')).toBe(true);
+    }
+  });
+
   it('hides the Palette section in the popover when paletteEnabled is false, even with palette entries present', async () => {
     const user = userEvent.setup();
     render(

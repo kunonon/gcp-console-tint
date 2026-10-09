@@ -51,10 +51,11 @@ export class SettingsStoreImpl implements SettingsStore {
   }
 }
 
-// Persists storage in the newest shape, stamped with the running extension version. Called
-// from the background script only, so there is a single writer (content scripts and the side
-// panel migrate in memory on read via toDomain and never write back). No-ops when storage is
-// empty — an unconfigured install stays unconfigured — or already current.
+// Persists storage in the newest shape, stamped with the running extension version floored at
+// CURRENT_SCHEMA_VERSION (see effectiveSchemaVersion). Called from the background script only,
+// so there is a single writer (content scripts and the side panel migrate in memory on read via
+// toDomain and never write back). No-ops when storage is empty — an unconfigured install stays
+// unconfigured — or already current.
 export async function migrateStoredSettings(currentVersion: string): Promise<void> {
   const result = await browser.storage.local.get(STORAGE_KEY);
   const stored: unknown = result[STORAGE_KEY];

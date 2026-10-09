@@ -9,7 +9,7 @@ import {
   ProjectSettings,
   TopBarSettings,
 } from '../../domain/project-settings';
-import { TintSettings } from '../../domain/tint-settings';
+import { isTheme, TintSettings } from '../../domain/tint-settings';
 import { TopBarHeight } from '../../domain/top-bar-height';
 import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIN_VERSION } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
@@ -174,19 +174,20 @@ export function effectiveSchemaVersion(currentVersion: string): string {
 //   is parsed by projectRuleSchema (dropping only the ones whose pattern isn't a string;
 //   every other field recovers via its own default) and merged with defaults. Without an
 //   applicable migration, unrecognized legacy fields fall back to defaults; valid rules still
-//   retain their id/matchType/pattern.
+//   retain their id/matchType/pattern. A theme that is not one of THEMES (missing or junk)
+//   recovers to TintSettings.DEFAULT_THEME.
 // Pure: never writes storage. The background script persists the migrated form once via
 // migrateStoredSettings (browser-settings-store.ts).
 export function toDomain(stored: unknown): TintSettings {
   if (!isRecord(stored)) {
-    return new TintSettings([]);
+    return new TintSettings([], TintSettings.DEFAULT_THEME);
   }
   const schemaVersion = stored.schemaVersion;
   if (
     typeof schemaVersion !== 'string' ||
     compareVersions(schemaVersion, SCHEMA_MIN_VERSION) === VersionComparisonResult.Older
   ) {
-    return new TintSettings([]);
+    return new TintSettings([], TintSettings.DEFAULT_THEME);
   }
 
   const { data } = runMigrations(stored, schemaVersion);
@@ -199,7 +200,9 @@ export function toDomain(stored: unknown): TintSettings {
     }
   }
 
-  return new TintSettings(projectRules);
+  const theme = typeof data.theme === 'string' && isTheme(data.theme) ? data.theme : TintSettings.DEFAULT_THEME;
+
+  return new TintSettings(projectRules, theme);
 }
 
 // The stored JSON shape. Colors leave the model as '#rrggbb' strings, everything else is
@@ -208,6 +211,7 @@ export function toDomain(stored: unknown): TintSettings {
 export function toStored(settings: TintSettings, schemaVersion: string): Record<string, unknown> {
   return {
     schemaVersion,
+    theme: settings.theme,
     projectRules: settings.projectRules.map((rule) => ({
       id: rule.id.toString(),
       matchType: rule.matchType,

@@ -27,7 +27,7 @@ function renderModal(
       onOpenChange={overrides.onOpenChange ?? (() => {})}
       fileName={overrides.fileName ?? 'settings.json'}
       incoming={overrides.incoming ?? incoming}
-      current={overrides.current ?? new TintSettings([])}
+      current={overrides.current ?? new TintSettings([], 'auto')}
       onImport={overrides.onImport ?? (async () => {})}
     />,
   );
@@ -82,7 +82,7 @@ describe('ImportRulesModal', () => {
   it('marks the rules that would replace an existing one, and only counts the selected ones', async () => {
     const user = userEvent.setup();
     // Same match type and pattern as the first incoming rule, under its own identity.
-    const current = new TintSettings([ProjectRule.create('exact', 'alpha')]);
+    const current = new TintSettings([ProjectRule.create('exact', 'alpha')], 'auto');
     renderModal({ current });
 
     const dialog = await screen.findByRole('dialog');
@@ -101,7 +101,10 @@ describe('ImportRulesModal', () => {
       ProjectRule.create('exact', 'alpha'),
       ProjectRule.create('exact', 'gamma'),
     ];
-    const current = new TintSettings([ProjectRule.create('exact', 'alpha'), ProjectRule.create('exact', 'alpha')]);
+    const current = new TintSettings(
+      [ProjectRule.create('exact', 'alpha'), ProjectRule.create('exact', 'alpha')],
+      'auto',
+    );
     renderModal({ current, incoming: duplicates });
 
     const dialog = await screen.findByRole('dialog');
@@ -127,7 +130,7 @@ describe('ImportRulesModal', () => {
   it('keeps selection after a save failure and retries with the then-current selection', async () => {
     const user = userEvent.setup();
     const onImport = vi.fn().mockRejectedValueOnce(new Error('quota exceeded')).mockResolvedValueOnce(undefined);
-    const current = new TintSettings([ProjectRule.create('exact', 'existing')]);
+    const current = new TintSettings([ProjectRule.create('exact', 'existing')], 'auto');
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     renderModal({ current, onImport });
 

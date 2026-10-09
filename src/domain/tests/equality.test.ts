@@ -170,20 +170,26 @@ describe('TintSettings.equals', () => {
   const ruleB = ProjectRule.create('exact', 'bar');
 
   it('is true for the same rule ids in the same order', () => {
-    const a = new TintSettings([ruleA, ruleB]);
-    const b = new TintSettings([ruleA.changePattern('changed'), ruleB]);
+    const a = new TintSettings([ruleA, ruleB], 'auto');
+    const b = new TintSettings([ruleA.changePattern('changed'), ruleB], 'auto');
     expect(a.equals(b)).toBe(true);
   });
 
   it('is false when the order differs', () => {
-    const a = new TintSettings([ruleA, ruleB]);
-    const b = new TintSettings([ruleB, ruleA]);
+    const a = new TintSettings([ruleA, ruleB], 'auto');
+    const b = new TintSettings([ruleB, ruleA], 'auto');
     expect(a.equals(b)).toBe(false);
   });
 
   it('is false when a rule id differs', () => {
-    const a = new TintSettings([ruleA]);
-    const b = new TintSettings([ruleB]);
+    const a = new TintSettings([ruleA], 'auto');
+    const b = new TintSettings([ruleB], 'auto');
     expect(a.equals(b)).toBe(false);
+  });
+
+  it('is false when the theme differs', () => {
+    const a = new TintSettings([ruleA], 'auto');
+    expect(a.equals(new TintSettings([ruleA], 'dark'))).toBe(false);
+    expect(a.equals(a.changeTheme('auto'))).toBe(true);
   });
 });
