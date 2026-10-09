@@ -91,30 +91,38 @@ export class TintSettings extends ValueObject<TintSettings> {
     );
   }
 
-  // Maps each incoming rule to the first unused matching original rule; appended rules are never
-  // replacement targets.
-  replacementTargets(incoming: readonly ProjectRule[]): readonly (number | undefined)[] {
+  // Pairs each incoming rule with the first unused matching original rule, if there is one;
+  // appended rules are never replacement targets.
+  private replacements(
+    incoming: readonly ProjectRule[],
+  ): readonly { rule: ProjectRule; target?: { index: number; original: ProjectRule } }[] {
     const used = new Set<number>();
     return incoming.map((rule) => {
       const index = this.projectRules.findIndex((existing, i) => !used.has(i) && existing.isDuplicateOf(rule));
-      if (index === -1) return undefined;
+      // No match leaves the index at -1, where there is no rule.
+      const original = this.projectRules[index];
+      if (!original) return { rule };
       used.add(index);
-      return index;
+      return { rule, target: { index, original } };
     });
+  }
+
+  // The index of the original rule each incoming rule replaces, or undefined where it appends.
+  replacementTargets(incoming: readonly ProjectRule[]): readonly (number | undefined)[] {
+    return this.replacements(incoming).map(({ target }) => target?.index);
   }
 
   // Merges incoming rules in order: each can replace one original rule's settings in place,
   // keeping its id and position; unmatched rules append under fresh ids.
   mergeRules(incoming: readonly ProjectRule[]): TintSettings {
     const rules = [...this.projectRules];
-    this.replacementTargets(incoming).forEach((index, i) => {
-      const rule = incoming[i]!;
-      if (index === undefined) {
-        rules.push(ProjectRule.recreate(ProjectRuleId.create(), rule.matchType, rule.pattern, rule.settings));
+    for (const { rule, target } of this.replacements(incoming)) {
+      if (target) {
+        rules[target.index] = target.original.changeSettings(rule.settings);
       } else {
-        rules[index] = this.projectRules[index]!.changeSettings(rule.settings);
+        rules.push(ProjectRule.recreate(ProjectRuleId.create(), rule.matchType, rule.pattern, rule.settings));
       }
-    });
+    }
     return new TintSettings(rules, this.theme);
   }
 }
