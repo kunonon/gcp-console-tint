@@ -89,7 +89,7 @@ GitHub Actions runs on every pull request and push to `main`: Biome lint, typech
 
 `develop` is the default branch. Feature work is PRed into `develop` (squash merges are fine there).
 
-Every merge into `develop` automatically creates or updates a release PR (`develop` → `main`) listing the changes since the last release.
+Every merge into `develop` automatically creates or updates a release PR (`develop` → `main`) listing the changes since the last release. The PR is refreshed again when the `Release` workflow completes, so a `develop` merge that lands while a release is still being tagged does not leave the PR listing already-released changes. While the version in `package.json` is still the released one, the PR title carries a version-bump warning and its notes cover `develop` since that release.
 
 To ship a release:
 
