@@ -43,6 +43,14 @@ describe('ColorSwatchField', () => {
     expect(label!.className).not.toContain('ring-focus');
   });
 
+  it('marks the wrapping label with "outlined-control", the hook style.css uses to strengthen the border of hand-built controls in the dark theme', () => {
+    render(<ColorSwatchField ariaLabel="Test color" value="#ff0000" onChange={() => {}} />);
+
+    const label = screen.getByLabelText('Test color').closest('label');
+    expect(label).toBeTruthy();
+    expect(label!.classList.contains('outlined-control')).toBe(true);
+  });
+
   it('wraps the color input and the hex text in the same <label>, so clicking the hex text (native label click-delegation) activates the input', () => {
     render(<ColorSwatchField ariaLabel="Test color" value="#ff0000" onChange={() => {}} />);
 

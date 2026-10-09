@@ -495,7 +495,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                         const height = TopBarHeight.fromPixels(e.target.valueAsNumber);
                         if (height) updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(height)));
                       }}
-                      className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
+                      className="outlined-control h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                     />
                     <span className="text-sm text-muted">px</span>
                   </div>

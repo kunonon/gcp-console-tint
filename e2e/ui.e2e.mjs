@@ -884,6 +884,152 @@ for (const browserName of browserTargets()) {
       assert.equal(await checked('Light'), 'true', 'Light should be the checked theme after picking it');
     });
 
+    test('gives dark controls a stronger edge than dividers and leaves picked colours a 20px content box and a translucent rim', async () => {
+      const themed = (theme) => ({
+        ...settings(
+          rule(
+            'edges',
+            'project-a',
+            'exact',
+            projectSettings({
+              palette: { enabled: true, entries: [{ id: 'red', name: 'Red', color: '#d50000' }] },
+              topBar: { enabled: true, color: { paletteId: 'red', custom: '#d50000' }, height: 4, stripes: false },
+            }),
+          ),
+        ),
+        theme,
+      });
+      // These rules live in style.css, which jsdom cannot evaluate. Computed colours come back as
+      // oklch(), oklab() or rgb() depending on the engine, so the page paints each one on a 1x1
+      // canvas and returns its sRGB channels. The canvas starts transparent, so a colour the
+      // canvas could not parse reads as alpha 0.
+      const probe = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        const channels = (colour) => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = 'rgba(0, 0, 0, 0)';
+          context.fillStyle = colour;
+          context.fillRect(0, 0, 1, 1);
+          const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+          return { r, g, b, a: a / 255 };
+        };
+        const edge = (element) => channels(getComputedStyle(element).borderTopColor);
+        const button = document.querySelector('button[aria-label="Remove color"]');
+        const swatch = document.querySelector('input[aria-label="Red color"]');
+        const swatchStyle = getComputedStyle(swatch);
+        return {
+          fading: document.documentElement
+            .getAnimations()
+            .some((animation) => animation.transitionProperty?.startsWith('--')),
+          card: channels(getComputedStyle(button.closest('.card')).backgroundColor),
+          button: edge(button),
+          nameInput: edge(document.querySelector('input[aria-label="Color name"]')),
+          select: edge(document.querySelector('.select__trigger')),
+          outlined: [...document.querySelectorAll('.outlined-control')].map(edge),
+          divider: edge(document.querySelector('.card .border-t')),
+          chip: edge(document.querySelector('button[aria-label="Top bar color"] .color-chip')),
+          bead: {
+            width:
+              swatch.clientWidth -
+              Number.parseFloat(swatchStyle.paddingLeft) -
+              Number.parseFloat(swatchStyle.paddingRight),
+            height:
+              swatch.clientHeight -
+              Number.parseFloat(swatchStyle.paddingTop) -
+              Number.parseFloat(swatchStyle.paddingBottom),
+          },
+        };
+      };
+      // A theme change fades the tokens over 300ms and a control's own colour transition trails it
+      // by about 150ms, so colours are read only once no token is transitioning on <html> and two
+      // reads 200ms apart agree.
+      const openEditorAndProbe = async (theme) => {
+        await h.seedSettings(themed(theme));
+        const browser = await panel(h);
+        await browser.waitUntil(
+          async () =>
+            (await browser.execute(() => document.documentElement.classList.contains('dark'))) === (theme === 'dark'),
+          { timeout: 5000, interval: 100, timeoutMsg: `<html> did not take the stored ${theme} theme` },
+        );
+        await openDetail(browser);
+        await (await browser.$('button[aria-label="Top bar color"]')).waitForDisplayed();
+        let previous;
+        let current;
+        await browser.waitUntil(
+          async () => {
+            previous = current;
+            current = await browser.execute(probe);
+            return !current.fading && previous !== undefined && JSON.stringify(previous) === JSON.stringify(current);
+          },
+          { timeout: 5000, interval: 200, timeoutMsg: `${theme}: the editor's colours did not settle` },
+        );
+        return current;
+      };
+      const luminance = ({ r, g, b }) => {
+        const [red, green, blue] = [r, g, b].map((channel) => {
+          const value = channel / 255;
+          return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+      };
+      const contrast = (a, b) => {
+        const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+        return (lighter + 0.05) / (darker + 0.05);
+      };
+      // The swatch pseudo-elements' rounding and rim cannot be read through getComputedStyle; they are checked by eye.
+      const assertBead = (edges, theme) => {
+        assert.deepEqual(edges.bead, { width: 20, height: 20 }, `${theme}: the colour input's content box`);
+        assert.ok(
+          edges.chip.a > 0 && edges.chip.a < 1,
+          `${theme}: the bead's rim should be translucent, got alpha ${edges.chip.a}`,
+        );
+      };
+
+      const dark = await openEditorAndProbe('dark');
+      assert.equal(dark.card.a, 1, 'dark: the card background should be an opaque colour');
+      assert.ok(
+        dark.outlined.length >= 3,
+        `dark: expected the editor's outlined controls, got ${dark.outlined.length}`,
+      );
+      const darkControls = [
+        ['the outline button', dark.button],
+        ['the Color name input', dark.nameInput],
+        ['the Match type select trigger', dark.select],
+        ...dark.outlined.map((edge, index) => [`outlined control ${index}`, edge]),
+      ];
+      for (const [label, edge] of darkControls) {
+        assert.equal(edge.a, 1, `dark: ${label} should have an opaque border colour`);
+        const ratio = contrast(dark.card, edge);
+        assert.ok(ratio >= 1.6, `dark: ${label} has contrast ${ratio.toFixed(2)} on the card, expected >= 1.6`);
+      }
+      assert.equal(dark.divider.a, 1, 'dark: the divider should have an opaque border colour');
+      const dividerRatio = contrast(dark.card, dark.divider);
+      assert.ok(dividerRatio >= 1.45, `dark: the divider has contrast ${dividerRatio.toFixed(2)}, expected >= 1.45`);
+      assert.ok(
+        dividerRatio < contrast(dark.card, dark.button),
+        'dark: controls should sit one step above the dividers',
+      );
+      assertBead(dark, 'dark');
+
+      // In light, controls and dividers share --border: the dark-only rules must not leak.
+      const light = await openEditorAndProbe('light');
+      assert.equal(light.divider.a, 1, 'light: the divider should have an opaque border colour');
+      assert.deepEqual(light.button, light.divider, 'light: the outline button should share the divider colour');
+      assert.deepEqual(light.nameInput, light.divider, 'light: the Color name input should share the divider colour');
+      assert.deepEqual(
+        light.select,
+        light.divider,
+        'light: the Match type select trigger should share the divider colour',
+      );
+      for (const [index, edge] of light.outlined.entries()) {
+        assert.deepEqual(edge, light.divider, `light: outlined control ${index} should share the divider colour`);
+      }
+      assertBead(light, 'light');
+    });
+
     test('downloads a real JSON backup and imports selected rules while replacing duplicates in place', async () => {
       const initial = settings(
         rule(

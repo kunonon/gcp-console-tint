@@ -51,6 +51,61 @@ body {
   box-shadow: none;
 }
 
+/* Dark theme edges. HeroUI's dark --border (L 28% on a 21% card, contrast 1.21) is weaker than
+   its light value (90% on white, 1.35), while Radix Colors and GitHub Primer give dark borders
+   1.5 to 1.9. 35% keeps HeroUI's own hue and chroma. --border is one of the tokens registered
+   with @property below, so this literal still fades with the theme. The dividers inside cards
+   read the same token and rise with it. */
+.dark {
+  --border: oklch(35% 0.006 286.033);
+}
+
+/* In dark, pressable controls sit one step above the dividers. In light, HeroUI lifts inputs and
+   the select trigger with --field-shadow, which is transparent in dark. --border-secondary is
+   HeroUI's own token for the step (L 38%, contrast 1.78 on the card). It is HeroUI's color-mix of
+   --surface and --surface-foreground (22%), so it follows the fade as well. At the theme toggle
+   these controls change which token they read, so their 1px edge takes one small step in the
+   first frame and then fades with the rest.
+   `.outlined-control` marks the app's hand-built bordered controls (the Height field, the colour
+   field and the picker's trigger and Match contrast button), whose `border border-border`
+   utilities stay as the light-theme edge. Unlayered, so it wins over those utilities. */
+.dark .button--outline,
+.dark .input,
+.dark .select__trigger,
+.dark .outlined-control {
+  border-color: var(--border-secondary);
+}
+
+/* A picked colour is one object everywhere, in both themes: a round bead. The pickers'
+   `.color-chip` already is one (20px in the trigger, 28px in the popover). The colour field shows
+   the colour through a native colour input, which Chrome draws as a square-cornered swatch inside
+   its own padding with a fixed 1px #777 frame. The input keeps its 32x24 box (`h-6 w-8`); this
+   padding leaves a 20x20 content box, so the swatch matches the trigger's dot.
+   Chrome's and Firefox's swatch pseudo-elements are separate rules: a selector list containing a
+   pseudo-element the engine does not know is dropped whole. */
+input[type="color"] {
+  padding: 2px 6px;
+}
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+input[type="color"]::-webkit-color-swatch {
+  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
+  border-radius: 9999px;
+}
+input[type="color"]::-moz-color-swatch {
+  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
+  border-radius: 9999px;
+}
+
+/* The bead's rim is the fill pulled a quarter of the way to the text colour: a translucent
+   --foreground border over the edge of the fill, which extends under it, so the inside of the
+   bead stays the true colour. The swatch rules above use the same colour. No box-shadow here:
+   the selected bead's `ring-2` is a box-shadow. */
+.color-chip {
+  border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+}
+
 /* The Settings tab's theme switch: a HeroUI ToggleButtonGroup (`.theme-switch` is the className
    AppearanceCard puts on it) restyled as a miniature of the Rules | Settings tabs — a
    `var(--default)` pill track, one `var(--segment)` thumb carrying the surface shadow, and muted

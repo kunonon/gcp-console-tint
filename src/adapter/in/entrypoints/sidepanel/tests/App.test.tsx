@@ -1068,6 +1068,17 @@ describe('App', () => {
     });
   });
 
+  it('Top bar: Height input carries "outlined-control", the hook style.css uses to strengthen the border of hand-built controls in the dark theme', async () => {
+    const user = userEvent.setup();
+    render(<App settingsStore={new SettingsStoreImpl()} />);
+    await screen.findByRole('button', { name: 'Add rule' });
+    await addRule(user, 'my-project');
+    await openRuleDetail(user, 'my-project');
+
+    const heightInput = within(getCard('Top bar')).getByLabelText('Top bar height');
+    expect(heightInput.classList.contains('outlined-control')).toBe(true);
+  });
+
   it('emptying the Top bar Height input is ignored: the previous valid value is kept in storage (valueAsNumber is NaN for an empty number input, which fails the Number.isFinite guard)', async () => {
     const user = userEvent.setup();
     render(<App settingsStore={new SettingsStoreImpl()} />);
