@@ -9,7 +9,7 @@ import {
   ProjectSettings,
   TopBarSettings,
 } from '../../domain/project-settings';
-import { TintSettings } from '../../domain/tint-settings';
+import { isTheme, THEMES, type Theme, TintSettings } from '../../domain/tint-settings';
 import { TopBarHeight } from '../../domain/top-bar-height';
 import { SettingsImportError, type SettingsImportIssue } from '../../port/settings-store';
 import { runMigrations, SCHEMA_MIGRATIONS, SCHEMA_MIN_VERSION, type SchemaMigration } from './migrations';
@@ -25,7 +25,8 @@ import { compareVersions, VersionComparisonResult } from './version';
 //   1. STRUCTURE (checkStructure, with the Zod schemas below) — required keys and JSON types only. No enums, ranges
 //      or formats live here; that would put the domain's rules in the adapter.
 //   2. VALUES (toRules) — every value is handed to the domain factory that owns it
-//      (Color.fromHex, TopBarHeight.fromPixels, isMatchType), and a rejection becomes an issue.
+//      (isTheme, Color.fromHex, TopBarHeight.fromPixels, isMatchType), and a rejection becomes
+//      an issue.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -40,6 +41,9 @@ const colorSelectionSchema = z.object({
 });
 
 const paletteEntrySchema = z.object({ id: z.string(), name: z.string(), color: z.string() });
+
+// The root's scalar fields; projectRules is walked separately (see checkStructure).
+const rootSchema = z.object({ theme: z.string() });
 
 // One rule WITHOUT the contents of palette.entries. projectRules and palette.entries are walked
 // element by element (see checkStructure) so validation can stop at the 101st issue without
@@ -67,6 +71,10 @@ const arrayDiagnosis = z.array(z.unknown());
 
 type PaletteEntryFile = z.infer<typeof paletteEntrySchema>;
 type RuleFile = z.infer<typeof ruleShellSchema> & { settings: { palette: { entries: PaletteEntryFile[] } } };
+interface SettingsFile {
+  theme: string;
+  projectRules: RuleFile[];
+}
 
 // Each stage keeps at most this many issues, so a file that is wrong everywhere is neither
 // walked nor reported in full.
@@ -92,12 +100,14 @@ function issuePath(path: readonly PropertyKey[]): string {
 }
 
 // Stage 1, walked element by element. Issues come out in exactly the order one Zod schema over
-// the whole file would list them (its shape order, whatever the file's key order), so the 100
-// kept and the 101st that stops validation are the ones that schema would list first. Per rule
-// that order is: the fields before palette.entries, then the entries, then the rest of settings,
-// so the shell's issues are split around the entries by their rule-relative path. Every array
+// the whole file would list them (its shape order — theme, then projectRules, as toStored writes
+// them — whatever the file's key order), so the 100 kept and the 101st that stops validation are
+// the ones that schema would list first. Per rule that order is: the fields before
+// palette.entries, then the entries, then the rest of settings, so the shell's issues are split
+// around the entries by their rule-relative path. Every array
 // element is read exactly once, and only Zod's parsed (unknown-key-stripped) data is returned.
-function checkStructure(data: unknown, reject: (path: string, message: string) => void): RuleFile[] {
+// The result is used only when no issue was collected, so an invalid theme is returned as ''.
+function checkStructure(data: unknown, reject: (path: string, message: string) => void): SettingsFile {
   const rejectAll = (at: readonly PropertyKey[], issues: readonly z.core.$ZodIssue[] = []) => {
     for (const issue of issues) reject(issuePath([...at, ...issue.path]), issue.message);
   };
@@ -107,12 +117,15 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
 
   if (!isRecord(data)) {
     rejectAll([], z.object({}).safeParse(data).error?.issues);
-    return [];
+    return { theme: '', projectRules: [] };
   }
+  const root = rootSchema.safeParse(data);
+  rejectAll([], root.error?.issues);
+  const theme = root.data?.theme ?? '';
   const projectRules = data.projectRules;
   if (!Array.isArray(projectRules)) {
     rejectAll(['projectRules'], arrayDiagnosis.safeParse(projectRules).error?.issues);
-    return [];
+    return { theme, projectRules: [] };
   }
 
   const rules: RuleFile[] = [];
@@ -152,17 +165,18 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
       rules.push({ ...shell.data, settings: { ...otherSettings, palette: { ...shellPalette, entries } } });
     }
   }
-  return rules;
+  return { theme, projectRules: rules };
 }
 
 // Stage 2. Builds the domain objects, asking the domain to judge every value and collecting the
 // rejections instead of throwing at the first one, so a file reports everything wrong with it in
 // one pass. A rejected value is replaced by a placeholder here purely to keep building: the
 // returned rules are used only when no issue was collected. Values are judged in a fixed order
-// (per rule: matchType, each palette entry's duplicate id then color, topBar color and height,
-// platformBar color, platformBarText color); the judgment that yields the 101st issue stops
-// validation on the spot, and no partial rules are returned.
-function toRules(fileRules: readonly RuleFile[]): {
+// (the root theme first, then per rule: matchType, each palette entry's duplicate id then color,
+// topBar color and height, platformBar color, platformBarText color); the judgment that yields
+// the 101st issue stops validation on the spot, and no partial rules are returned.
+function toRules(file: SettingsFile): {
+  theme: Theme;
   rules: ProjectRule[];
   issues: SettingsImportIssue[];
   validationStopped: boolean;
@@ -175,6 +189,12 @@ function toRules(fileRules: readonly RuleFile[]): {
     if (parsed) return parsed;
     reject(path, 'expected a color like #rrggbb');
     return Color.BLACK;
+  };
+
+  const themeValue = (value: string, path: string): Theme => {
+    if (isTheme(value)) return value;
+    reject(path, `expected one of ${THEMES.join(', ')}`);
+    return TintSettings.DEFAULT_THEME;
   };
 
   const matchType = (value: string, path: string): MatchType => {
@@ -201,9 +221,11 @@ function toRules(fileRules: readonly RuleFile[]): {
       color(value.custom, `${path}.custom`),
     );
 
+  let theme: Theme;
   let rules: ProjectRule[];
   try {
-    rules = fileRules.map((rule, index) => {
+    theme = themeValue(file.theme, 'theme');
+    rules = file.projectRules.map((rule, index) => {
       const at = `projectRules[${index}]`;
       const settingsAt = `${at}.settings`;
       const { palette, topBar, platformBar, platformBarText } = rule.settings;
@@ -247,9 +269,9 @@ function toRules(fileRules: readonly RuleFile[]): {
     });
   } catch (error) {
     if (!(error instanceof ValidationStopped)) throw error;
-    return { rules: [], issues, validationStopped: true };
+    return { theme: TintSettings.DEFAULT_THEME, rules: [], issues, validationStopped: true };
   }
-  return { rules, issues, validationStopped: false };
+  return { theme, rules, issues, validationStopped: false };
 }
 
 function invalidFields(issues: readonly SettingsImportIssue[], validationStopped: boolean): SettingsImportError {
@@ -263,6 +285,9 @@ function invalidFields(issues: readonly SettingsImportIssue[], validationStopped
 // file, a version predating every readable shape or postdating this build, a file whose
 // migration to the current shape fails, fields that are missing/wrongly typed/unusable, or no
 // rules at all.
+//
+// The file's theme is validated like every other field and carried on the result, but the
+// Import modal only merges the rules: importing never changes the user's own theme.
 //
 // `currentVersion` is this build's effective schema version ceiling (the running extension
 // version floored at CURRENT_SCHEMA_VERSION). It bounds legacy release-stamped files; stamps
@@ -313,19 +338,19 @@ export function parseSettingsFile(
 
   // Only a structurally complete file reaches the value stage: it builds from Zod's parsed data.
   const structureIssues: SettingsImportIssue[] = [];
-  let fileRules: RuleFile[];
+  let file: SettingsFile;
   try {
-    fileRules = checkStructure(data, issueCollector(structureIssues));
+    file = checkStructure(data, issueCollector(structureIssues));
   } catch (error) {
     if (!(error instanceof ValidationStopped)) throw error;
     throw invalidFields(structureIssues, true);
   }
   if (structureIssues.length > 0) throw invalidFields(structureIssues, false);
 
-  const { rules, issues, validationStopped } = toRules(fileRules);
+  const { theme, rules, issues, validationStopped } = toRules(file);
   if (issues.length > 0) throw invalidFields(issues, validationStopped);
   if (rules.length === 0) {
     throw new SettingsImportError({ reason: 'no-rules' });
   }
-  return new TintSettings(rules);
+  return new TintSettings(rules, theme);
 }

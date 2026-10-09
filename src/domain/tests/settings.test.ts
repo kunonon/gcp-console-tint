@@ -10,7 +10,7 @@ import {
   ProjectSettings,
   type TopBarSettings,
 } from '../project-settings';
-import { TintSettings } from '../tint-settings';
+import { isTheme, THEMES, TintSettings } from '../tint-settings';
 import { TopBarHeight } from '../top-bar-height';
 
 const DEFAULTS = ProjectSettings.DEFAULT;
@@ -65,6 +65,52 @@ describe('isMatchType', () => {
 
   it.each(['glob', 'Prefix', '', 'toString'])('rejects %o', (value) => {
     expect(isMatchType(value)).toBe(false);
+  });
+});
+
+describe('isTheme', () => {
+  it.each(THEMES)('accepts %s', (value) => {
+    expect(isTheme(value)).toBe(true);
+  });
+
+  it.each(['', 'Dark', 'system', 'sepia'])('refuses %j', (value) => {
+    expect(isTheme(value)).toBe(false);
+  });
+});
+
+describe('TintSettings theme', () => {
+  const rule = (id: string, pattern: string): ProjectRule =>
+    ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', pattern, DEFAULTS);
+
+  it("defaults to 'auto'", () => {
+    expect(TintSettings.DEFAULT_THEME).toBe('auto');
+  });
+
+  it('changeTheme returns new settings with the theme and the same rules, leaving the receiver alone', () => {
+    const rules = [rule('1', 'my-app')];
+    const original = new TintSettings(rules, 'auto');
+
+    const changed = original.changeTheme('dark');
+
+    expect(changed.theme).toBe('dark');
+    expect(changed.projectRules).toBe(rules);
+    expect(original.theme).toBe('auto');
+  });
+
+  it.each<[string, (settings: TintSettings) => TintSettings]>([
+    ['addRule', (settings) => settings.addRule(rule('3', 'added'))],
+    ['removeRule', (settings) => settings.removeRule(ProjectRuleId.recreate('1'))],
+    ['duplicateRule', (settings) => settings.duplicateRule(ProjectRuleId.recreate('1'))],
+    ['moveRule', (settings) => settings.moveRule(0, 1)],
+    ['updateRule', (settings) => settings.updateRule(ProjectRuleId.recreate('1'), (r) => r.changePattern('x'))],
+    ['mergeRules', (settings) => settings.mergeRules([rule('3', 'merged')])],
+  ])('%s keeps the theme', (_label, change) => {
+    const original = new TintSettings([rule('1', 'one'), rule('2', 'two')], 'dark');
+
+    const changed = change(original);
+
+    expect(changed).not.toBe(original);
+    expect(changed.theme).toBe('dark');
   });
 });
 
@@ -123,7 +169,7 @@ describe('TintSettings.mergeRules', () => {
     DEFAULTS.changeTopBar(DEFAULTS.topBar.changeColor(new ColorSelection(undefined, color(hex))));
 
   it('returns an equal but distinct list when incoming is empty', () => {
-    const original = new TintSettings([rule('1', 'exact', 'my-app')]);
+    const original = new TintSettings([rule('1', 'exact', 'my-app')], 'auto');
 
     const merged = original.mergeRules([]);
 
@@ -132,7 +178,7 @@ describe('TintSettings.mergeRules', () => {
   });
 
   it('does not mutate the receiver', () => {
-    const original = new TintSettings([rule('1', 'exact', 'my-app')]);
+    const original = new TintSettings([rule('1', 'exact', 'my-app')], 'auto');
 
     original.mergeRules([rule('2', 'prefix', 'other-app')]);
 
@@ -142,7 +188,7 @@ describe('TintSettings.mergeRules', () => {
 
   it('appends a non-duplicate rule after existing rules, under a fresh id', () => {
     const existing = rule('1', 'exact', 'my-app');
-    const original = new TintSettings([existing]);
+    const original = new TintSettings([existing], 'auto');
     const incomingRule = rule('imported-id', 'prefix', 'other-app');
 
     const merged = original.mergeRules([incomingRule]);
@@ -160,7 +206,7 @@ describe('TintSettings.mergeRules', () => {
   it('replaces a duplicate rule in place, keeping its id and position but taking the incoming settings', () => {
     const other = rule('other', 'prefix', 'other-app');
     const existing = rule('1', 'exact', 'my-app', DEFAULTS);
-    const original = new TintSettings([other, existing]);
+    const original = new TintSettings([other, existing], 'auto');
     const newSettings = DEFAULTS.changeTopBar(DEFAULTS.topBar.disable());
     const incomingRule = rule('imported-id', 'exact', 'my-app', newSettings);
 
@@ -176,10 +222,10 @@ describe('TintSettings.mergeRules', () => {
   it('preserves duplicate existing rules in order when a full backup contains both settings', () => {
     const red = withColor('#ff0000');
     const blue = withColor('#0000ff');
-    const original = new TintSettings([
-      rule('red', 'exact', 'same-state', red),
-      rule('blue', 'exact', 'same-state', blue),
-    ]);
+    const original = new TintSettings(
+      [rule('red', 'exact', 'same-state', red), rule('blue', 'exact', 'same-state', blue)],
+      'auto',
+    );
     const incoming = [rule('import-red', 'exact', 'same-state', red), rule('import-blue', 'exact', 'same-state', blue)];
 
     expect(original.replacementTargets(incoming)).toEqual([0, 1]);
@@ -192,7 +238,7 @@ describe('TintSettings.mergeRules', () => {
   });
 
   it('appends both duplicate incoming rules when no original rule matches', () => {
-    const original = new TintSettings([]);
+    const original = new TintSettings([], 'auto');
     const incoming = [
       rule('import-red', 'exact', 'same-state', withColor('#ff0000')),
       rule('import-blue', 'exact', 'same-state', withColor('#0000ff')),
@@ -209,7 +255,7 @@ describe('TintSettings.mergeRules', () => {
 
   it('replaces one of two matching incoming rules and appends the other', () => {
     const originalRule = rule('existing', 'exact', 'same-state');
-    const original = new TintSettings([originalRule]);
+    const original = new TintSettings([originalRule], 'auto');
     const incoming = [
       rule('import-red', 'exact', 'same-state', withColor('#ff0000')),
       rule('import-blue', 'exact', 'same-state', withColor('#0000ff')),
@@ -227,7 +273,7 @@ describe('TintSettings.mergeRules', () => {
 
   it('replaces two original matching rules and appends the third incoming rule', () => {
     const originals = [rule('one', 'exact', 'same-state'), rule('two', 'exact', 'same-state')];
-    const original = new TintSettings(originals);
+    const original = new TintSettings(originals, 'auto');
     const incoming = [
       rule('import-red', 'exact', 'same-state', withColor('#ff0000')),
       rule('import-blue', 'exact', 'same-state', withColor('#0000ff')),
@@ -250,7 +296,7 @@ describe('TintSettings.mergeRules', () => {
       rule('prefix', 'prefix', 'same-state'),
       rule('exact-second', 'exact', 'same-state'),
     ];
-    const original = new TintSettings(originals);
+    const original = new TintSettings(originals, 'auto');
     const incoming = [
       rule('import-prefix', 'prefix', 'same-state', withColor('#ff0000')),
       rule('import-exact-one', 'exact', 'same-state', withColor('#0000ff')),
@@ -261,7 +307,7 @@ describe('TintSettings.mergeRules', () => {
 
     expect(original.replacementTargets(incoming)).toEqual([1, 0, 2, undefined, undefined]);
 
-    const selectedSecondOnly = new TintSettings(originals).replacementTargets([incoming[1]!]);
+    const selectedSecondOnly = new TintSettings(originals, 'auto').replacementTargets([incoming[1]!]);
     expect(selectedSecondOnly).toEqual([0]);
     const selectedMerge = original.mergeRules([incoming[1]!]);
     expect(selectedMerge.projectRules[0]!.settings.topBar.color.custom.toHex()).toBe('#0000ff');
@@ -270,7 +316,7 @@ describe('TintSettings.mergeRules', () => {
   });
 
   it('does not grow when the same selected subset or an empty selection is imported again', () => {
-    const original = new TintSettings([rule('existing', 'exact', 'existing')]);
+    const original = new TintSettings([rule('existing', 'exact', 'existing')], 'auto');
     const selected = [rule('imported', 'exact', 'new-rule')];
 
     const once = original.mergeRules(selected);
@@ -295,7 +341,7 @@ describe('TintSettings.resolveProjectSettings', () => {
       projectSettings({ topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, color(custom))) }),
     );
 
-  const noRules = (): TintSettings => new TintSettings([]);
+  const noRules = (): TintSettings => new TintSettings([], 'auto');
 
   const withRules = (...rules: ProjectRule[]): TintSettings =>
     rules.reduce((settings, r) => settings.addRule(r), noRules());

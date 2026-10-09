@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Key } from 'webdriverio';
-import { projectSettings, rule, SCHEMA_VERSION, settings, VERSION } from './fixtures.mjs';
+import { projectSettings, rule, SCHEMA_VERSION, settings } from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
 
 const MATCH_LABELS = { prefix: 'Starts with', suffix: 'Ends with', exact: 'Exact', regex: 'Regex' };
@@ -794,6 +794,96 @@ for (const browserName of browserTargets()) {
       }
     });
 
+    test('switches the side panel theme from the Settings tab and saves the choice', async () => {
+      const browser = await panel(h);
+      await selectTab(browser, 'Settings');
+      const radio = (label) => `[role="radio"][aria-label="${label}"]`;
+      const checked = async (label) => (await browser.$(radio(label))).getAttribute('aria-checked');
+      await (await browser.$(radio('Auto'))).waitForDisplayed();
+      assert.equal(await checked('Auto'), 'true', 'Auto should be the checked theme by default');
+      const darkClass = () => browser.execute(() => document.documentElement.classList.contains('dark'));
+      // Auto follows the browser's own color scheme, whichever the runner reports.
+      assert.equal(
+        await darkClass(),
+        await browser.execute(() => matchMedia('(prefers-color-scheme: dark)').matches),
+        'Auto should mirror prefers-color-scheme',
+      );
+      // The thumb is the group's ::before, moved by :has() rules in style.css that jsdom cannot
+      // evaluate. Its translate is a percentage of its own width: 0, 100 or 200.
+      const thumbOffset = async () => {
+        const translate = await browser.execute(
+          () => getComputedStyle(document.querySelector('.theme-switch'), '::before').translate,
+        );
+        return Number.parseFloat(translate) || 0;
+      };
+      // The thumb slides for 250ms, so a moved thumb is waited for rather than read once.
+      const waitThumbOffset = (expected, label) =>
+        browser.waitUntil(async () => (await thumbOffset()) === expected, {
+          timeout: 5000,
+          interval: 100,
+          timeoutMsg: `the thumb did not settle under ${label} (translate ${expected}%)`,
+        });
+      assert.equal(await thumbOffset(), 100, 'the thumb should sit under Auto by default');
+
+      // The colours fade through the registered theme tokens (style.css, html.theme-transitions),
+      // which jsdom cannot evaluate. The fade lasts 300ms, shorter than a WebDriver round trip, so
+      // it is not sampled in time: it is stretched to 20s, then its transitions are paused at their
+      // midpoint and finished by hand.
+      const bodyBackground = () => browser.execute(() => getComputedStyle(document.body).backgroundColor);
+      const slowFade = () =>
+        browser.execute(() => {
+          const style = document.createElement('style');
+          style.id = 'e2e-slow-theme-fade';
+          style.textContent = 'html.theme-transitions { transition-duration: 20s !important; }';
+          document.head.append(style);
+        });
+      const probeFade = () =>
+        browser.execute(() => {
+          const background = () => getComputedStyle(document.body).backgroundColor;
+          const fades = document.documentElement
+            .getAnimations()
+            .filter((animation) => animation.transitionProperty?.startsWith('--'));
+          for (const fade of fades) {
+            fade.pause();
+            fade.currentTime = fade.effect.getComputedTiming().duration / 2;
+          }
+          const midpoint = background();
+          for (const fade of fades) fade.finish();
+          document.getElementById('e2e-slow-theme-fade')?.remove();
+          return { tokens: fades.map((fade) => fade.transitionProperty), midpoint, end: background() };
+        });
+      const assertFaded = (start, fade, label) => {
+        for (const token of ['--background', '--foreground']) {
+          assert.ok(fade.tokens.includes(token), `${label}: ${token} should be transitioning on <html>`);
+        }
+        assert.notEqual(fade.midpoint, start, `${label}: the page background should have left its old colour`);
+        assert.notEqual(fade.midpoint, fade.end, `${label}: the page background should be between the two themes`);
+        assert.notEqual(fade.end, start, `${label}: the page background should end on the new theme's colour`);
+      };
+
+      // Under a dark system scheme Auto already shows the dark theme, so picking Dark changes no
+      // colour; the fade is then only checked on the way to Light below.
+      const autoIsDark = await darkClass();
+      const beforeDark = await bodyBackground();
+      await slowFade();
+      await click(browser, radio('Dark'));
+      await waitThumbOffset(200, 'Dark');
+      await waitStored(h, (value) => value.theme === 'dark');
+      const toDark = await probeFade();
+      if (!autoIsDark) assertFaded(beforeDark, toDark, 'Auto to Dark');
+      assert.equal(await darkClass(), true, 'Dark should add the dark class to <html>');
+      assert.equal(await checked('Dark'), 'true', 'Dark should be the checked theme after picking it');
+
+      const beforeLight = await bodyBackground();
+      await slowFade();
+      await click(browser, radio('Light'));
+      await waitThumbOffset(0, 'Light');
+      await waitStored(h, (value) => value.theme === 'light');
+      assertFaded(beforeLight, await probeFade(), 'Dark to Light');
+      assert.equal(await darkClass(), false, 'Light should remove the dark class from <html>');
+      assert.equal(await checked('Light'), 'true', 'Light should be the checked theme after picking it');
+    });
+
     test('downloads a real JSON backup and imports selected rules while replacing duplicates in place', async () => {
       const initial = settings(
         rule(
@@ -1139,7 +1229,7 @@ for (const browserName of browserTargets()) {
         },
         {
           name: 'no-rules.json',
-          content: JSON.stringify({ schemaVersion: VERSION, projectRules: [] }),
+          content: JSON.stringify(settings()),
           message: /no-rules\.json contains no rules\./,
         },
       ];

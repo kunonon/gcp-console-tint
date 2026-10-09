@@ -64,10 +64,13 @@ interface ProjectRule {
 
 interface StoredTintSettings {
   schemaVersion: string;
+  theme: string;
   projectRules: ProjectRule[];
 }
 
-const CURRENT_VERSION = '0.1.0';
+// The manifest version these tests run under: equal to CURRENT_SCHEMA_VERSION, so the storage
+// stamp is this version itself.
+const CURRENT_VERSION = '0.3.0';
 
 async function getStoredSettings(): Promise<StoredTintSettings> {
   const result = await fakeBrowser.storage.local.get('tintSettings');
@@ -308,7 +311,7 @@ async function uploadSettingsFile(user: ReturnType<typeof userEvent.setup>, file
 
 // An export file in the stored shape, built from real stored rules so it stays schema-valid.
 function settingsFile(...projectRules: ProjectRule[]): string {
-  return JSON.stringify({ schemaVersion: CURRENT_VERSION, projectRules } satisfies StoredTintSettings);
+  return JSON.stringify({ schemaVersion: CURRENT_VERSION, theme: 'auto', projectRules } satisfies StoredTintSettings);
 }
 
 // Same match type and pattern as `rule` — so importing it replaces that rule rather than adding
@@ -356,6 +359,8 @@ afterEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  // useTheme writes to <html>, which outlives each render.
+  document.documentElement.classList.remove('dark', 'theme-transitions');
 });
 
 describe('App', () => {
@@ -1177,8 +1182,8 @@ describe('App', () => {
   });
 
   it('reflects a partial stored settings object merged with defaults', async () => {
-    // Nested (current-shape) on purpose: with an empty migration registry, 0.1.0 data is read
-    // as-is (no reshaping), so a "partial merge" fixture must already be in the current shape
+    // Nested (current-shape) on purpose: no migration step reshapes rules (the 0.3.0 step only
+    // adds the theme), so a "partial merge" fixture must already be in the current rule shape
     // to actually exercise per-field merging rather than the destructive old-shape path
     // (covered separately below, "... but destructively").
     await fakeBrowser.storage.local.set({
@@ -1220,7 +1225,7 @@ describe('App', () => {
     expect(getAllRuleRows()).toHaveLength(0);
   });
 
-  it('reads stored data whose schemaVersion equals SCHEMA_MIN_VERSION on mount, but destructively: with no migration steps pre-release, old flat-shape settings are ignored and every section defaults, while the rule itself survives', async () => {
+  it('reads stored data whose schemaVersion equals SCHEMA_MIN_VERSION on mount, but destructively: no migration step reshapes pre-release rules, so old flat-shape settings are ignored and every section defaults, while the rule itself survives', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '0.1.0',
@@ -1288,9 +1293,9 @@ describe('App', () => {
 
     await addRule(user, 'my-project');
 
-    // CURRENT_VERSION ('0.1.0') currently equals CURRENT_SCHEMA_VERSION, so
+    // CURRENT_VERSION ('0.3.0') currently equals CURRENT_SCHEMA_VERSION, so
     // effectiveSchemaVersion is a no-op here; asserting through the real function (rather
-    // than the literal '0.1.0') keeps this test meaningful if that ever changes. The
+    // than the literal '0.3.0') keeps this test meaningful if that ever changes. The
     // dedicated regression test below exercises a manifest version that actually differs
     // from CURRENT_SCHEMA_VERSION.
     await waitFor(async () => {
@@ -1299,14 +1304,12 @@ describe('App', () => {
   });
 
   it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a toDomain round-trip unchanged', async () => {
-    // '0.1.5' is newer than CURRENT_SCHEMA_VERSION ('0.1.0'), so effectiveSchemaVersion
-    // passes it through unfloored — this no longer exercises the floor itself (that only
-    // triggers below '0.1.0', which is the floor value itself, so no realistic manifest
-    // version reaches it pre-release). What it still guards: with an empty migration
-    // registry, a save-then-reload round-trip on already-nested data must not lose or reset
-    // the user's values, regardless of which valid schemaVersion label it carries.
+    // '0.3.5' is newer than CURRENT_SCHEMA_VERSION ('0.3.0'), so effectiveSchemaVersion
+    // passes it through unfloored (effectiveSchemaVersion's floor is unit-tested in
+    // settings-repository.test.ts). What this guards: a save-then-reload round-trip on
+    // current-shape data keeps the user's values, whichever valid schemaVersion label it carries.
     (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({
-      version: '0.1.5',
+      version: '0.3.5',
     });
 
     const user = userEvent.setup();
@@ -1321,7 +1324,7 @@ describe('App', () => {
     });
 
     const stored = await getStoredSettings();
-    expect(stored.schemaVersion).toBe('0.1.5');
+    expect(stored.schemaVersion).toBe('0.3.5');
 
     const reloaded = toDomain(stored);
     expect(reloaded.projectRules[0]!.settings.topBar.height.toPixels()).toBe(19);
@@ -1874,10 +1877,33 @@ describe('App', () => {
       expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
 
       await act(async () => {
-        resolveLoad(new TintSettings([]));
+        resolveLoad(new TintSettings([], 'auto'));
         await load;
       });
       expect(await screen.findByRole('button', { name: 'Add rule' })).toBeTruthy();
+    });
+
+    it('turns theme colour transitions on only once the stored settings are in place', async () => {
+      const store = new SettingsStoreImpl();
+      let resolveLoad!: (settings: TintSettings) => void;
+      const load = new Promise<TintSettings>((resolve) => {
+        resolveLoad = resolve;
+      });
+      vi.spyOn(store, 'load').mockReturnValue(load);
+      const root = document.documentElement;
+
+      render(<App settingsStore={store} />);
+
+      expect(screen.getByRole('status').textContent).toContain('Loading settings');
+      expect(root.classList.contains('theme-transitions')).toBe(false);
+
+      await act(async () => {
+        resolveLoad(new TintSettings([], 'dark'));
+        await load;
+      });
+      expect(await screen.findByRole('button', { name: 'Add rule' })).toBeTruthy();
+      expect(root.classList.contains('dark')).toBe(true);
+      expect(root.classList.contains('theme-transitions')).toBe(true);
     });
 
     it('shows a failure alert and keeps settings actions gated when the initial read rejects', async () => {
@@ -1909,6 +1935,51 @@ describe('App', () => {
 
       expect(screen.getByRole('button', { name: 'Import…' })).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+    });
+
+    it('shows the Appearance card with the Auto theme checked by default', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await openSettingsTab(user);
+
+      expect(screen.getByText('Appearance')).toBeTruthy();
+      expect(screen.getByRole('radio', { name: 'Auto' }).getAttribute('aria-checked')).toBe('true');
+      expect(document.documentElement.classList.contains('dark')).toBe(false);
+    });
+
+    it('saves the picked theme and applies it to the panel: Dark adds the dark class, Light removes it', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await openSettingsTab(user);
+
+      await user.click(screen.getByRole('radio', { name: 'Dark' }));
+      await waitFor(async () => {
+        expect((await getStoredSettings()).theme).toBe('dark');
+      });
+      expect(document.documentElement.classList.contains('dark')).toBe(true);
+
+      await user.click(screen.getByRole('radio', { name: 'Light' }));
+      await waitFor(async () => {
+        expect((await getStoredSettings()).theme).toBe('light');
+      });
+      expect(document.documentElement.classList.contains('dark')).toBe(false);
+    });
+
+    it('applies a stored dark theme on mount', async () => {
+      await fakeBrowser.storage.local.set({
+        tintSettings: { schemaVersion: CURRENT_VERSION, theme: 'dark', projectRules: [] } satisfies StoredTintSettings,
+      });
+
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      expect(document.documentElement.classList.contains('dark')).toBe(true);
+      await openSettingsTab(user);
+      expect(screen.getByRole('radio', { name: 'Dark' }).getAttribute('aria-checked')).toBe('true');
     });
 
     it('Export downloads the saved settings as pretty-printed JSON under a dated file name, and releases the blob URL', async () => {
@@ -2147,7 +2218,7 @@ describe('App', () => {
       await addRule(user, 'alpha');
       const existing = (await getStoredSettings()).projectRules[0]!;
       const before = await getStoredSettings();
-      // The manifest here is CURRENT_VERSION ('0.1.0'); a file this build could not have written.
+      // The manifest here is CURRENT_VERSION ('0.3.0'); a file this build could not have written.
       const fromTheFuture = JSON.parse(settingsFile(existing));
       fromTheFuture.schemaVersion = '9.9.9';
 
@@ -2365,7 +2436,7 @@ describe('App', () => {
       expect(screen.queryByText('Couldn’t import this file')).toBeNull();
       expect(screen.queryByRole('alert')).toBeNull();
       await act(async () => {
-        read.resolve(new TintSettings([]));
+        read.resolve(new TintSettings([], 'auto'));
         await read.promise;
       });
       expect(await screen.findByText('No saved rules to export')).toBeTruthy();
@@ -2456,7 +2527,7 @@ describe('App', () => {
       expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(true);
 
       await act(async () => {
-        read.resolve(new TintSettings([]));
+        read.resolve(new TintSettings([], 'auto'));
         await read.promise;
       });
       await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
@@ -2682,7 +2753,10 @@ describe('App', () => {
           // A different value than the newer export wrote, so a leak would show in the Blob.
           if (outcome === 'resolves')
             staleRead.resolve(
-              new TintSettings([DomainProjectRule.create('exact', 'stale'), DomainProjectRule.create('exact', 'old')]),
+              new TintSettings(
+                [DomainProjectRule.create('exact', 'stale'), DomainProjectRule.create('exact', 'old')],
+                'auto',
+              ),
             );
           else staleRead.reject(new Error('stale read failed'));
           await staleRead.promise.catch(() => {});
@@ -2826,7 +2900,7 @@ describe('App', () => {
 
       unmount();
       await act(async () => {
-        read.resolve(new TintSettings([DomainProjectRule.create('exact', 'late')]));
+        read.resolve(new TintSettings([DomainProjectRule.create('exact', 'late')], 'auto'));
         await read.promise;
       });
       await flush();

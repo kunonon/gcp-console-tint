@@ -71,7 +71,7 @@ export default defineContentScript({
     };
 
     // Empty settings until the store's load() resolves: no rules, so nothing is tinted.
-    const emptySettings = new TintSettings([]);
+    const emptySettings = new TintSettings([], TintSettings.DEFAULT_THEME);
     let lastSettings: TintSettings = emptySettings;
 
     const applySettings = (settings: TintSettings, url: URL = new URL(location.href)) => {

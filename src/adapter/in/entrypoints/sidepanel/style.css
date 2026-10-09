@@ -8,6 +8,10 @@ body {
   /* HeroUI's page-level background token, distinct from Card's --surface background so
      cards read as elevated against the page in both light and dark themes. */
   background-color: var(--background);
+  /* HeroUI sets no text color on body (its base layer leaves it to the browser), so page text
+     would otherwise be the browser's CanvasText rather than the theme's token; this keeps text
+     on the same palette as the components in both themes. */
+  color: var(--foreground);
 }
 
 /* HeroUI's Card component has no separate border; the "border" is actually the tightest
@@ -45,4 +49,308 @@ body {
    reason. */
 .alert {
   box-shadow: none;
+}
+
+/* The Settings tab's theme switch: a HeroUI ToggleButtonGroup (`.theme-switch` is the className
+   AppearanceCard puts on it) restyled as a miniature of the Rules | Settings tabs — a
+   `var(--default)` pill track, one `var(--segment)` thumb carrying the surface shadow, and muted
+   glyphs that turn `var(--segment-foreground)` when selected, hovered or pressed.
+   HeroUI's `.toggle-button` / `.toggle-button-group` rules live in @layer components, so these
+   rules are unlayered for the same cascade reason as the rules above: they win wholesale, whatever
+   the source order. The per-state colours are not overridden state by state; they are fed through
+   HeroUI's own `--toggle-button-*` custom properties, which its rules already read.
+   The thumb is the group's `::before`, moved by `:has()` + `:nth-child` over the group's direct
+   `.toggle-button` children, so it depends on DOM order: exactly three buttons, Light, Auto, Dark,
+   with nothing else and no wrapper between them (see AppearanceCard). */
+.theme-switch {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 3px;
+  border-radius: 9999px;
+  background-color: var(--default);
+}
+
+/* The thumb: one pill that slides under the selected glyph. */
+.theme-switch::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 0;
+  width: 30px;
+  height: 26px;
+  border-radius: 9999px;
+  background-color: var(--segment);
+  box-shadow: var(--surface-shadow);
+  translate: 0 0;
+  transition:
+    translate 250ms var(--ease-out-fluid),
+    scale 150ms var(--ease-out-fluid);
+  pointer-events: none;
+}
+.theme-switch:has(> .toggle-button:nth-child(2)[data-selected="true"])::before {
+  translate: 100% 0;
+}
+.theme-switch:has(> .toggle-button:nth-child(3)[data-selected="true"])::before {
+  translate: 200% 0;
+}
+.theme-switch:not(:has(> .toggle-button[data-selected="true"]))::before {
+  opacity: 0;
+}
+/* Pressing the already-selected option pushes the thumb down a little. */
+.theme-switch:has(> .toggle-button[data-selected="true"][data-pressed="true"])::before {
+  scale: 0.94;
+}
+
+.theme-switch > .toggle-button {
+  --toggle-button-bg: transparent;
+  --toggle-button-bg-hover: transparent;
+  --toggle-button-bg-pressed: transparent;
+  --toggle-button-bg-selected: transparent;
+  --toggle-button-bg-selected-hover: transparent;
+  --toggle-button-bg-selected-pressed: transparent;
+  --toggle-button-fg: var(--muted);
+  --toggle-button-fg-selected: var(--segment-foreground);
+  z-index: 1;
+  flex: none;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border-radius: 9999px;
+  transform: none;
+  transition:
+    color 150ms var(--ease-smooth),
+    box-shadow 100ms var(--ease-smooth);
+}
+.theme-switch > .toggle-button > svg {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  transition: scale 150ms var(--ease-smooth);
+}
+
+.theme-switch > .toggle-button[data-hovered="true"],
+.theme-switch > .toggle-button[data-pressed="true"] {
+  color: var(--segment-foreground);
+}
+.theme-switch > .toggle-button[data-pressed="true"] > svg {
+  scale: 0.88;
+}
+
+/* Keyboard focus: a ring with the thumb's shape, inside the track's padding. */
+.theme-switch > .toggle-button[data-focus-visible="true"] {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch::before,
+  .theme-switch > .toggle-button,
+  .theme-switch > .toggle-button > svg {
+    transition: none;
+  }
+}
+
+/* Switching the theme fades the colours instead of flipping them. HeroUI's theme tokens are plain
+   custom properties, and an untyped custom property cannot interpolate: it snaps to the new value.
+   Registering a token with @property as a <color> makes the token itself animatable, so the one
+   transition below fades every consumer — backgrounds, text, borders, and the color-mix() tokens
+   derived from them — without touching any component's own transition list (the theme switch's
+   thumb keeps sliding while its colour changes). The page itself fades in step; a control that
+   also transitions its own colour (a tab label, the switch's glyphs, an input) chases the moving
+   token and settles about 150ms after the page. The transition sits on <html> because that is
+   where useTheme puts `.dark` and where HeroUI declares the tokens.
+   Only the colour tokens whose value differs between HeroUI's light and dark blocks are
+   registered; tests/theme-tokens.test.ts checks this list against HeroUI's variables.css, so a
+   HeroUI upgrade that adds or drops one fails there. `initial-value` is required by the syntax and
+   never used: HeroUI sets every one of these on :root. The three shadow tokens (--surface-shadow,
+   --overlay-shadow, --field-shadow) are not colours and cannot be typed, so they, like the
+   `color-scheme` property, still switch at once.
+   The transition is scoped to `.theme-transitions`, which useTheme adds only once the stored theme
+   has been applied, so opening the panel never fades from the default theme. 300ms ease: it ends
+   just after the theme switch's 250ms thumb. Unlayered like the rules above. */
+@property --background {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --surface {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --surface-secondary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --surface-tertiary {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --overlay {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --muted {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --default {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --default-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --field-background {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --field-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --warning {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --danger {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --segment {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --segment-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --border {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --separator {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --backdrop {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --accent-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --accent-soft-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --accent-soft-hover {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --danger-soft-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --warning-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --warning-soft-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --warning-soft-hover {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --success-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --success-soft-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --success-soft-hover {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
+html.theme-transitions {
+  transition-property:
+    --background,
+    --foreground,
+    --surface,
+    --surface-secondary,
+    --surface-tertiary,
+    --overlay,
+    --muted,
+    --default,
+    --default-foreground,
+    --field-background,
+    --field-foreground,
+    --warning,
+    --danger,
+    --segment,
+    --segment-foreground,
+    --border,
+    --separator,
+    --backdrop,
+    --accent-soft,
+    --accent-soft-foreground,
+    --accent-soft-hover,
+    --danger-soft-foreground,
+    --warning-soft,
+    --warning-soft-foreground,
+    --warning-soft-hover,
+    --success-soft,
+    --success-soft-foreground,
+    --success-soft-hover;
+  transition-duration: 300ms;
+  transition-timing-function: ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transitions {
+    transition: none;
+  }
 }

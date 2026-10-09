@@ -9,10 +9,10 @@ import {
   ProjectSettings,
   type TopBarSettings,
 } from '../../../domain/project-settings';
-import type { TintSettings } from '../../../domain/tint-settings';
+import { THEMES, TintSettings } from '../../../domain/tint-settings';
 import { TopBarHeight } from '../../../domain/top-bar-height';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
-import { effectiveSchemaVersion, toDomain } from '../settings-repository';
+import { effectiveSchemaVersion, toDomain, toStored } from '../settings-repository';
 
 // The product defaults live private to the domain's project-settings.ts; asserting the literals
 // here is deliberate — these tests are what pins them down.
@@ -47,10 +47,12 @@ function projectSettings(
   );
 }
 
-// Fresh defaults are exactly "no rules": the schema version is persistence metadata and never
-// reaches the domain object, so the read side has nothing else to assert.
+// Fresh defaults are exactly "no rules" under the default theme: the schema version is
+// persistence metadata and never reaches the domain object, so the read side has nothing else to
+// assert.
 function expectFreshDefaults(loaded: TintSettings) {
   expect(loaded.projectRules).toEqual([]);
+  expect(loaded.theme).toBe('auto');
 }
 
 describe('toDomain', () => {
@@ -88,13 +90,11 @@ describe('toDomain', () => {
     expectFreshDefaults(toDomain({ projectRules: [] }));
   });
 
-  // Pre-release policy: SCHEMA_MIGRATIONS (migrations.ts) is currently EMPTY. Schema changes
-  // before the first release are destructive by design instead of being migrated -- old-shaped
-  // fields are simply not recognized by this module's Zod schemas and every section falls back
-  // to its default. The migration service itself (runMigrations, the injectable `steps` param) is
-  // still exercised directly in migrations.test.ts against a synthetic chain, proving it's ready
-  // for the first real post-release step.
-  describe('destructive pre-release read (SCHEMA_MIGRATIONS is currently empty)', () => {
+  // Pre-release policy: rule-shape changes before the first release were destructive by design
+  // instead of being migrated, and no SCHEMA_MIGRATIONS step reshapes rules (the 0.3.0 step only
+  // adds the theme). Old-shaped rule fields are simply not recognized by this module's Zod
+  // schemas and every section falls back to its default.
+  describe('destructive pre-release read (no migration step reshapes rules)', () => {
     it('reads a legacy flat 0.1.0 fixture destructively: rule id/matchType/pattern survive, but every ProjectSettings section falls back to defaults', () => {
       const flatSettings = {
         paletteEnabled: false,
@@ -129,7 +129,7 @@ describe('toDomain', () => {
       ]);
     });
 
-    it('merges nested-shaped settings directly (no migration step runs) at any valid schemaVersion, from the floor up through arbitrarily newer versions', () => {
+    it('merges nested-shaped settings directly (no step reshapes rules) at any valid schemaVersion, from the floor up through arbitrarily newer versions', () => {
       const atFloor = toDomain({
         schemaVersion: '0.1.0',
         projectRules: [{ id: '1', matchType: 'exact', pattern: 'x', settings: { platformBarText: { auto: true } } }],
@@ -721,6 +721,39 @@ describe('ProjectSettings.DEFAULT (the values this repository recovers to)', () 
     expect(recolored.palette.entries[0]!.color.toHex()).toBe('#000000');
     expect(first.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
     expect(second.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
+  });
+});
+
+describe('toDomain: theme', () => {
+  it.each(THEMES)('keeps a stored theme of %s', (theme) => {
+    expect(toDomain({ schemaVersion: CURRENT_SCHEMA_VERSION, theme, projectRules: [] }).theme).toBe(theme);
+  });
+
+  it.each([
+    ['missing', {}],
+    ['an unknown string', { theme: 'sepia' }],
+    ['a differently cased string', { theme: 'Dark' }],
+    ['a number', { theme: 1 }],
+    ['null', { theme: null }],
+    ['an object', { theme: { value: 'dark' } }],
+  ])('recovers to auto when the stored theme is %s', (_label, theme) => {
+    expect(toDomain({ schemaVersion: CURRENT_SCHEMA_VERSION, ...theme, projectRules: [] }).theme).toBe('auto');
+  });
+
+  // Data written before 0.3.0 has no theme; the 0.3.0 step adds 'auto' (a stray pre-0.3.0 theme
+  // key is overwritten by the step, as the shape never had one).
+  it.each(['0.1.0', '0.2.1'])('reads %s data through the 0.3.0 step as theme auto', (schemaVersion) => {
+    expect(toDomain({ schemaVersion, theme: 'dark', projectRules: [] }).theme).toBe('auto');
+  });
+});
+
+describe('toStored', () => {
+  it('writes the theme right after schemaVersion, and toDomain reads it back', () => {
+    const stored = toStored(new TintSettings([], 'dark'), CURRENT_SCHEMA_VERSION);
+
+    expect(Object.keys(stored)).toEqual(['schemaVersion', 'theme', 'projectRules']);
+    expect(stored.theme).toBe('dark');
+    expect(toDomain(stored).theme).toBe('dark');
   });
 });
 
