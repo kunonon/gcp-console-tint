@@ -8,6 +8,7 @@ import { TintSettings } from '../../../../../domain/tint-settings';
 import { SettingsImportError } from '../../../../../port/settings-store';
 import { SettingsStoreImpl } from '../../../../out/browser-settings-store';
 import { effectiveSchemaVersion, toDomain } from '../../../../out/settings-repository';
+import { THEME_HINT_KEY } from '../../../theme';
 import App from '../App';
 import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 
@@ -359,8 +360,9 @@ afterEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  // useTheme writes to <html>, which outlives each render.
+  // useTheme writes to <html> and to the theme hint in localStorage, which outlive each render.
   document.documentElement.classList.remove('dark', 'theme-transitions');
+  localStorage.clear();
 });
 
 describe('App', () => {
@@ -1915,6 +1917,35 @@ describe('App', () => {
       expect(await screen.findByRole('button', { name: 'Add rule' })).toBeTruthy();
       expect(root.classList.contains('dark')).toBe(true);
       expect(root.classList.contains('theme-transitions')).toBe(true);
+    });
+
+    it('keeps the hinted theme while settings load, then applies the stored one and updates the hint', async () => {
+      // As left by the previous open and already applied by the pre-paint script (theme-init.ts).
+      localStorage.setItem(THEME_HINT_KEY, 'dark');
+      const root = document.documentElement;
+      root.classList.add('dark');
+      const store = new SettingsStoreImpl();
+      let resolveLoad!: (settings: TintSettings) => void;
+      const load = new Promise<TintSettings>((resolve) => {
+        resolveLoad = resolve;
+      });
+      vi.spyOn(store, 'load').mockReturnValue(load);
+
+      render(<App settingsStore={store} />);
+
+      // jsdom has no matchMedia, so the default 'auto' would show light here: mounting must not
+      // replace what was painted with the default theme.
+      expect(screen.getByRole('status').textContent).toContain('Loading settings');
+      expect(root.classList.contains('dark')).toBe(true);
+      expect(localStorage.getItem(THEME_HINT_KEY)).toBe('dark');
+
+      await act(async () => {
+        resolveLoad(new TintSettings([], 'light'));
+        await load;
+      });
+      expect(await screen.findByRole('button', { name: 'Add rule' })).toBeTruthy();
+      expect(root.classList.contains('dark')).toBe(false);
+      expect(localStorage.getItem(THEME_HINT_KEY)).toBe('light');
     });
 
     it('shows a failure alert and keeps settings actions gated when the initial read rejects', async () => {

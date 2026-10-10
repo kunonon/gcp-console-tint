@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 
 export const { version: VERSION } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 export const SCHEMA_VERSION = '0.3.0';
+// The localStorage key of the side panel's first-paint theme hint (src/adapter/in/theme.ts).
+export const THEME_HINT_KEY = 'theme';
 
 function compareVersions(a, b) {
   const left = a.split('.').map(Number);

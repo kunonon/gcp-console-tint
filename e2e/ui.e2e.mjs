@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Key } from 'webdriverio';
-import { projectSettings, rule, SCHEMA_VERSION, settings } from './fixtures.mjs';
+import { projectSettings, rule, SCHEMA_VERSION, settings, THEME_HINT_KEY } from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
 
 const MATCH_LABELS = { prefix: 'Starts with', suffix: 'Ends with', exact: 'Exact', regex: 'Regex' };
@@ -792,6 +792,84 @@ for (const browserName of browserTargets()) {
           `${label} swatch should use its custom fallback after removing Brand`,
         );
       }
+    });
+
+    test('applies the theme from a blocking head script and keeps its first-paint hint in step', async () => {
+      const browser = await panel(h);
+      const radio = (label) => `[role="radio"][aria-label="${label}"]`;
+      const checked = async (label) => (await browser.$(radio(label))).getAttribute('aria-checked');
+      const darkClass = () => browser.execute(() => document.documentElement.classList.contains('dark'));
+      const systemDark = await browser.execute(() => matchMedia('(prefers-color-scheme: dark)').matches);
+      const hint = () => browser.execute((key) => localStorage.getItem(key), THEME_HINT_KEY);
+      const setHint = (value) => browser.execute((key, next) => localStorage.setItem(key, next), THEME_HINT_KEY, value);
+      // The Settings tab only exists once the stored settings are in place, so a theme read after
+      // this is the stored one, not the hinted one the panel shows while it loads.
+      const openSettings = async () => {
+        await selectTab(browser, 'Settings');
+        await (await browser.$(radio('Auto'))).waitForDisplayed();
+      };
+
+      // The built page loads the script as a classic one ahead of the React bundle. A classic
+      // script in <head> blocks parsing, so it has run before <body> exists and anything is painted.
+      const headScripts = await browser.execute(() =>
+        [...document.head.querySelectorAll('script[src]')].map((script) => ({
+          path: new URL(script.src).pathname,
+          type: script.type,
+          async: script.async,
+          defer: script.defer,
+        })),
+      );
+      assert.deepEqual(
+        headScripts[0],
+        { path: '/theme-init.js', type: '', async: false, defer: false },
+        'the first script in <head> should be the classic, blocking theme-init.js',
+      );
+      assert.equal(headScripts[1]?.type, 'module', 'the React bundle should be the module script after it');
+
+      // The panel repeats the stored theme as the hint for its next open.
+      await openSettings();
+      assert.equal(await hint(), 'auto', 'the default theme should be hinted once settings have loaded');
+
+      // The built script itself, run again by hand: it turns the hint, or without one the system
+      // scheme, into the class on <html>. The page's own run is over before WebDriver can look, so
+      // this is what shows the shipped file loads under the extension's CSP and does its job.
+      const rerunThemeInit = (value) =>
+        browser.execute(
+          (key, next) =>
+            new Promise((resolve) => {
+              if (next === null) localStorage.removeItem(key);
+              else localStorage.setItem(key, next);
+              const script = document.createElement('script');
+              script.src = '/theme-init.js';
+              script.onload = () => resolve({ dark: document.documentElement.classList.contains('dark') });
+              script.onerror = () => resolve({ error: 'theme-init.js failed to load' });
+              document.head.append(script);
+            }),
+          THEME_HINT_KEY,
+          value,
+        );
+      assert.deepEqual(await rerunThemeInit('dark'), { dark: true }, 'a dark hint should add the dark class');
+      assert.deepEqual(await rerunThemeInit('light'), { dark: false }, 'a light hint should remove the dark class');
+      assert.deepEqual(await rerunThemeInit(null), { dark: systemDark }, 'no hint should follow the system scheme');
+
+      await click(browser, radio('Dark'));
+      await waitStored(h, (value) => value.theme === 'dark');
+      assert.equal(await hint(), 'dark', 'picking Dark should update the hint');
+
+      // A hint that disagrees with storage is only a wrong first paint: the stored theme wins once
+      // it has loaded, and the hint is corrected for the next open. Both ways round.
+      await setHint('light');
+      await h.seedSettings({ ...settings(), theme: 'dark' });
+      await openSettings();
+      assert.equal(await checked('Dark'), 'true', 'the stored Dark theme should be checked after reload');
+      assert.equal(await darkClass(), true, 'a stale light hint should not survive a stored dark theme');
+      assert.equal(await hint(), 'dark', 'the stale light hint should be corrected to dark');
+
+      await h.seedSettings(settings());
+      await openSettings();
+      assert.equal(await checked('Auto'), 'true', 'the stored Auto theme should be checked after reload');
+      assert.equal(await darkClass(), systemDark, 'a stale dark hint should give way to the system scheme');
+      assert.equal(await hint(), 'auto', 'the stale dark hint should be corrected to auto');
     });
 
     test('switches the side panel theme from the Settings tab and saves the choice', async () => {
