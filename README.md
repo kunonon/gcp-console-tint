@@ -12,6 +12,7 @@ A browser extension (Chrome MV3 / Firefox MV2) that tints parts of the [Google C
 - **Per-project color palette** — named color entries that the pickers reference; change a palette color once and every surface using it follows.
 - **Live updates** — settings apply immediately via `storage.onChanged`, and the tint follows the console's SPA project switches without a reload, with a short crossfade (disabled under `prefers-reduced-motion`).
 - **Export / import** — the Settings tab saves every rule (with its palette and colors) to a JSON file, as stored once pending changes have been written, and imports rules back from one: pick the rules to take, and a rule with the same match type and pattern as an existing one replaces that rule in place instead of being added.
+- **Theme** — the Settings tab picks *Auto* (follow the system), *Light*, or *Dark* for the side panel. The colours fade from one theme to the other instead of flipping.
 
 ## Usage
 
@@ -88,7 +89,7 @@ GitHub Actions runs on every pull request and push to `main`: Biome lint, typech
 
 `develop` is the default branch. Feature work is PRed into `develop` (squash merges are fine there).
 
-Every merge into `develop` automatically creates or updates a release PR (`develop` → `main`) listing the changes since the last release.
+Every merge into `develop` automatically creates or updates a release PR (`develop` → `main`) listing the changes since the last release. The PR is refreshed again when the `Release` workflow completes, so a `develop` merge that lands while a release is still being tagged does not leave the PR listing already-released changes. While the version in `package.json` is still the released one, the PR title carries a version-bump warning and its notes cover `develop` since that release.
 
 To ship a release:
 

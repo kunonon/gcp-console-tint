@@ -6,8 +6,10 @@ import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../dom
 import { ProjectSettings } from '../../../../domain/project-settings';
 import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
+import { useTheme } from '../../hooks/useTheme';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
+import AppearanceCard from './components/AppearanceCard';
 import BackupCard, { type Notice, type NoticeInput } from './components/BackupCard';
 import ColorSwatchField from './components/ColorSwatchField';
 import DeleteConfirmPopover from './components/DeleteConfirmPopover';
@@ -156,6 +158,9 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
 
 function App({ settingsStore }: { settingsStore: SettingsStore }) {
   const { settings, status, save, saveThenApply, loadSaved } = useTintSettings(settingsStore);
+  // Applied before the loading/failed early returns, so those screens follow the theme too. Theme
+  // changes fade only once the stored settings are in place.
+  useTheme(settings.theme, status === 'ready');
   const [view, setView] = useState<View>({ type: 'list' });
   // The Backup card's last outcome lives here rather than in the card, which unmounts whenever the
   // Rules tab is picked. Ids only ever grow (clearing does not reset them), so the card can tell a
@@ -490,7 +495,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                         const height = TopBarHeight.fromPixels(e.target.valueAsNumber);
                         if (height) updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(height)));
                       }}
-                      className="h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
+                      className="outlined-control h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
                     />
                     <span className="text-sm text-muted">px</span>
                   </div>
@@ -646,8 +651,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
 
       {/* Uncontrolled: returning from the detail view remounts the list and lands on Rules again,
           which is where a user coming back from editing a rule wants to be anyway.
-          The gray pill track behind the tabs is `.tabs__list-container`, which HeroUI only renders
-          when Tabs.List is wrapped in Tabs.ListContainer; the white selected pill is the
+          The pill track behind the tabs is `.tabs__list-container`, which HeroUI only renders
+          when Tabs.List is wrapped in Tabs.ListContainer; the selected pill is the
           Tabs.Indicator inside each tab. The className overrides re-space the component to this
           page's 12px column gap: HeroUI ships gap-2 on the root and `p-2 mt-4` on each panel, and
           Tailwind utilities win over its @layer components rules property by property. */}
@@ -746,6 +751,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
         {/* BackupCard returns a fragment (card + an optional result Alert), so both land directly
             in this panel and pick up the page column's spacing. */}
         <Tabs.Panel id="settings" className="mt-0 flex flex-col gap-3 p-0">
+          <AppearanceCard theme={settings.theme} onChange={(theme) => save(settings.changeTheme(theme))} />
           <BackupCard
             settingsStore={settingsStore}
             settings={settings}

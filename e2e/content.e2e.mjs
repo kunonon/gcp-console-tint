@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { setTimeout as pause } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { projectSettings, rule, settings, VERSION } from './fixtures.mjs';
+import { EFFECTIVE_VERSION, projectSettings, rule, settings } from './fixtures.mjs';
 import { browserTargets, createHarness, openTab } from './harness.mjs';
 
 function topBar(color, height = 7, stripes = false) {
@@ -707,12 +707,33 @@ for (const browserName of browserTargets()) {
         const migrated = await waitSettings(
           h,
           (value) =>
-            value?.schemaVersion === VERSION && Array.isArray(value.projectRules) && value.projectRules.length === 0,
+            value?.schemaVersion === EFFECTIVE_VERSION &&
+            Array.isArray(value.projectRules) &&
+            value.projectRules.length === 0,
           `${name} recovery did not finish after extension reload`,
         );
-        assert.equal(migrated.schemaVersion, VERSION, `${name} was not stamped with the current extension version`);
+        assert.equal(
+          migrated.schemaVersion,
+          EFFECTIVE_VERSION,
+          `${name} was not stamped with the current extension version`,
+        );
         assert.deepEqual(migrated.projectRules, [], `${name} did not fall back to safe defaults`);
       }
+
+      // Written before the theme existed: the 0.3.0 migration step adds theme 'auto' and keeps the rule.
+      const preThemeRule = rule('pre-theme', 'alpha', 'exact', projectSettings({ topBar: topBar('#cc0000') }));
+      await setStored(h, { schemaVersion: '0.2.0', projectRules: [preThemeRule] });
+      await h.reloadExtension();
+      const preThemeMigrated = await waitSettings(
+        h,
+        (value) => value?.theme === 'auto',
+        'pre-theme schema migration did not finish after extension reload',
+      );
+      assert.deepEqual(
+        preThemeMigrated,
+        { schemaVersion: EFFECTIVE_VERSION, theme: 'auto', projectRules: [preThemeRule] },
+        'pre-theme schema was not migrated to the current shape with theme auto',
+      );
 
       const current = settings(rule('current', 'alpha', 'exact', projectSettings({ topBar: topBar('#00aa00') })));
       await setStored(h, current);
@@ -739,7 +760,7 @@ for (const browserName of browserTargets()) {
       );
 
       const partiallyCorrupt = {
-        schemaVersion: VERSION,
+        schemaVersion: EFFECTIVE_VERSION,
         projectRules: [
           { ...rule('bad-pattern', 'discard-me'), pattern: 42 },
           rule(

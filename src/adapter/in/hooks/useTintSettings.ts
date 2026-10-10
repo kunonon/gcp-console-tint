@@ -5,8 +5,9 @@ import type { SettingsStore } from '../../../port/settings-store';
 // Owns the side panel's settings state and its persistence via the injected SettingsStore
 // port. The store instance comes from the composition root (main.tsx) through App's props.
 export function useTintSettings(settingsStore: SettingsStore) {
-  // No rules until the store's load() resolves.
-  const [settings, setSettings] = useState<TintSettings>(() => new TintSettings([]));
+  // No rules until the store's load() resolves; the default theme follows the system scheme
+  // meanwhile.
+  const [settings, setSettings] = useState<TintSettings>(() => new TintSettings([], TintSettings.DEFAULT_THEME));
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const saveTail = useRef<Promise<void>>(Promise.resolve());
 

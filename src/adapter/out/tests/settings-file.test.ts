@@ -29,9 +29,10 @@ function failureOf(error: unknown) {
 // Every case here starts from a file the exporter itself could have written, so a test only ever
 // differs from a valid file in the one field it is about.
 function validFile(): Record<string, unknown> {
-  const settings = new TintSettings([
-    ProjectRule.recreate(ProjectRuleId.recreate('rule-1'), 'exact', 'my-app', ProjectSettings.DEFAULT),
-  ]);
+  const settings = new TintSettings(
+    [ProjectRule.recreate(ProjectRuleId.recreate('rule-1'), 'exact', 'my-app', ProjectSettings.DEFAULT)],
+    'auto',
+  );
   return toStored(settings, CURRENT_SCHEMA_VERSION);
 }
 
@@ -88,7 +89,7 @@ describe('parseSettingsFile: the file as a whole', () => {
   });
 
   it('throws no-rules for a valid file with an empty projectRules array', () => {
-    const text = JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [] });
+    const text = JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, theme: 'auto', projectRules: [] });
 
     expect(failureOf(thrownBy(() => parse(text)))).toEqual({ reason: 'no-rules' });
   });
@@ -107,16 +108,19 @@ describe('parseSettingsFile: the file as a whole', () => {
   });
 
   it('round-trips a valid file: toStored -> JSON.stringify -> parseSettingsFile equals the original settings', () => {
-    const original = new TintSettings([
-      ProjectRule.recreate(
-        ProjectRuleId.recreate('rule-1'),
-        'exact',
-        'my-app',
-        ProjectSettings.DEFAULT.changeTopBar(
-          ProjectSettings.DEFAULT.topBar.changeColor(new ColorSelection(undefined, Color.fromHex('#00ff00')!)),
+    const original = new TintSettings(
+      [
+        ProjectRule.recreate(
+          ProjectRuleId.recreate('rule-1'),
+          'exact',
+          'my-app',
+          ProjectSettings.DEFAULT.changeTopBar(
+            ProjectSettings.DEFAULT.topBar.changeColor(new ColorSelection(undefined, Color.fromHex('#00ff00')!)),
+          ),
         ),
-      ),
-    ]);
+      ],
+      'auto',
+    );
     const text = JSON.stringify(toStored(original, CURRENT_SCHEMA_VERSION));
 
     const parsed = parse(text);
@@ -124,19 +128,28 @@ describe('parseSettingsFile: the file as a whole', () => {
     expect(parsed.equals(original)).toBe(true);
     expect(parsed.projectRules[0]!.settings).toEqual(original.projectRules[0]!.settings);
   });
+
+  it.each(['auto', 'light', 'dark'])("carries the file's theme (%s) on the returned settings", (theme) => {
+    expect(parse(JSON.stringify({ ...validFile(), theme })).theme).toBe(theme);
+  });
 });
 
 // Stage 1: required keys and JSON types. These never reach the domain — the Zod schema refuses
 // the file first — so the message is Zod's own.
 describe('parseSettingsFile: structural issues (missing keys and wrong JSON types)', () => {
   it.each([
+    ['theme is missing', (file: Record<string, unknown>) => delete file.theme, 'theme'],
+    ['theme is not a string', (file: Record<string, unknown>) => (file.theme = 1), 'theme'],
     ['projectRules is missing', (file: Record<string, unknown>) => delete file.projectRules, 'projectRules'],
     ['projectRules is not an array', (file: Record<string, unknown>) => (file.projectRules = {}), 'projectRules'],
   ])('reports %s at the root', (_label, mutate, path) => {
     const file = validFile();
     mutate(file);
 
-    expect(paths(thrownBy(() => parse(JSON.stringify(file))))).toEqual([path]);
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues.map((issue) => issue.path)).toEqual([path]);
+    expect(issues).toEqual(oracleIssues(file));
   });
 
   it.each([
@@ -180,9 +193,15 @@ describe('parseSettingsFile: structural issues (missing keys and wrong JSON type
   });
 });
 
-// Stage 2: the values themselves, judged by the domain's own factories (Color.fromHex,
+// Stage 2: the values themselves, judged by the domain's own factories (isTheme, Color.fromHex,
 // TopBarHeight.fromPixels, isMatchType) rather than by anything restated in the adapter.
 describe('parseSettingsFile: value issues (structurally fine, but the domain refuses the value)', () => {
+  it.each(['sepia', 'Dark', ''])('refuses an unknown theme (%j)', (theme) => {
+    expect(issuesOf(thrownBy(() => parse(JSON.stringify({ ...validFile(), theme }))))).toEqual([
+      { path: 'theme', message: 'expected one of auto, light, dark' },
+    ]);
+  });
+
   it.each([
     [
       'an unknown match type',
@@ -336,15 +355,24 @@ describe('parseSettingsFile: versions and migrations', () => {
   });
 
   it('refuses a file stamped newer than what this build can have written (newer-version)', () => {
-    expect(failureOf(thrownBy(() => parseSettingsFile(stamped('0.2.0'), '0.1.5')))).toEqual({
+    expect(failureOf(thrownBy(() => parseSettingsFile(stamped('0.4.0'), '0.3.5')))).toEqual({
       reason: 'newer-version',
-      version: '0.2.0',
+      version: '0.4.0',
     });
   });
 
+  // The real registry's 0.3.0 step adds theme 'auto' to files written before the theme existed.
+  it('imports a 0.2.1 file without theme, which the 0.3.0 migration step completes with auto', () => {
+    const { theme: _theme, ...file } = validFile();
+
+    expect(parseSettingsFile(JSON.stringify({ ...file, schemaVersion: '0.2.1' }), CURRENT_SCHEMA_VERSION).theme).toBe(
+      'auto',
+    );
+  });
+
   it('accepts a stamp equal to the current version, and one between the schema version and it', () => {
-    expect(parseSettingsFile(stamped('0.1.5'), '0.1.5').projectRules).toHaveLength(1);
-    expect(parseSettingsFile(stamped('0.1.2'), '0.1.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.3.5'), '0.3.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.3.2'), '0.3.5').projectRules).toHaveLength(1);
   });
 
   // A fake shape change: 0.2.0 renames topBar.heightPx to topBar.height. Files written before it
@@ -400,6 +428,7 @@ describe('parseSettingsFile: versions and migrations', () => {
 // against Zod's own issue order and wording, not against itself.
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
 const oracleSchema = z.object({
+  theme: z.string(),
   projectRules: z.array(
     z.object({
       id: z.string(),
@@ -451,8 +480,12 @@ describe('parseSettingsFile: a missing or non-object parent is one issue, with n
   };
 
   it.each([
-    ['projectRules is missing', () => ({ schemaVersion: CURRENT_SCHEMA_VERSION }), 'projectRules'],
-    ['projectRules is null', () => ({ schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: null }), 'projectRules'],
+    ['projectRules is missing', () => ({ schemaVersion: CURRENT_SCHEMA_VERSION, theme: 'auto' }), 'projectRules'],
+    [
+      'projectRules is null',
+      () => ({ schemaVersion: CURRENT_SCHEMA_VERSION, theme: 'auto', projectRules: null }),
+      'projectRules',
+    ],
     ['settings is a number', () => fileWith((rule) => (rule.settings = 1)), 'projectRules[0].settings'],
     ['settings is an array', () => fileWith((rule) => (rule.settings = [])), 'projectRules[0].settings'],
     ['palette is an array', () => fileWith((rule) => (rule.settings.palette = [])), 'projectRules[0].settings.palette'],
@@ -486,7 +519,7 @@ describe('parseSettingsFile: a missing or non-object parent is one issue, with n
   });
 
   it('reports a rule that is not an object at the rule itself', () => {
-    const fixture = { projectRules: ['not a rule'] };
+    const fixture = { theme: 'auto', projectRules: ['not a rule'] };
 
     const issues = issuesOf(thrownBy(() => parseMigrated(fixture)));
 
@@ -494,8 +527,8 @@ describe('parseSettingsFile: a missing or non-object parent is one issue, with n
     expect(issues).toEqual(oracleIssues(fixture));
   });
 
-  // The production registry is empty, so only an injected step can hand validation a non-object;
-  // its issue sits at the file itself, whose path is the empty string.
+  // Production steps always return an object, so only an injected step can hand validation a
+  // non-object; its issue sits at the file itself, whose path is the empty string.
   it.each([
     ['a string', 'text'],
     ['an array', []],
@@ -509,6 +542,23 @@ describe('parseSettingsFile: a missing or non-object parent is one issue, with n
 });
 
 describe('parseSettingsFile: issue order across rules, independent of key order', () => {
+  it('lists a root theme issue before a root projectRules issue, whatever the key order', () => {
+    const fixture = { projectRules: null, theme: 3 };
+
+    const issues = issuesOf(thrownBy(() => parseMigrated(fixture)));
+
+    expect(issues.map((issue) => issue.path)).toEqual(['theme', 'projectRules']);
+    expect(issues).toEqual(oracleIssues(fixture));
+  });
+
+  it('judges the theme value before any rule value', () => {
+    const file = validFile();
+    (file.projectRules as RawRule[])[0].matchType = 'glob';
+    file.theme = 'sepia';
+
+    expect(paths(thrownBy(() => parseMigrated(reverseKeys(file))))).toEqual(['theme', 'projectRules[0].matchType']);
+  });
+
   // Two rules with every object's keys reversed, unknown keys at several levels, and structural
   // issues placed before, inside and after palette.entries.
   function brokenStructure() {
@@ -684,7 +734,8 @@ describe('parseSettingsFile: migration failures', () => {
   it.each([
     [
       'invalid-fields',
-      () => fileWithRule((rule) => (rule.matchType = 'glob')),
+      () =>
+        JSON.stringify({ ...JSON.parse(fileWithRule((rule) => (rule.matchType = 'glob'))), schemaVersion: '0.1.0' }),
       {
         reason: 'invalid-fields',
         issues: [{ path: 'projectRules[0].matchType', message: 'expected one of prefix, suffix, exact, regex' }],
@@ -692,10 +743,11 @@ describe('parseSettingsFile: migration failures', () => {
     ],
     [
       'no-rules',
-      () => JSON.stringify({ schemaVersion: CURRENT_SCHEMA_VERSION, projectRules: [] }),
+      () => JSON.stringify({ schemaVersion: '0.1.0', theme: 'auto', projectRules: [] }),
       { reason: 'no-rules' },
     ],
   ])('keeps %s after a successful migration', (_label, text, failure) => {
+    // Restamped at 0.1.0 so the injected identity step (to 0.1.1) runs under a 0.1.1 ceiling.
     expect(failureOf(thrownBy(() => parseSettingsFile(text(), '0.1.1', [identity])))).toEqual(failure);
   });
 });

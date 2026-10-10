@@ -3,13 +3,12 @@ import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIGRATIONS, type SchemaMi
 import { compareVersions, VersionComparisonResult } from '../version';
 
 describe('runMigrations', () => {
-  // The registry is empty and CURRENT_SCHEMA_VERSION remains at its 0.1.0 baseline.
-  it("CURRENT_SCHEMA_VERSION equals the last migration step's `to` whenever steps exist, or the baseline schema while the registry is empty", () => {
-    const expected = SCHEMA_MIGRATIONS.length > 0 ? SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]!.to : '0.1.0';
-    expect(CURRENT_SCHEMA_VERSION).toBe(expected);
+  it("CURRENT_SCHEMA_VERSION equals the last migration step's `to`", () => {
+    expect(SCHEMA_MIGRATIONS.length).toBeGreaterThan(0);
+    expect(CURRENT_SCHEMA_VERSION).toBe(SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.length - 1]!.to);
   });
 
-  it('SCHEMA_MIGRATIONS is ordered ascending by release version in `to` (vacuously true while empty)', () => {
+  it('SCHEMA_MIGRATIONS is ordered ascending by release version in `to`', () => {
     for (let i = 1; i < SCHEMA_MIGRATIONS.length; i++) {
       expect(compareVersions(SCHEMA_MIGRATIONS[i - 1]!.to, SCHEMA_MIGRATIONS[i]!.to)).toBe(
         VersionComparisonResult.Older,
@@ -17,11 +16,18 @@ describe('runMigrations', () => {
     }
   });
 
-  it('applies nothing via the real (currently empty) SCHEMA_MIGRATIONS registry, regardless of fromVersion', () => {
+  describe('the real SCHEMA_MIGRATIONS registry', () => {
     const data = { projectRules: [{ id: '1', pattern: 'p', settings: { topBarColor: '#123456' } }] };
 
-    expect(runMigrations(data, '0.1.0')).toEqual({ data, version: '0.1.0' });
-    expect(runMigrations(data, '9.9.9')).toEqual({ data, version: '9.9.9' });
+    it.each(['0.1.0', '0.2.1'])('adds theme auto to %s data at 0.3.0, keeping every other key', (fromVersion) => {
+      expect(runMigrations(data, fromVersion)).toEqual({ data: { ...data, theme: 'auto' }, version: '0.3.0' });
+    });
+
+    it.each(['0.3.0', '0.3.1', '9.9.9'])('applies nothing from %s up', (fromVersion) => {
+      const current = { ...data, theme: 'dark' };
+
+      expect(runMigrations(current, fromVersion)).toEqual({ data: current, version: fromVersion });
+    });
   });
 
   // Synthetic release versions exercise the first post-baseline migration and a major release.

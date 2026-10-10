@@ -1,7 +1,21 @@
 import { readFile } from 'node:fs/promises';
 
 export const { version: VERSION } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-export const SCHEMA_VERSION = '0.1.0';
+export const SCHEMA_VERSION = '0.3.0';
+
+function compareVersions(a, b) {
+  const left = a.split('.').map(Number);
+  const right = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return Math.sign(diff);
+  }
+  return 0;
+}
+
+// The schemaVersion storage writes carry: the manifest version floored at the schema version, so
+// until package.json catches up with a schema bump the stamp is the schema version.
+export const EFFECTIVE_VERSION = compareVersions(VERSION, SCHEMA_VERSION) < 0 ? SCHEMA_VERSION : VERSION;
 
 export function projectSettings(overrides = {}) {
   return {
@@ -18,5 +32,5 @@ export function rule(id, pattern, matchType = 'exact', settings = projectSetting
 }
 
 export function settings(...projectRules) {
-  return { schemaVersion: VERSION, projectRules };
+  return { schemaVersion: EFFECTIVE_VERSION, theme: 'auto', projectRules };
 }
