@@ -615,6 +615,9 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
             try {
               const extensionApi = globalThis.browser || globalThis.chrome;
               await extensionApi.storage.local.clear();
+              // The panel's first-paint theme hint is the only thing kept in localStorage; without
+              // this a test would open on the theme the previous test left behind.
+              localStorage.clear();
               return { ok: true };
             } catch (error) {
               return { ok: false, message: String(error) };
