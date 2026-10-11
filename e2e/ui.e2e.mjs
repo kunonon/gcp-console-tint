@@ -35,6 +35,29 @@ async function click(browser, selector) {
   return element;
 }
 
+// The panel's enter and exit motion (style.css, components/Presence.tsx) keeps a leaving row, section
+// or tab panel mounted and inert for about 200ms, clips an entering one while its height grows, and
+// moves whatever sits below either of them, so a direct click right after such a change can be
+// intercepted or miss. Resolves once no finite animation or transition is running. HeroUI's
+// scroll-shadow animations run on a ScrollTimeline and never finish, so they are ignored.
+async function motionIdle(browser) {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        () =>
+          !document
+            .getAnimations()
+            .some(
+              (animation) =>
+                animation.timeline === document.timeline &&
+                Number.isFinite(animation.effect?.getComputedTiming().endTime) &&
+                (animation.playState === 'running' || animation.playState === 'pending'),
+            ),
+      ),
+    { timeout: 5000, interval: 50, timeoutMsg: 'panel motion did not settle' },
+  );
+}
+
 async function fill(browser, input, value) {
   await input.click();
   await browser.keys([Key.Ctrl, 'a']);
@@ -130,6 +153,9 @@ async function addRuleThroughUi(h, type, value) {
 }
 
 async function rowAt(browser, index) {
+  // A deleted row stays in the document, inert, until its exit ends, and would shift the indices; a
+  // row that has just been added is still clipped.
+  await motionIdle(browser);
   let rows = [];
   await browser.waitUntil(
     async () => {
@@ -416,12 +442,28 @@ for (const browserName of browserTargets()) {
         remaining.projectRules.map((item) => item.pattern),
         ['left', 'edited-id', 'right'],
       );
+      // The deleted row stays mounted, inert, while it fades and collapses, which jsdom cannot show
+      // (it runs no transitions). Once the motion is over the row must be gone, and no wrapper may be
+      // left inert, transparent or collapsed.
+      await motionIdle(browser);
+      assert.deepEqual(
+        await browser.execute(() => ({
+          rows: document.querySelectorAll('[draggable="true"]').length,
+          inert: document.querySelectorAll('[inert]').length,
+          hidden: [...document.querySelectorAll('.reveal')].filter(
+            (element) => getComputedStyle(element).opacity !== '1' || element.getBoundingClientRect().height === 0,
+          ).length,
+        })),
+        { rows: 3, inert: 0, hidden: 0 },
+        'a deleted row should have left the document, with the remaining rows fully shown',
+      );
 
       await openDetail(browser, 1);
       await chooseMatchType(browser, browser, 'regex');
       const pattern = await browser.$('input[aria-label="Pattern"]');
       await fill(browser, pattern, '[');
-      const invalidPattern = await browser.$('//*[normalize-space(.)="Invalid regular expression"]');
+      // The span itself: the wrappers Presence puts around it have the same text.
+      const invalidPattern = await browser.$('//span[normalize-space(.)="Invalid regular expression"]');
       await invalidPattern.waitForDisplayed();
       await waitStored(
         h,
@@ -512,6 +554,7 @@ for (const browserName of browserTargets()) {
       await paletteSwitch.click();
       await click(browser, 'button[aria-label="Add color"]');
       await waitStored(h, (value) => value.projectRules?.[0]?.settings.palette.entries.length === 1);
+      await motionIdle(browser); // the new row is clipped while it opens
       const name = await browser.$('input[aria-label="Color name"]');
       await fill(browser, name, 'Brand');
       await setColor(browser, await browser.$('input[type="color"]'), '#cc3366');
@@ -594,6 +637,7 @@ for (const browserName of browserTargets()) {
       await (await switchByLabel(browser, 'Platform Bar')).click();
       const stripeSwitches = await browser.$$('//label[.//input[@role="switch"] and normalize-space(.)="Stripes"]');
       assert.equal(stripeSwitches.length, 2, 'both surface-specific Stripes controls should be rendered');
+      await motionIdle(browser); // the Platform Bar section is still opening; its last row is clipped
       await stripeSwitches[1].click();
       await waitStored(h, (value) => value.projectRules?.[0]?.settings.platformBar.stripes === true);
       const updatedStripeSwitches = await browser.$$(
@@ -652,6 +696,7 @@ for (const browserName of browserTargets()) {
       assert.equal(referenced.projectRules[0].settings.topBar.color.paletteId, brandId);
 
       for (const label of ['Top bar', 'Platform Bar', 'Platform Bar text color']) {
+        await motionIdle(browser); // the section the previous click toggled moves the switches below it
         await (await switchByLabel(browser, label)).click();
       }
       const disabled = await waitStored(
@@ -670,6 +715,7 @@ for (const browserName of browserTargets()) {
         [false, false, false],
       );
       for (const label of ['Top bar', 'Platform Bar', 'Platform Bar text color']) {
+        await motionIdle(browser); // the section the previous click toggled moves the switches below it
         await (await switchByLabel(browser, label)).click();
       }
       await waitStored(
@@ -882,6 +928,83 @@ for (const browserName of browserTargets()) {
       assertFaded(beforeLight, await probeFade(), 'Dark to Light');
       assert.equal(await darkClass(), false, 'Light should remove the dark class from <html>');
       assert.equal(await checked('Light'), 'true', 'Light should be the checked theme after picking it');
+    });
+
+    test('keeps a leaving tab panel and a closing section mounted and inert until their exit has finished', async () => {
+      const topBar = { enabled: true, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false };
+      await h.seedSettings(settings(rule('first', 'project-a', 'exact', projectSettings({ topBar }))));
+      const browser = await panel(h);
+      // A leaving node outlives the change that removed it only while its transitions run (style.css,
+      // components/Presence.tsx), which jsdom cannot show. The exits last 100 to 200ms, so like the
+      // theme fade above they are not sampled in time: the transitions are stretched to 20s, then
+      // finished by hand. The next test starts from a reloaded panel, without this style.
+      await browser.execute(() => {
+        const style = document.createElement('style');
+        style.textContent =
+          '.reveal, .tabs__panel { transition-duration: 20s !important; transition-delay: 0s !important; }';
+        document.head.append(style);
+      });
+      const leaving = '.reveal[data-exiting], .tabs__panel[data-exiting]';
+      const inertWhileLeaving = () =>
+        browser.execute(
+          (selector) => [...document.querySelectorAll(selector)].map((element) => element.inert),
+          leaving,
+        );
+      // Repeated until nothing is left to finish and the leaving node is gone: the node is removed in
+      // a later task than the end of its transitions, and the entering side may start after the
+      // first pass.
+      const finishMotion = (what) =>
+        browser.waitUntil(
+          () =>
+            browser.execute((selector) => {
+              const running = document
+                .getAnimations()
+                .filter(
+                  (animation) =>
+                    animation.transitionProperty &&
+                    animation.playState !== 'finished' &&
+                    animation.effect?.target?.matches('.reveal, .tabs__panel'),
+                );
+              for (const animation of running) animation.finish();
+              return running.length === 0 && document.querySelector(selector) === null;
+            }, leaving),
+          { timeout: 5000, interval: 50, timeoutMsg: `${what} was not removed after its exit had finished` },
+        );
+
+      await selectTab(browser, 'Settings');
+      assert.deepEqual(
+        await inertWhileLeaving(),
+        [true],
+        'the Rules panel should stay mounted and inert while it leaves',
+      );
+      // HeroUI takes the leaving panel out of the flow (absolute, top: 0). Inside the `.tab-panels`
+      // box that is where the entering panel is; without the box it is the top of the page.
+      const panelTops = await browser.execute(() => ({
+        leaving: document.querySelector('.tabs__panel[data-exiting]').getBoundingClientRect().top,
+        entering: document.querySelector('.tabs__panel:not([data-exiting])').getBoundingClientRect().top,
+      }));
+      assert.equal(
+        panelTops.leaving,
+        panelTops.entering,
+        'the leaving Rules panel should sit where the Settings panel is, not at the top of the page',
+      );
+      await finishMotion('the Rules panel');
+      assert.equal(
+        await browser.execute(() => getComputedStyle(document.querySelector('.tabs__panel')).opacity),
+        '1',
+        'the Settings panel should be fully shown once the tab change is over',
+      );
+
+      await selectTab(browser, 'Rules');
+      await finishMotion('the Settings panel');
+      await openDetail(browser);
+      await (await switchByLabel(browser, 'Top bar')).click();
+      assert.deepEqual(
+        await inertWhileLeaving(),
+        [true],
+        'the Top bar section should stay mounted and inert while it closes',
+      );
+      await finishMotion('the Top bar section');
     });
 
     test('gives dark controls a stronger edge than dividers and leaves picked colours a 20px content box and a translucent rim', async () => {

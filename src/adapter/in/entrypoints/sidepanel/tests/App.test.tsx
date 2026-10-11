@@ -1430,6 +1430,26 @@ describe('App', () => {
       expect(getRuleRow('proj-[')).toBeTruthy();
     });
 
+    it('animates the detail view in forward and the list back, each on a fresh root', async () => {
+      // jsdom runs no CSS, so the animations themselves are out of reach. This pins what style.css
+      // hangs them on: the attribute, a fresh root per navigation, and the tab panels' positioned box.
+      const user = userEvent.setup();
+      const { container } = render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      expect(container.querySelector('[data-view-enter]')).toBeNull();
+
+      await addRuleWithMatchType(user, 'exact', 'p');
+      await openRuleDetail(user, 'p');
+      const detail = container.querySelector('[data-view-enter]');
+      expect(detail?.getAttribute('data-view-enter')).toBe('forward');
+
+      await goBack(user);
+      const list = container.querySelector('[data-view-enter]');
+      expect(list?.getAttribute('data-view-enter')).toBe('back');
+      expect(list).not.toBe(detail);
+      expect(container.querySelector('.tab-panels')).not.toBeNull();
+    });
+
     it('the Pattern field can be edited down to an empty string and saves it as-is, unlike Add rule which guards against empty (current behavior: no guard on edits, so an in-progress clear-and-retype is never blocked)', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);

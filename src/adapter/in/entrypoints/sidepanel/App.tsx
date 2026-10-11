@@ -15,12 +15,16 @@ import ColorSwatchField from './components/ColorSwatchField';
 import DeleteConfirmPopover from './components/DeleteConfirmPopover';
 import MatchTypeSelect from './components/MatchTypeSelect';
 import PaletteColorPicker from './components/PaletteColorPicker';
+import { Presence } from './components/Presence';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
 // The sidepanel is a single-page app with two views: the project rule list (the default
-// landing page) and a detail page for editing one rule's settings.
-type View = { type: 'list' } | { type: 'detail'; ruleId: ProjectRuleId };
+// landing page) and a detail page for editing one rule's settings. `back` is set only by the
+// detail page's Back button and makes the list enter from the left, mirroring the detail page,
+// which enters from the right (style.css, `[data-view-enter]`). The initial state and the
+// fallback for a rule that disappeared leave it out, so the list does not animate there.
+type View = { type: 'list'; back?: true } | { type: 'detail'; ruleId: ProjectRuleId };
 
 function isValidPattern(pattern: string): boolean {
   try {
@@ -346,7 +350,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     const detailTitle = currentRule?.pattern ?? '';
 
     return (
-      <div className="flex flex-col gap-3">
+      // The two view roots carry different keys, so every navigation mounts a new element and the
+      // enter animation of `[data-view-enter]` plays. Without them React would reuse one div for
+      // both views, and an animation that is already applied does not replay when only the
+      // attribute's value changes.
+      <div key="detail" data-view-enter="forward" className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
           <IconButtonTooltip label="Back">
             <Button
@@ -355,7 +363,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
               size="sm"
               aria-label="Back"
               className="shrink-0"
-              onPress={() => setView({ type: 'list' })}
+              onPress={() => setView({ type: 'list', back: true })}
             >
               <ArrowLeftIcon />
             </Button>
@@ -379,9 +387,16 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                   className={nameInputClassName}
                 />
               </div>
-              {currentRule.matchType === 'regex' && !isValidPattern(currentRule.pattern) && (
-                <span className="text-sm text-danger">Invalid regular expression</span>
-              )}
+              {/* `gap` is this card's gap-1. The span is `block` so that its own line height sets
+                  the height of the line: inline, it would sit in a line box of Presence's wrapper,
+                  which inherits the page's larger line height. */}
+              <Presence gap="0.25rem">
+                {currentRule.matchType === 'regex' && !isValidPattern(currentRule.pattern) && (
+                  <span key="invalid" className="block text-sm text-danger">
+                    Invalid regular expression
+                  </span>
+                )}
+              </Presence>
             </Card.Content>
           </Card>
         )}
@@ -402,43 +417,51 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.palette.enabled && (
-              <div className="flex flex-col gap-2 border-t border-border pt-2">
-                {currentSettings.palette.entries.map((entry) => (
-                  <div key={entry.id.toString()} className="@container flex items-center justify-between gap-2">
-                    <Input
-                      aria-label="Color name"
-                      placeholder="Name"
-                      value={entry.name}
-                      onChange={(e) => handlePaletteNameChange(entry.id, e.target.value)}
-                      className={nameInputClassName}
-                    />
-                    <ColorSwatchField
-                      ariaLabel={`${entry.name || '(unnamed)'} color`}
-                      value={entry.color.toHex()}
-                      onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
-                      hexHidableOnNarrow
-                    />
-                    <DeleteConfirmPopover
-                      question="Remove this color?"
-                      target={entry.name || '(unnamed)'}
-                      confirmLabel="Remove"
-                      tooltipLabel="Remove color"
-                      onConfirm={() => handleRemoveColor(entry.id)}
-                    >
-                      <Button isIconOnly variant="outline" size="sm" aria-label="Remove color" className="shrink-0">
-                        <TrashIcon />
-                      </Button>
-                    </DeleteConfirmPopover>
-                  </div>
-                ))}
-                <IconButtonTooltip label="Add color">
-                  <Button isIconOnly variant="outline" aria-label="Add color" onPress={handleAddColor}>
-                    <PlusIcon />
-                  </Button>
-                </IconButtonTooltip>
-              </div>
-            )}
+            {/* Presence opens and closes a section with its switch (style.css, `.reveal`), here and
+                in the three surface cards below. The palette rows have a Presence of their own, so
+                a single colour is added or removed the same way; the Add button stays outside it
+                and is pushed along. */}
+            <Presence>
+              {currentSettings.palette.enabled && (
+                <div key="section" className="flex flex-col gap-2 border-t border-border pt-2">
+                  <Presence>
+                    {currentSettings.palette.entries.map((entry) => (
+                      <div key={entry.id.toString()} className="@container flex items-center justify-between gap-2">
+                        <Input
+                          aria-label="Color name"
+                          placeholder="Name"
+                          value={entry.name}
+                          onChange={(e) => handlePaletteNameChange(entry.id, e.target.value)}
+                          className={nameInputClassName}
+                        />
+                        <ColorSwatchField
+                          ariaLabel={`${entry.name || '(unnamed)'} color`}
+                          value={entry.color.toHex()}
+                          onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
+                          hexHidableOnNarrow
+                        />
+                        <DeleteConfirmPopover
+                          question="Remove this color?"
+                          target={entry.name || '(unnamed)'}
+                          confirmLabel="Remove"
+                          tooltipLabel="Remove color"
+                          onConfirm={() => handleRemoveColor(entry.id)}
+                        >
+                          <Button isIconOnly variant="outline" size="sm" aria-label="Remove color" className="shrink-0">
+                            <TrashIcon />
+                          </Button>
+                        </DeleteConfirmPopover>
+                      </div>
+                    ))}
+                  </Presence>
+                  <IconButtonTooltip label="Add color">
+                    <Button isIconOnly variant="outline" aria-label="Add color" onPress={handleAddColor}>
+                      <PlusIcon />
+                    </Button>
+                  </IconButtonTooltip>
+                </div>
+              )}
+            </Presence>
           </Card.Content>
         </Card>
 
@@ -458,66 +481,68 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.topBar.enabled && (
-              <div className="flex flex-col gap-2 border-t border-border pt-2">
-                <div className="flex min-h-8 items-center justify-between">
-                  <span className="text-sm">Color</span>
-                  <PaletteColorPicker
-                    ariaLabel="Top bar color"
-                    paletteEnabled={currentSettings.palette.enabled}
-                    palette={currentSettings.palette.entries}
-                    paletteId={currentSettings.topBar.color.paletteId}
-                    customColor={currentSettings.topBar.color.custom.toHex()}
-                    effectiveColor={topBarEffectiveColor.toHex()}
-                    onSelectPaletteEntry={(id) =>
-                      updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeColor(ps.topBar.color.setPalette(id))))
-                    }
-                    onSelectCustomColor={(color) =>
+            <Presence>
+              {currentSettings.topBar.enabled && (
+                <div key="section" className="flex flex-col gap-2 border-t border-border pt-2">
+                  <div className="flex min-h-8 items-center justify-between">
+                    <span className="text-sm">Color</span>
+                    <PaletteColorPicker
+                      ariaLabel="Top bar color"
+                      paletteEnabled={currentSettings.palette.enabled}
+                      palette={currentSettings.palette.entries}
+                      paletteId={currentSettings.topBar.color.paletteId}
+                      customColor={currentSettings.topBar.color.custom.toHex()}
+                      effectiveColor={topBarEffectiveColor.toHex()}
+                      onSelectPaletteEntry={(id) =>
+                        updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeColor(ps.topBar.color.setPalette(id))))
+                      }
+                      onSelectCustomColor={(color) =>
+                        updateCurrent((ps) =>
+                          ps.changeTopBar(ps.topBar.changeColor(ps.topBar.color.setCustomColor(color))),
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="flex min-h-8 items-center justify-between">
+                    <span className="text-sm">Height</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        aria-label="Top bar height"
+                        min={TopBarHeight.MIN.toPixels()}
+                        max={TopBarHeight.MAX.toPixels()}
+                        value={currentSettings.topBar.height.toPixels()}
+                        onChange={(e) => {
+                          // Anything the domain refuses is ignored rather than corrected: an empty
+                          // input (valueAsNumber is NaN) or a value outside the range simply leaves
+                          // the last valid height in place.
+                          const height = TopBarHeight.fromPixels(e.target.valueAsNumber);
+                          if (height) updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(height)));
+                        }}
+                        className="outlined-control h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
+                      />
+                      <span className="text-sm text-muted">px</span>
+                    </div>
+                  </div>
+                  <Switch
+                    className="min-h-8 w-full"
+                    isSelected={currentSettings.topBar.stripes}
+                    onChange={(isSelected) =>
                       updateCurrent((ps) =>
-                        ps.changeTopBar(ps.topBar.changeColor(ps.topBar.color.setCustomColor(color))),
+                        ps.changeTopBar(isSelected ? ps.topBar.enableStripes() : ps.topBar.disableStripes()),
                       )
                     }
-                  />
+                  >
+                    <Switch.Content className="flex w-full items-center justify-between">
+                      <span className="text-sm font-normal">Stripes</span>
+                      <Switch.Control>
+                        <Switch.Thumb />
+                      </Switch.Control>
+                    </Switch.Content>
+                  </Switch>
                 </div>
-                <div className="flex min-h-8 items-center justify-between">
-                  <span className="text-sm">Height</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      aria-label="Top bar height"
-                      min={TopBarHeight.MIN.toPixels()}
-                      max={TopBarHeight.MAX.toPixels()}
-                      value={currentSettings.topBar.height.toPixels()}
-                      onChange={(e) => {
-                        // Anything the domain refuses is ignored rather than corrected: an empty
-                        // input (valueAsNumber is NaN) or a value outside the range simply leaves
-                        // the last valid height in place.
-                        const height = TopBarHeight.fromPixels(e.target.valueAsNumber);
-                        if (height) updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeHeight(height)));
-                      }}
-                      className="outlined-control h-8 w-16 rounded-md border border-border bg-transparent px-2 text-sm"
-                    />
-                    <span className="text-sm text-muted">px</span>
-                  </div>
-                </div>
-                <Switch
-                  className="min-h-8 w-full"
-                  isSelected={currentSettings.topBar.stripes}
-                  onChange={(isSelected) =>
-                    updateCurrent((ps) =>
-                      ps.changeTopBar(isSelected ? ps.topBar.enableStripes() : ps.topBar.disableStripes()),
-                    )
-                  }
-                >
-                  <Switch.Content className="flex w-full items-center justify-between">
-                    <span className="text-sm font-normal">Stripes</span>
-                    <Switch.Control>
-                      <Switch.Thumb />
-                    </Switch.Control>
-                  </Switch.Content>
-                </Switch>
-              </div>
-            )}
+              )}
+            </Presence>
           </Card.Content>
         </Card>
 
@@ -539,49 +564,51 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.platformBar.enabled && (
-              <div className="flex flex-col gap-2 border-t border-border pt-2">
-                <div className="flex min-h-8 items-center justify-between">
-                  <span className="text-sm">Color</span>
-                  <PaletteColorPicker
-                    ariaLabel="Platform Bar color"
-                    paletteEnabled={currentSettings.palette.enabled}
-                    palette={currentSettings.palette.entries}
-                    paletteId={currentSettings.platformBar.color.paletteId}
-                    customColor={currentSettings.platformBar.color.custom.toHex()}
-                    effectiveColor={platformBarEffectiveColor.toHex()}
-                    onSelectPaletteEntry={(id) =>
+            <Presence>
+              {currentSettings.platformBar.enabled && (
+                <div key="section" className="flex flex-col gap-2 border-t border-border pt-2">
+                  <div className="flex min-h-8 items-center justify-between">
+                    <span className="text-sm">Color</span>
+                    <PaletteColorPicker
+                      ariaLabel="Platform Bar color"
+                      paletteEnabled={currentSettings.palette.enabled}
+                      palette={currentSettings.palette.entries}
+                      paletteId={currentSettings.platformBar.color.paletteId}
+                      customColor={currentSettings.platformBar.color.custom.toHex()}
+                      effectiveColor={platformBarEffectiveColor.toHex()}
+                      onSelectPaletteEntry={(id) =>
+                        updateCurrent((ps) =>
+                          ps.changePlatformBar(ps.platformBar.changeColor(ps.platformBar.color.setPalette(id))),
+                        )
+                      }
+                      onSelectCustomColor={(color) =>
+                        updateCurrent((ps) =>
+                          ps.changePlatformBar(ps.platformBar.changeColor(ps.platformBar.color.setCustomColor(color))),
+                        )
+                      }
+                    />
+                  </div>
+                  <Switch
+                    className="min-h-8 w-full"
+                    isSelected={currentSettings.platformBar.stripes}
+                    onChange={(isSelected) =>
                       updateCurrent((ps) =>
-                        ps.changePlatformBar(ps.platformBar.changeColor(ps.platformBar.color.setPalette(id))),
+                        ps.changePlatformBar(
+                          isSelected ? ps.platformBar.enableStripes() : ps.platformBar.disableStripes(),
+                        ),
                       )
                     }
-                    onSelectCustomColor={(color) =>
-                      updateCurrent((ps) =>
-                        ps.changePlatformBar(ps.platformBar.changeColor(ps.platformBar.color.setCustomColor(color))),
-                      )
-                    }
-                  />
+                  >
+                    <Switch.Content className="flex w-full items-center justify-between">
+                      <span className="text-sm font-normal">Stripes</span>
+                      <Switch.Control>
+                        <Switch.Thumb />
+                      </Switch.Control>
+                    </Switch.Content>
+                  </Switch>
                 </div>
-                <Switch
-                  className="min-h-8 w-full"
-                  isSelected={currentSettings.platformBar.stripes}
-                  onChange={(isSelected) =>
-                    updateCurrent((ps) =>
-                      ps.changePlatformBar(
-                        isSelected ? ps.platformBar.enableStripes() : ps.platformBar.disableStripes(),
-                      ),
-                    )
-                  }
-                >
-                  <Switch.Content className="flex w-full items-center justify-between">
-                    <span className="text-sm font-normal">Stripes</span>
-                    <Switch.Control>
-                      <Switch.Thumb />
-                    </Switch.Control>
-                  </Switch.Content>
-                </Switch>
-              </div>
-            )}
+              )}
+            </Presence>
           </Card.Content>
         </Card>
 
@@ -603,42 +630,46 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                 </Switch.Control>
               </Switch.Content>
             </Switch>
-            {currentSettings.platformBarText.enabled && (
-              <div className="flex flex-col gap-2 border-t border-border pt-2">
-                <div className="flex min-h-8 items-center justify-between">
-                  <span className="text-sm">Color</span>
-                  <PaletteColorPicker
-                    ariaLabel="Platform Bar text color"
-                    paletteEnabled={currentSettings.palette.enabled}
-                    palette={currentSettings.palette.entries}
-                    paletteId={currentSettings.platformBarText.color.paletteId}
-                    customColor={currentSettings.platformBarText.color.custom.toHex()}
-                    effectiveColor={platformBarTextEffectiveColor.toHex()}
-                    // Picking any explicit color also leaves Auto, in the same save: the two
-                    // are mutually exclusive states of this surface.
-                    onSelectPaletteEntry={(id) =>
-                      updateCurrent((ps) =>
-                        ps.changePlatformBarText(
-                          ps.platformBarText.changeColor(ps.platformBarText.color.setPalette(id)).disableAuto(),
-                        ),
-                      )
-                    }
-                    onSelectCustomColor={(color) =>
-                      updateCurrent((ps) =>
-                        ps.changePlatformBarText(
-                          ps.platformBarText.changeColor(ps.platformBarText.color.setCustomColor(color)).disableAuto(),
-                        ),
-                      )
-                    }
-                    supportsAuto
-                    autoSelected={currentSettings.platformBarText.auto}
-                    onSelectAuto={() =>
-                      updateCurrent((ps) => ps.changePlatformBarText(ps.platformBarText.enableAuto()))
-                    }
-                  />
+            <Presence>
+              {currentSettings.platformBarText.enabled && (
+                <div key="section" className="flex flex-col gap-2 border-t border-border pt-2">
+                  <div className="flex min-h-8 items-center justify-between">
+                    <span className="text-sm">Color</span>
+                    <PaletteColorPicker
+                      ariaLabel="Platform Bar text color"
+                      paletteEnabled={currentSettings.palette.enabled}
+                      palette={currentSettings.palette.entries}
+                      paletteId={currentSettings.platformBarText.color.paletteId}
+                      customColor={currentSettings.platformBarText.color.custom.toHex()}
+                      effectiveColor={platformBarTextEffectiveColor.toHex()}
+                      // Picking any explicit color also leaves Auto, in the same save: the two
+                      // are mutually exclusive states of this surface.
+                      onSelectPaletteEntry={(id) =>
+                        updateCurrent((ps) =>
+                          ps.changePlatformBarText(
+                            ps.platformBarText.changeColor(ps.platformBarText.color.setPalette(id)).disableAuto(),
+                          ),
+                        )
+                      }
+                      onSelectCustomColor={(color) =>
+                        updateCurrent((ps) =>
+                          ps.changePlatformBarText(
+                            ps.platformBarText
+                              .changeColor(ps.platformBarText.color.setCustomColor(color))
+                              .disableAuto(),
+                          ),
+                        )
+                      }
+                      supportsAuto
+                      autoSelected={currentSettings.platformBarText.auto}
+                      onSelectAuto={() =>
+                        updateCurrent((ps) => ps.changePlatformBarText(ps.platformBarText.enableAuto()))
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </Presence>
           </Card.Content>
         </Card>
       </div>
@@ -646,7 +677,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    // Keyed for the same reason as the detail root. The attribute is there only after Back.
+    <div key="list" data-view-enter={view.back ? 'back' : undefined} className="flex flex-col gap-3">
       <h1 className="text-base font-semibold">GCP Console Tint</h1>
 
       {/* Uncontrolled: returning from the detail view remounts the list and lands on Rules again,
@@ -670,98 +702,112 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
           </Tabs.List>
         </Tabs.ListContainer>
 
-        <Tabs.Panel id="rules" className="mt-0 p-0">
-          <Card>
-            <Card.Content className="flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-medium">Projects</div>
-                <AddRuleModal onAdd={handleAddRule}>
-                  <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
-                    <PlusIcon />
-                  </Button>
-                </AddRuleModal>
-              </div>
-
-              {settings.projectRules.length > 0 && (
-                <div className="flex flex-col gap-2 border-t border-border pt-2">
-                  {settings.projectRules.map((rule, index) => (
-                    // biome-ignore lint/a11y/noStaticElementInteractions: native HTML5 drag-and-drop row reordering; no keyboard-accessible equivalent yet
-                    <div
-                      key={rule.id.toString()}
-                      draggable
-                      onDragStart={handleRowDragStart(index)}
-                      onDragOver={handleRowDragOver(index)}
-                      onDrop={handleRowDrop(index)}
-                      onDragEnd={handleRowDragEnd}
-                      className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="cursor-grab text-muted"
-                        onMouseDown={handleGripMouseDown}
-                        onMouseUp={handleGripMouseUp}
-                      >
-                        <GripIcon />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
-                      <span className="shrink-0 text-xs text-muted">{rule.matchType}</span>
-                      <IconButtonTooltip label="Edit">
-                        <Button
-                          isIconOnly
-                          variant="outline"
-                          size="sm"
-                          aria-label="Edit"
-                          className="shrink-0"
-                          onPress={() => setView({ type: 'detail', ruleId: rule.id })}
-                        >
-                          <PencilIcon />
-                        </Button>
-                      </IconButtonTooltip>
-                      <IconButtonTooltip label="Duplicate">
-                        <Button
-                          isIconOnly
-                          variant="outline"
-                          size="sm"
-                          aria-label="Duplicate"
-                          className="shrink-0"
-                          onPress={() => handleDuplicateRule(rule.id)}
-                        >
-                          <DuplicateIcon />
-                        </Button>
-                      </IconButtonTooltip>
-                      <DeleteConfirmPopover
-                        question="Delete this rule?"
-                        target={rule.pattern}
-                        confirmLabel="Delete"
-                        tooltipLabel="Delete"
-                        onConfirm={() => handleDeleteRule(rule.id)}
-                      >
-                        <Button isIconOnly variant="outline" size="sm" aria-label="Delete" className="shrink-0">
-                          <TrashIcon />
-                        </Button>
-                      </DeleteConfirmPopover>
-                    </div>
-                  ))}
+        {/* A positioned box for the panels. While a panel leaves, HeroUI makes it
+            `position: absolute; top: 0`, and no ancestor up to here is positioned: without this
+            box it would jump to the top of the page, over the title and the tab list.
+            `tab-panel-start` / `tab-panel-end` name the side each panel slides to and from
+            (style.css): the first tab's panel to the left, the last one's to the right. */}
+        <div className="tab-panels">
+          <Tabs.Panel id="rules" className="tab-panel-start mt-0 p-0">
+            <Card>
+              <Card.Content className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium">Projects</div>
+                  <AddRuleModal onAdd={handleAddRule}>
+                    <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
+                      <PlusIcon />
+                    </Button>
+                  </AddRuleModal>
                 </div>
-              )}
-            </Card.Content>
-          </Card>
-        </Tabs.Panel>
 
-        {/* BackupCard returns a fragment (card + an optional result Alert), so both land directly
-            in this panel and pick up the page column's spacing. */}
-        <Tabs.Panel id="settings" className="mt-0 flex flex-col gap-3 p-0">
-          <AppearanceCard theme={settings.theme} onChange={(theme) => save(settings.changeTheme(theme))} />
-          <BackupCard
-            settingsStore={settingsStore}
-            settings={settings}
-            loadSaved={loadSaved}
-            onImport={handleImportRules}
-            notice={notice}
-            onNotice={showNotice}
-            onClearNotice={() => setNotice(null)}
-          />
-        </Tabs.Panel>
+                {/* Two levels of Presence: the outer one brings the divider and the list in with
+                    the first rule and takes them out with the last, the inner one opens and closes
+                    single rows. */}
+                <Presence>
+                  {settings.projectRules.length > 0 && (
+                    <div key="rules" className="flex flex-col gap-2 border-t border-border pt-2">
+                      <Presence>
+                        {settings.projectRules.map((rule, index) => (
+                          // biome-ignore lint/a11y/noStaticElementInteractions: native HTML5 drag-and-drop row reordering; no keyboard-accessible equivalent yet
+                          <div
+                            key={rule.id.toString()}
+                            draggable
+                            onDragStart={handleRowDragStart(index)}
+                            onDragOver={handleRowDragOver(index)}
+                            onDrop={handleRowDrop(index)}
+                            onDragEnd={handleRowDragEnd}
+                            className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className="cursor-grab text-muted"
+                              onMouseDown={handleGripMouseDown}
+                              onMouseUp={handleGripMouseUp}
+                            >
+                              <GripIcon />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
+                            <span className="shrink-0 text-xs text-muted">{rule.matchType}</span>
+                            <IconButtonTooltip label="Edit">
+                              <Button
+                                isIconOnly
+                                variant="outline"
+                                size="sm"
+                                aria-label="Edit"
+                                className="shrink-0"
+                                onPress={() => setView({ type: 'detail', ruleId: rule.id })}
+                              >
+                                <PencilIcon />
+                              </Button>
+                            </IconButtonTooltip>
+                            <IconButtonTooltip label="Duplicate">
+                              <Button
+                                isIconOnly
+                                variant="outline"
+                                size="sm"
+                                aria-label="Duplicate"
+                                className="shrink-0"
+                                onPress={() => handleDuplicateRule(rule.id)}
+                              >
+                                <DuplicateIcon />
+                              </Button>
+                            </IconButtonTooltip>
+                            <DeleteConfirmPopover
+                              question="Delete this rule?"
+                              target={rule.pattern}
+                              confirmLabel="Delete"
+                              tooltipLabel="Delete"
+                              onConfirm={() => handleDeleteRule(rule.id)}
+                            >
+                              <Button isIconOnly variant="outline" size="sm" aria-label="Delete" className="shrink-0">
+                                <TrashIcon />
+                              </Button>
+                            </DeleteConfirmPopover>
+                          </div>
+                        ))}
+                      </Presence>
+                    </div>
+                  )}
+                </Presence>
+              </Card.Content>
+            </Card>
+          </Tabs.Panel>
+
+          {/* BackupCard returns a fragment (card + an optional result Alert), so both land directly
+              in this panel and pick up the page column's spacing. */}
+          <Tabs.Panel id="settings" className="tab-panel-end mt-0 flex flex-col gap-3 p-0">
+            <AppearanceCard theme={settings.theme} onChange={(theme) => save(settings.changeTheme(theme))} />
+            <BackupCard
+              settingsStore={settingsStore}
+              settings={settings}
+              loadSaved={loadSaved}
+              onImport={handleImportRules}
+              notice={notice}
+              onNotice={showNotice}
+              onClearNotice={() => setNotice(null)}
+            />
+          </Tabs.Panel>
+        </div>
       </Tabs>
     </div>
   );
