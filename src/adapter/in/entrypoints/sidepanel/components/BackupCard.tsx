@@ -376,8 +376,10 @@ export default function BackupCard({
         </Card.Content>
       </Card>
 
+      {/* Fades in (`.notice-enter` in style.css) only when raised after this card mounted, the same
+          condition as the live region. No exit: a cleared notice must leave the document at once. */}
       {notice !== null && (
-        <Alert status={ALERT_STATUS[notice.tone]}>
+        <Alert status={ALERT_STATUS[notice.tone]} className={liveRole ? 'notice-enter' : undefined}>
           <Alert.Indicator />
           <Alert.Content>
             <div key={notice.id} role={liveRole}>
