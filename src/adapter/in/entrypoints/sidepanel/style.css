@@ -60,6 +60,17 @@ body {
   --border: oklch(35% 0.006 286.033);
 }
 
+/* How fast the app's hand-built bordered controls answer hover, focus and press. It belongs to the
+   interaction motion rules at the end of this file ("Hand-built controls"); only this one rule
+   sits here, because it has to come before the more specific `.dark .outlined-control` selector
+   below (Biome's noDescendingSpecificity). */
+.outlined-control {
+  transition:
+    background-color 100ms var(--ease-out),
+    box-shadow 150ms var(--ease-out),
+    scale 250ms var(--ease-smooth);
+}
+
 /* In dark, pressable controls sit one step above the dividers. In light, HeroUI lifts inputs and
    the select trigger with --field-shadow, which is transparent in dark. --border-secondary is
    HeroUI's own token for the step (L 38%, contrast 1.78 on the card). It is HeroUI's color-mix of
@@ -407,5 +418,194 @@ html.theme-transitions {
 @media (prefers-reduced-motion: reduce) {
   html.theme-transitions {
     transition: none;
+  }
+}
+
+/* Interaction motion: tab changes, list <-> detail navigation, the sections, rows and messages
+   that open and close, and the hover and press feedback of the hand-built controls. Unlayered like
+   the rules above, and built on HeroUI's easing tokens only. Four duration tokens, plus the delays
+   written next to them, run the panels, views, sections and rows: things arrive in 250ms (the
+   length of the tab pill's slide, on the curve the 300ms switch thumb uses), leave in 160ms, and
+   fade in 150ms / out 100ms (HeroUI's own overlay fades). The hand-built controls repeat HeroUI's
+   own literal 100/150/250ms instead. `--ease-out-fluid` is a hard ease-out, so most of any travel
+   is over by half time and the rest is settling. Enter and exit are never symmetric: exits are
+   shorter and fade before they collapse. */
+:root {
+  --motion-enter: 250ms;
+  --motion-exit: 160ms;
+  --motion-fade-in: 150ms;
+  --motion-fade-out: 100ms;
+}
+
+/* Tab panels: a fade-through. react-aria marks the incoming panel `data-entering` for one style
+   flush and keeps the outgoing one mounted (`data-exiting`, inert) while a transition declared on
+   the panel itself runs. HeroUI makes the outgoing panel absolute at top: 0, so the panels need a
+   positioned box of their own (`.tab-panels`). The outgoing panel is all but gone (100ms) when the
+   incoming one starts (80ms delay); a plain cross-fade showed both texts at once. The incoming
+   slide lands at 250ms, together with the pill. Direction needs no JS: the first panel always
+   lives on the left, so it leaves and returns to the left. HeroUI declares no transition on
+   `.tabs__panel`, so this shorthand replaces nothing. */
+.tab-panels {
+  position: relative;
+}
+.tabs__panel {
+  transition:
+    opacity var(--motion-fade-in) var(--ease-smooth) 80ms,
+    translate calc(var(--motion-enter) - 80ms) var(--ease-out-fluid) 80ms;
+}
+.tabs__panel[data-entering],
+.tabs__panel[data-exiting] {
+  opacity: 0;
+}
+.tabs__panel[data-exiting] {
+  transition-duration: var(--motion-fade-out);
+  transition-delay: 0ms;
+}
+.tab-panel-start[data-entering],
+.tab-panel-start[data-exiting] {
+  translate: -8px 0;
+}
+.tab-panel-end[data-entering],
+.tab-panel-end[data-exiting] {
+  translate: 8px 0;
+}
+
+/* List <-> detail: enter only. The two view roots are keyed, so each navigation mounts a new
+   root; the attribute is absent on the first paint of the panel, and absent on the list unless the
+   user pressed Back. The fade is shorter than the slide so the new view is readable while it is
+   still settling. 12px, more than the tab's 8px: a level change, not a lateral one. */
+@keyframes view-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes view-slide {
+  from {
+    translate: var(--view-enter-x) 0;
+  }
+}
+[data-view-enter] {
+  --view-enter-x: 12px;
+  animation:
+    view-fade var(--motion-fade-in) var(--ease-out-fluid),
+    view-slide var(--motion-enter) var(--ease-out-fluid);
+}
+[data-view-enter="back"] {
+  --view-enter-x: -12px;
+}
+/* A Backup notice raised while the Settings tab is open (BackupCard sets the class only then)
+   borrows the fade. It has no slide, no height animation (nothing sits below it) and no exit: a
+   cleared notice leaves the document at once. */
+.notice-enter {
+  animation: view-fade var(--motion-fade-in) var(--ease-smooth);
+}
+
+/* Presence wrapper (components/Presence.tsx) for the switch-gated sections, the rule and palette
+   rows and the validation line: height via grid rows 1fr <-> 0fr. The inner div is the grid item
+   that shrinks; it carries only the 4px of focus-ring room (block padding cancelled by an equal
+   negative margin, see the rule below). Any other padding or border on it would keep the 0fr row
+   from collapsing. The wrapper's negative margin-top cancels the parent's flex gap while collapsed.
+   Content opacity trails the box on the way in (60ms) and leads it on the way out (40ms), so the
+   clip edge never slices visible text or buttons. */
+.reveal {
+  --reveal-gap: 0.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--motion-enter) var(--ease-out-fluid),
+    margin-top var(--motion-enter) var(--ease-out-fluid),
+    opacity var(--motion-fade-in) var(--ease-smooth) 60ms;
+}
+/* Clipped on the block axis only, so a row wider than a narrow panel stays reachable. Focus rings
+   reach 4px outside their control: the padding, taken back by the margin, leaves them that room
+   (overflow-clip-margin has no effect unless both axes clip). */
+.reveal > div {
+  min-height: 0;
+  overflow-x: visible;
+  overflow-y: clip;
+  padding-block: 4px;
+  margin-block: -4px;
+}
+/* Both ends share the collapsed state. Presence marks a new wrapper `data-entering` for one style
+   flush, the way react-aria marks an entering tab panel: it is first styled collapsed, and the
+   transition above opens it once the attribute is gone. A leaving wrapper keeps `data-exiting`,
+   and stays mounted and inert, until the shorter transition below has finished. */
+.reveal[data-entering],
+.reveal[data-exiting] {
+  grid-template-rows: 0fr;
+  margin-top: calc(-1 * var(--reveal-gap));
+  opacity: 0;
+}
+.reveal[data-exiting] {
+  transition:
+    grid-template-rows var(--motion-exit) var(--ease-out-fluid) 40ms,
+    margin-top var(--motion-exit) var(--ease-out-fluid) 40ms,
+    opacity var(--motion-fade-out) var(--ease-smooth);
+}
+
+/* Hand-built controls (picker trigger, Auto button, colour field, palette chips) answer hover and
+   press exactly like the HeroUI buttons beside them: `.button` is background 100ms, transform
+   250ms `--ease-smooth`, hover `--default` at 60%, press 0.97/0.98; the small round close button
+   presses to 0.93. The selection ring is a box-shadow, so it fades between chips at the ring speed
+   HeroUI uses (150ms). No hover movement: this is a dense list. None of these elements carries a
+   HeroUI class, so no HeroUI transition list is replaced. The transition of `.outlined-control`
+   is declared near the top of this file, above the `.dark .outlined-control` rule. */
+.color-chip {
+  transition:
+    box-shadow 150ms var(--ease-out),
+    scale 250ms var(--ease-smooth);
+}
+button.outlined-control:hover,
+label.outlined-control:hover {
+  background-color: color-mix(in srgb, var(--default) 60%, transparent);
+}
+button.outlined-control:active {
+  scale: 0.98;
+}
+button.color-chip:active {
+  scale: 0.93;
+}
+
+/* Reduced motion: nothing travels or resizes over time; only short opacity, colour and ring changes
+   remain, which WCAG 2.3.3 does not count as motion. Durations stay non-zero so react-aria and
+   Presence still get an animation to wait for. This is a block of its own because
+   tests/theme-tokens.test.ts expects the theme fade's reduced-motion block above exactly as it is
+   written. */
+@media (prefers-reduced-motion: reduce) {
+  .tabs__panel {
+    transition-property: opacity;
+    transition-duration: var(--motion-fade-out);
+  }
+  .tabs__panel[data-entering],
+  .tabs__panel[data-exiting] {
+    translate: none;
+  }
+  [data-view-enter] {
+    --view-enter-x: 0px;
+    animation-duration: var(--motion-fade-out);
+  }
+  .notice-enter {
+    animation-duration: var(--motion-fade-out);
+  }
+  .reveal,
+  .reveal[data-exiting] {
+    transition-property: opacity;
+    transition-duration: var(--motion-fade-out);
+    transition-timing-function: var(--ease-smooth);
+    transition-delay: 0ms;
+  }
+  /* A chip keeps its ring fade only. Listing background-color here, as for the outlined controls,
+     would add a transition it does not have otherwise, and a recoloured chip would then lag
+     behind the native colour picker. */
+  .color-chip {
+    transition-property: box-shadow;
+  }
+  .outlined-control {
+    transition-property: background-color, box-shadow;
+  }
+  button.outlined-control:active,
+  button.color-chip:active {
+    scale: none;
   }
 }
