@@ -72,8 +72,8 @@ body {
    --surface and --surface-foreground (22%), so it follows the fade as well. At the theme toggle
    these controls change which token they read, so their 1px edge takes one small step in the
    first frame and then fades with the rest.
-   `.outlined-control` marks the app's hand-built bordered controls (the Height field, the colour
-   field and the picker's trigger and Match contrast button), whose `border border-border`
+   `.outlined-control` marks the app's hand-built bordered controls (the Height field, the pickers'
+   triggers, the Match contrast option and the hex control), whose `border border-border`
    utilities stay as the light-theme edge. Unlayered, so it wins over those utilities. */
 .dark .button--outline,
 .dark .input,
@@ -82,34 +82,163 @@ body {
   border-color: var(--border-secondary);
 }
 
-/* A picked colour is one object everywhere, in both themes: a round bead. The pickers'
-   `.color-chip` already is one (20px in the trigger, 28px in the popover). The colour field shows
-   the colour through a native colour input, which Chrome draws as a square-cornered swatch inside
-   its own padding with a fixed 1px #777 frame. The input keeps its 32x24 box (`h-6 w-8`); this
-   padding leaves a 20x20 content box, so the swatch matches the trigger's dot.
-   Chrome's and Firefox's swatch pseudo-elements are separate rules: a selector list containing a
-   pseudo-element the engine does not know is dropped whole. */
-input[type="color"] {
-  padding: 2px 6px;
-}
-input[type="color"]::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-input[type="color"]::-webkit-color-swatch {
-  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
-  border-radius: 9999px;
-}
-input[type="color"]::-moz-color-swatch {
-  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
-  border-radius: 9999px;
-}
-
-/* The bead's rim is the fill pulled a quarter of the way to the text colour: a translucent
-   --foreground border over the edge of the fill, which extends under it, so the inside of the
-   bead stays the true colour. The swatch rules above use the same colour. No box-shadow here:
-   the selected bead's `ring-2` is a box-shadow. */
+/* A picked colour is one object everywhere, in both themes: a round bead (`.color-chip`, 20px in
+   the triggers and the hex control, 28px for the palette options in the popovers). The bead's
+   rim is the fill pulled a quarter of the way to the text colour: a translucent --foreground
+   border over the edge of the fill, which extends under it, so the inside of the bead stays the
+   true colour. No box-shadow here: the selected bead's `ring-2` is a box-shadow.
+   The fill is the data, so forced colours (a Windows contrast theme) must not repaint it: the
+   bead keeps its colours there, and with them the selection ring and the focus outline. */
 .color-chip {
   border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+  forced-color-adjust: none;
+}
+
+/* A bead that can be pressed (the palette options) answers the pointer with a small lift. The
+   accent ring is this panel's selection mark on beads, so keyboard focus on a bead cannot be an
+   accent ring too: it is an outline in the text colour, one step further out than the selection
+   ring (offset 4 against the ring's 2), so it reads as the cursor, and on the selected bead both
+   show. */
+button.color-chip {
+  transition: scale 150ms var(--ease-out-fluid);
+}
+button.color-chip:hover {
+  scale: 1.12;
+}
+button.color-chip:active {
+  scale: 0.96;
+}
+button.color-chip:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 4px;
+}
+
+/* The bordered controls of the pickers (triggers, Match contrast, the hex control) focus like
+   HeroUI's text inputs: a 2px --focus ring against the border. Listed before the Tailwind ring
+   variables so that on a control that is also the selected choice (`ring-2` with a 2px gap) the
+   focus ring fills the gap, and the two states stay distinct: gapped ring = selected, tight ring
+   = focused, solid 4px = both. The variables are registered by Tailwind with a no-shadow initial
+   value, so the rule is complete on an unselected control too.
+   Forced colours drop every box-shadow, so both marks also exist as outlines there: the selected
+   choice wears a gapped outline in the system's highlight colour, and the focus outline, which is
+   transparent everywhere else, is repainted by the browser in the system's text colour (tight on
+   an unselected control, in the selected one's gap otherwise). The forced-colours rule comes
+   first so the focus rule's outline wins on a control that is both. */
+@media (forced-colors: active) {
+  button.outlined-control[aria-pressed="true"],
+  .hex-control.ring-2 {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+  /* A bead keeps its own colours there, but its focus outline lies on the system's canvas. */
+  button.color-chip:focus-visible {
+    outline-color: CanvasText;
+  }
+}
+button.outlined-control:focus-visible,
+.hex-control:focus-within {
+  outline: 2px solid transparent;
+  box-shadow:
+    0 0 0 2px var(--focus),
+    var(--tw-ring-offset-shadow),
+    var(--tw-ring-shadow);
+}
+
+/* The colour well: the bead opened up. HeroUI's ColorArea (saturation across, brightness down)
+   with its hue ColorSlider fused under it into one rounded shape, edged with the bead's own rim
+   instead of HeroUI's fixed 10% black hairlines (which vanish in dark where the area's black
+   bottom meets the popover). The radius is 12px: concentric with the popover's 24px corners
+   behind 12px of dialog padding, like DeleteConfirmPopover's button.
+   HeroUI's rules live in @layer components; these are unlayered and win regardless of
+   specificity, which is why the nested `.color-slider[data-orientation] .color-slider__track`
+   rules need no matching selector here. The gradients themselves are inline styles from
+   react-aria.
+   Thumb travel: react-aria centres a thumb on its value, so at an edge value half of it would
+   hang outside the painted surface (a white colour's thumb floating off the corner). A
+   transparent border of half a bead shrinks the padding box the thumbs travel in, while the
+   gradients are laid out over the border box (`background-origin`, `!important` because
+   react-aria rewrites the inline `background` shorthand, which resets the origin, on every
+   change). The pointer is still mapped over the whole border box, so near an edge the thumb
+   trails the pointer by up to half a bead, and the colour painted under its centre is a few
+   percent off its value; the thumb's own fill is exact. */
+.color-well {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  border-radius: 12px;
+}
+.color-well::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
+  pointer-events: none;
+}
+.color-well .color-area {
+  max-width: none;
+  aspect-ratio: auto;
+  height: 140px;
+  border: 10px solid transparent;
+  border-radius: 12px 12px 0 0;
+  /* biome-ignore lint/complexity/noImportantStyles: beats react-aria's inline `background` shorthand */
+  background-origin: border-box !important;
+  box-shadow: none;
+}
+/* The hue strip spans the well. HeroUI's end caps (which repaint the start and end hue beside a
+   narrower track) are not needed once the track extends under the thumb's travel: the gradient
+   stays in the padding box, where the thumb reads its hue exactly, and the transparent borders
+   show the colour both of its ends are, red (hue 0 is hue 360). Without this the gradient would
+   repeat under the borders, a magenta sliver before red and an orange one after it. The same
+   `!important` as the face: react-aria's inline `background` shorthand resets both longhands on
+   every change. */
+.color-well .color-slider__track {
+  width: 100%;
+  border-inline: 10px solid transparent;
+  border-radius: 0 0 12px 12px;
+  box-shadow: none;
+  /* biome-ignore lint/complexity/noImportantStyles: beats react-aria's inline `background` shorthand */
+  background-repeat: no-repeat !important;
+  /* biome-ignore lint/complexity/noImportantStyles: beats react-aria's inline `background` shorthand */
+  background-color: #ff0000 !important;
+}
+.color-well .color-slider__track::before,
+.color-well .color-slider__track::after {
+  display: none;
+}
+/* Both thumbs are the trigger's 20px bead, filled with the colour under them. They sit on the
+   user's colour, never on the surface, so their edge is theme-independent: a white ring with a
+   dark hairline on both sides of it, so the ring survives on white and the fill survives on black.
+   Constant size: nothing grows under the pointer. z-index keeps both above the well's rim. */
+.color-well .color-area__thumb,
+.color-well .color-slider__thumb {
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #fff;
+  border-radius: 9999px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+.color-well .color-area__thumb[data-focus-visible="true"],
+.color-well .color-slider__thumb[data-focus-visible="true"] {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.28),
+    0 0 0 4px var(--focus),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.color-chip {
+    transition: none;
+  }
+  /* A size that jumps is motion as well. */
+  button.color-chip:hover,
+  button.color-chip:active {
+    scale: none;
+  }
 }
 
 /* The Settings tab's theme switch: a HeroUI ToggleButtonGroup (`.theme-switch` is the className
