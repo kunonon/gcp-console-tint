@@ -33,8 +33,10 @@ describe('colour picker rules of style.css', () => {
     expect(style.indexOf(selected)).toBeLessThan(style.indexOf('button.outlined-control:focus-visible'));
   });
 
-  it('keeps a bead at its size under reduced motion, hovered or pressed', () => {
-    const block = /@media \(prefers-reduced-motion: reduce\) \{ button\.color-chip \{.*?\} \}/.exec(style)?.[0];
-    expect(block).toContain('button.color-chip:hover, button.color-chip:active { scale: none; }');
+  it('keeps a bead at its size under the pointer, and when pressed under reduced motion', () => {
+    // No hover movement in this dense list ("Hand-built controls" in style.css); a press scales
+    // the bead, which reduced motion takes away.
+    expect(style).not.toContain('button.color-chip:hover');
+    expect(style).toContain('button.outlined-control:active, button.color-chip:active { scale: none; }');
   });
 });

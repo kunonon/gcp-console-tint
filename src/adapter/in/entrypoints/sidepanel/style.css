@@ -105,20 +105,11 @@ body {
   forced-color-adjust: none;
 }
 
-/* A bead that can be pressed (the palette options) answers the pointer with a small lift. The
-   accent ring is this panel's selection mark on beads, so keyboard focus on a bead cannot be an
-   accent ring too: it is an outline in the text colour, one step further out than the selection
-   ring (offset 4 against the ring's 2), so it reads as the cursor, and on the selected bead both
-   show. */
-button.color-chip {
-  transition: scale 150ms var(--ease-out-fluid);
-}
-button.color-chip:hover {
-  scale: 1.12;
-}
-button.color-chip:active {
-  scale: 0.96;
-}
+/* The accent ring is this panel's selection mark on beads, so keyboard focus on a bead that can
+   be pressed (the palette options) cannot be an accent ring too: it is an outline in the text
+   colour, one step further out than the selection ring (offset 4 against the ring's 2), so it
+   reads as the cursor, and on the selected bead both show. How a bead answers a press is with the
+   other hand-built controls at the end of this file. */
 button.color-chip:focus-visible {
   outline: 2px solid var(--foreground);
   outline-offset: 4px;
@@ -239,17 +230,6 @@ button.outlined-control:focus-visible,
     0 0 0 1px rgba(0, 0, 0, 0.28),
     0 0 0 4px var(--focus),
     inset 0 0 0 1px rgba(0, 0, 0, 0.28);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  button.color-chip {
-    transition: none;
-  }
-  /* A size that jumps is motion as well. */
-  button.color-chip:hover,
-  button.color-chip:active {
-    scale: none;
-  }
 }
 
 /* The Settings tab's theme switch: a HeroUI ToggleButtonGroup (`.theme-switch` is the className
@@ -679,20 +659,20 @@ html.theme-transitions {
     opacity var(--motion-fade-out) var(--ease-smooth);
 }
 
-/* Hand-built controls (picker trigger, Auto button, colour field, palette chips) answer hover and
-   press exactly like the HeroUI buttons beside them: `.button` is background 100ms, transform
-   250ms `--ease-smooth`, hover `--default` at 60%, press 0.97/0.98; the small round close button
-   presses to 0.93. The selection ring is a box-shadow, so it fades between chips at the ring speed
-   HeroUI uses (150ms). No hover movement: this is a dense list. None of these elements carries a
-   HeroUI class, so no HeroUI transition list is replaced. The transition of `.outlined-control`
-   is declared near the top of this file, above the `.dark .outlined-control` rule. */
+/* Hand-built controls (picker triggers, Auto option, palette chips) answer hover and press exactly
+   like the HeroUI buttons beside them: `.button` is background 100ms, transform 250ms
+   `--ease-smooth`, hover `--default` at 60%, press 0.97/0.98; the small round close button presses
+   to 0.93. The selection ring is a box-shadow, so it fades between chips at the ring speed HeroUI
+   uses (150ms). No hover movement: this is a dense list. The hex control is a text field, so like
+   the Height field it does not tint under the pointer. None of these elements carries a HeroUI
+   class, so no HeroUI transition list is replaced. The transition of `.outlined-control` is
+   declared near the top of this file, above the `.dark .outlined-control` rule. */
 .color-chip {
   transition:
     box-shadow 150ms var(--ease-out),
     scale 250ms var(--ease-smooth);
 }
-button.outlined-control:hover,
-label.outlined-control:hover {
+button.outlined-control:hover {
   background-color: color-mix(in srgb, var(--default) 60%, transparent);
 }
 button.outlined-control:active {
@@ -732,7 +712,7 @@ button.color-chip:active {
   }
   /* A chip keeps its ring fade only. Listing background-color here, as for the outlined controls,
      would add a transition it does not have otherwise, and a recoloured chip would then lag
-     behind the native colour picker. */
+     behind the thumb being dragged in the colour well. */
   .color-chip {
     transition-property: box-shadow;
   }
