@@ -1,5 +1,11 @@
-@import "tailwindcss";
+/* Tailwind emits a utility for every class-like word in the files it scans, and by default it
+   scans the whole repository: a bare "blur" in a test title, "resize" in an E2E assertion or
+   "isolate" in a CI comment each became a rule in this stylesheet. Scan only what ships: `src`
+   without its tests. */
+@import "tailwindcss" source("../../../..");
 @import "@heroui/styles";
+@source not "../../../../**/tests";
+@source not "../../../../test-setup.ts";
 
 body {
   margin: 0;
