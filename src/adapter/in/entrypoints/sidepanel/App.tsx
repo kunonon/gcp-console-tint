@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Input, Switch, Tabs, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
-import { Color } from '../../../../domain/color';
+import type { Color } from '../../../../domain/color';
 import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
 import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../domain/project-rule';
 import { ProjectSettings } from '../../../../domain/project-settings';
@@ -321,10 +321,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     updateCurrent((ps) => ps.changePalette(ps.palette.renameEntry(id, name)));
   };
 
-  const handlePaletteColorChange = (id: PaletteEntryId, color: string) => {
-    // input[type=color] can only ever emit '#rrggbb', so fromHex never returns undefined here.
-    const parsed = Color.fromHex(color);
-    if (parsed) updateCurrent((ps) => ps.changePalette(ps.palette.changeEntryColor(id, parsed)));
+  // The colour editors validate at their boundary (Color.fromHex) and only ever hand over a Color.
+  const handlePaletteColorChange = (id: PaletteEntryId, color: Color) => {
+    updateCurrent((ps) => ps.changePalette(ps.palette.changeEntryColor(id, color)));
   };
 
   // Palette entries and their references are scoped to the currently-edited rule only;
@@ -437,7 +436,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                         <ColorSwatchField
                           ariaLabel={`${entry.name || '(unnamed)'} color`}
                           value={entry.color.toHex()}
-                          onChange={(e) => handlePaletteColorChange(entry.id, e.target.value)}
+                          onChange={(color) => handlePaletteColorChange(entry.id, color)}
                           hexHidableOnNarrow
                         />
                         <DeleteConfirmPopover
@@ -662,6 +661,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                       }
                       supportsAuto
                       autoSelected={currentSettings.platformBarText.auto}
+                      autoColor={platformBarEffectiveColor.contrastingTextColor().toHex()}
                       onSelectAuto={() =>
                         updateCurrent((ps) => ps.changePlatformBarText(ps.platformBarText.enableAuto()))
                       }

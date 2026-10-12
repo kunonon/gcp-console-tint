@@ -96,10 +96,21 @@ function getCard(switchName: string): HTMLElement {
   return card as HTMLElement;
 }
 
-function getColorInput(card: HTMLElement): HTMLInputElement {
-  const input = card.querySelector('input[type="color"]');
-  if (!input) throw new Error('color input not found in card');
-  return input as HTMLInputElement;
+// Opens a palette row's colour popover by its trigger (the bead-and-hex button named
+// "<entry name> color") and returns the opened dialog. Call it before anything else is open: an
+// open popover hides the rest of the page from the accessibility tree.
+async function openPaletteRowEditor(user: ReturnType<typeof userEvent.setup>, entryLabel: string) {
+  await user.click(screen.getByRole('button', { name: `${entryLabel} color` }));
+  return screen.getByRole('dialog', { name: `${entryLabel} color` });
+}
+
+// Changes a palette entry's colour the way a pasted hex does: through the Hex input of the
+// row's popover (a complete hex commits at once), then closes the popover so the page is
+// reachable again.
+async function setPaletteRowColor(user: ReturnType<typeof userEvent.setup>, entryLabel: string, hex: string) {
+  const dialog = await openPaletteRowEditor(user, entryLabel);
+  fireEvent.change(within(dialog).getByLabelText('Hex'), { target: { value: hex } });
+  await closePicker(user);
 }
 
 function getTriggerSwatch(triggerLabel: string): HTMLSpanElement {
@@ -153,7 +164,7 @@ function getCustomColorInput(dialog: HTMLElement): HTMLInputElement {
 }
 
 function getAutoButton(dialog: HTMLElement): HTMLButtonElement {
-  return within(dialog).getByRole('button', { name: 'Auto' }) as HTMLButtonElement;
+  return within(dialog).getByRole('button', { name: 'Auto Match contrast' }) as HTMLButtonElement;
 }
 
 function hexOrRgb(hex: string): (string | undefined)[] {
@@ -463,8 +474,7 @@ describe('App', () => {
       expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries).toHaveLength(2);
     });
 
-    const colorInputs = paletteCard.querySelectorAll('input[type="color"]');
-    fireEvent.change(colorInputs[1]!, { target: { value: '#00ff00' } });
+    await setPaletteRowColor(user, 'Color 2', '#00ff00');
     await waitFor(async () => {
       expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries[1]!.color).toBe('#00ff00');
     });
@@ -544,8 +554,7 @@ describe('App', () => {
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
-    const paletteColorInput = getColorInput(getCard('Color palette'));
-    fireEvent.change(paletteColorInput, { target: { value: '#123456' } });
+    await setPaletteRowColor(user, 'Primary', '#123456');
 
     await waitFor(() => {
       expect(hexOrRgb('#123456')).toContain(getTriggerSwatch('Top bar color').style.backgroundColor);
@@ -663,7 +672,7 @@ describe('App', () => {
     await addRule(user, 'my-project');
     await openRuleDetail(user, 'my-project');
 
-    fireEvent.change(getColorInput(getCard('Color palette')), { target: { value: '#a1b2c3' } });
+    await setPaletteRowColor(user, 'Primary', '#a1b2c3');
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
@@ -879,6 +888,10 @@ describe('App', () => {
     const dialog = await openPicker(user, 'Top bar color');
     expect(within(dialog).queryByText('Palette')).toBeNull();
     expect(getCustomColorInput(dialog)).toBeTruthy();
+    // With the palette off the Top bar has nothing but its custom colour: no bead to press, and
+    // no ring on the custom control, as there is nothing it was chosen over.
+    expect(within(dialog).queryByRole('button', { name: 'Primary' })).toBeNull();
+    expect(getCustomColorInput(dialog).parentElement?.className).not.toContain('ring-2');
   });
 
   it('keeps palette data and references in storage when turned off, and restores the trigger name when turned back on', async () => {
@@ -1050,6 +1063,268 @@ describe('App', () => {
       expect(stored.projectRules[0]!.settings.platformBarText.auto).toBe(false);
       expect(stored.projectRules[0]!.settings.platformBarText.color.custom).toBe('#333333');
       expect(stored.projectRules[0]!.settings.platformBarText.color.paletteId).toBeNull();
+    });
+  });
+
+  describe('colour editor', () => {
+    // Renders the app on a store whose save() is spied, with one rule open for editing. The
+    // spy is cleared once the rule exists, so its call count is the number of saves the test's
+    // own steps made: App builds every save from the settings of the render the handler ran in,
+    // so two saves from one user action would silently drop the first.
+    async function renderRuleDetail() {
+      const user = userEvent.setup();
+      const store = new SettingsStoreImpl();
+      const save = vi.spyOn(store, 'save');
+      render(<App settingsStore={store} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+      await addRule(user, 'my-project');
+      await openRuleDetail(user, 'my-project');
+      save.mockClear();
+      return { user, save };
+    }
+
+    async function storedSettings() {
+      return (await getStoredSettings()).projectRules[0]!.settings;
+    }
+
+    // Moves keyboard focus into the picker's hex input without a pointer press (a press on the
+    // custom control is itself a choice), as Tab does.
+    function focusWithoutPress(input: HTMLElement) {
+      act(() => {
+        input.focus();
+      });
+    }
+
+    it("a palette row's popover edits that entry only: a typed hex saves once, in lowercase, and the row shows it", async () => {
+      const { user, save } = await renderRuleDetail();
+      await user.click(within(getCard('Color palette')).getByRole('button', { name: 'Add color' }));
+      await waitFor(async () => {
+        expect((await storedSettings()).palette.entries).toHaveLength(2);
+      });
+      save.mockClear();
+
+      const dialog = await openPaletteRowEditor(user, 'Color 2');
+      const hex = within(dialog).getByLabelText('Hex') as HTMLInputElement;
+      await user.click(hex);
+      await user.keyboard('1A73E8');
+
+      await waitFor(async () => {
+        expect((await storedSettings()).palette.entries.map((e) => e.color)).toEqual(['#ff6d00', '#1a73e8']);
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(hex.value).toBe('#1a73e8');
+
+      await closePicker(user);
+      const trigger = screen.getByRole('button', { name: 'Color 2 color' });
+      expect(trigger.textContent).toBe('#1a73e8');
+      expect(hexOrRgb('#1a73e8')).toContain(getTriggerSwatch('Color 2 color').style.backgroundColor);
+      expect(screen.getByRole('button', { name: 'Primary color' }).textContent).toBe('#ff6d00');
+    });
+
+    it("a palette row's well saves every step: an arrow key on the hue strip changes that entry by one save", async () => {
+      const { user, save } = await renderRuleDetail();
+
+      const dialog = await openPaletteRowEditor(user, 'Primary');
+      const hue = within(within(dialog).getByRole('group', { name: 'Hue' })).getByRole('slider');
+      focusWithoutPress(hue);
+      await user.keyboard('{ArrowRight}');
+
+      await waitFor(async () => {
+        const color = (await storedSettings()).palette.entries[0]!.color;
+        expect(color).toMatch(/^#[0-9a-f]{6}$/);
+        expect(color).not.toBe('#ff6d00');
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it('Top bar: a press on the custom control while a palette entry is in use re-selects the kept custom colour unchanged, in one save', async () => {
+      const { user, save } = await renderRuleDetail();
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
+
+      const dialog = await openPicker(user, 'Top bar color');
+      const customInput = getCustomColorInput(dialog);
+      expect(getPaletteSwatch(dialog, 'Primary').getAttribute('aria-pressed')).toBe('true');
+      await user.click(customInput);
+
+      await waitFor(async () => {
+        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#ff6d00' });
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      // The ring moves from the bead to the custom control, and the popover stays open.
+      expect(customInput.parentElement?.className).toContain('ring-2');
+      expect(getPaletteSwatch(dialog, 'Primary').getAttribute('aria-pressed')).toBe('false');
+      expect(screen.getByRole('dialog', { name: 'Top bar color' })).toBeTruthy();
+    });
+
+    it('Platform Bar text: a press on the custom control while Auto is in use leaves Auto for the kept custom colour, in one save', async () => {
+      const { user, save } = await renderRuleDetail();
+      let dialog = await openPicker(user, 'Platform Bar text color');
+      await user.click(getAutoButton(dialog));
+      await waitFor(async () => {
+        expect((await storedSettings()).platformBarText.auto).toBe(true);
+      });
+      await closePicker(user);
+      save.mockClear();
+
+      dialog = await openPicker(user, 'Platform Bar text color');
+      expect(getAutoButton(dialog).getAttribute('aria-pressed')).toBe('true');
+      await user.click(getCustomColorInput(dialog));
+
+      await waitFor(async () => {
+        const text = (await storedSettings()).platformBarText;
+        expect(text.auto).toBe(false);
+        expect(text.color).toEqual({ paletteId: null, custom: '#ffffff' });
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(getAutoButton(dialog).getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('Top bar: Enter in the custom input while a palette entry is in use re-selects the kept custom colour in one save, closes the popover and returns focus to the trigger', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      const dialog = await openPicker(user, 'Top bar color');
+      focusWithoutPress(getCustomColorInput(dialog));
+      expect(save).not.toHaveBeenCalled();
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Top bar color' }));
+      });
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#ff6d00' });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toBe('#ff6d00');
+    });
+
+    it('Top bar: Enter on a draft in the custom input while a palette entry is in use saves nothing: the draft is marked as wrong, the popover stays open and the palette entry stays the choice', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      const dialog = await openPicker(user, 'Top bar color');
+      const customInput = getCustomColorInput(dialog);
+      focusWithoutPress(customInput);
+      await user.keyboard('abc{Enter}');
+
+      expect(customInput.getAttribute('aria-invalid')).toBe('true');
+      expect(customInput.value).toBe('abc');
+      expect(screen.getByRole('dialog', { name: 'Top bar color' })).toBeTruthy();
+      expect(save).not.toHaveBeenCalled();
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
+      expect(getPaletteSwatch(dialog, 'Primary').getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('Platform Bar text: pressing a palette bead with a draft in the custom input drops the draft: one save, the bead is the choice and the kept custom colour is unchanged', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      const dialog = await openPicker(user, 'Platform Bar text color');
+      // Custom is already the choice here, so the press itself saves nothing.
+      const customInput = getCustomColorInput(dialog);
+      await user.click(customInput);
+      await user.keyboard('abc');
+      expect(save).not.toHaveBeenCalled();
+      await user.click(getPaletteSwatch(dialog, 'Primary'));
+
+      await waitFor(async () => {
+        const text = (await storedSettings()).platformBarText;
+        expect(text.color).toEqual({ paletteId: 'default', custom: '#ffffff' });
+        expect(text.auto).toBe(false);
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(customInput.value).toBe('#ffffff');
+    });
+
+    it('Platform Bar text: pressing Auto with a draft in the custom input drops the draft: one save, Auto is on and the kept custom colour is unchanged', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      const dialog = await openPicker(user, 'Platform Bar text color');
+      const customInput = getCustomColorInput(dialog);
+      await user.click(customInput);
+      await user.keyboard('abc');
+      await user.click(getAutoButton(dialog));
+
+      await waitFor(async () => {
+        const text = (await storedSettings()).platformBarText;
+        expect(text.auto).toBe(true);
+        expect(text.color).toEqual({ paletteId: null, custom: '#ffffff' });
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(customInput.value).toBe('#ffffff');
+    });
+
+    it('Top bar: leaving the custom input by Tab with a draft while a palette entry is in use saves nothing and shows the kept custom colour again', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      const dialog = await openPicker(user, 'Top bar color');
+      const customInput = getCustomColorInput(dialog);
+      focusWithoutPress(customInput);
+      await user.keyboard('abc');
+      await user.tab();
+
+      expect(customInput.value).toBe('#ff6d00');
+      expect(save).not.toHaveBeenCalled();
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
+      expect(screen.getByRole('dialog', { name: 'Top bar color' })).toBeTruthy();
+    });
+
+    it('Top bar: a change of the well while a palette entry is in use makes custom the choice in the same save', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      const dialog = await openPicker(user, 'Top bar color');
+      const hue = within(within(dialog).getByRole('group', { name: 'Hue' })).getByRole('slider');
+      focusWithoutPress(hue);
+      await user.keyboard('{ArrowRight}');
+
+      await waitFor(async () => {
+        const color = (await storedSettings()).topBar.color;
+        expect(color.paletteId).toBeNull();
+        expect(color.custom).not.toBe('#ff6d00');
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it('Tab through a picker never changes the selection', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      await openPicker(user, 'Platform Bar text color');
+      for (let i = 0; i < 6; i++) await user.tab();
+
+      await flush();
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it("Platform Bar text: the Auto option's bead shows the colour Auto resolves to now, the contrasting colour of the effective Platform Bar colour", async () => {
+      const { user } = await renderRuleDetail();
+      const autoBead = (dialog: HTMLElement) =>
+        getAutoButton(dialog).querySelector('span[aria-hidden="true"]') as HTMLElement;
+
+      // Platform Bar follows the palette entry "Primary" (#ff6d00): black reads best on it. Auto
+      // is not in use, so the trigger shows the custom colour while the bead shows Auto's.
+      let dialog = await openPicker(user, 'Platform Bar text color');
+      expect(hexOrRgb('#000000')).toContain(autoBead(dialog).style.backgroundColor);
+      expect(autoBead(dialog).classList.contains('color-chip')).toBe(true);
+      await closePicker(user);
+      expect(hexOrRgb('#ffffff')).toContain(getTriggerSwatch('Platform Bar text color').style.backgroundColor);
+
+      // The effective colour, not the custom one: darkening the palette entry flips the bead.
+      await setPaletteRowColor(user, 'Primary', '#000080');
+      dialog = await openPicker(user, 'Platform Bar text color');
+      expect(hexOrRgb('#ffffff')).toContain(autoBead(dialog).style.backgroundColor);
+      await closePicker(user);
+
+      dialog = await openPicker(user, 'Platform Bar color');
+      fireEvent.change(getCustomColorInput(dialog), { target: { value: '#ffff00' } });
+      await closePicker(user);
+      dialog = await openPicker(user, 'Platform Bar text color');
+      expect(hexOrRgb('#000000')).toContain(autoBead(dialog).style.backgroundColor);
+    });
+
+    it('names every picker dialog after its trigger', async () => {
+      const { user } = await renderRuleDetail();
+
+      for (const label of ['Primary color', 'Top bar color', 'Platform Bar color', 'Platform Bar text color']) {
+        await user.click(screen.getByRole('button', { name: label }));
+        expect(screen.getByRole('dialog', { name: label })).toBeTruthy();
+        await closePicker(user);
+      }
     });
   });
 
@@ -1581,7 +1856,7 @@ describe('App', () => {
 
       // Edit the duplicate's (index 1) palette entry color.
       await openRuleDetailAt(user, 1);
-      fireEvent.change(getColorInput(getCard('Color palette')), { target: { value: '#00ff00' } });
+      await setPaletteRowColor(user, 'Primary', '#00ff00');
       await waitFor(async () => {
         const rules = (await getStoredSettings()).projectRules;
         expect(rules[1]!.settings.palette.entries[0]!.color).toBe('#00ff00');
