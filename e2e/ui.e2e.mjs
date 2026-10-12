@@ -1621,7 +1621,7 @@ for (const browserName of browserTargets()) {
       assert.deepEqual(afterHex.dialog, opened.dialog, "editing should not change the popover's box");
     });
 
-    test('commits, cancels and expands a hex from the keyboard in a palette row popover', async () => {
+    test('commits a complete hex, rejects a draft on Enter and drops it on leaving in a palette row popover', async () => {
       await h.seedSettings(pickerSettings());
       const browser = await panel(h);
       await openDetail(browser);
@@ -1664,34 +1664,58 @@ for (const browserName of browserTargets()) {
       assert.equal(await focusedLabel(browser), 'Red color', 'Escape should return focus to the trigger');
       assert.equal(await chipColor(browser, 'Red color'), '#336699', "the trigger's bead should be unchanged");
 
-      // The 3-digit shorthand is a colour only once the user says so.
+      // Only six digits are a colour: Enter on three keeps the popover open with the draft marked,
+      // and writes nothing. The next key clears the mark; Escape then drops the draft.
       await click(browser, 'button[aria-label="Red color"]');
-      await typeHex(browser, 'Hex', 'abc');
-      await colorStays('#336699', 'a shorthand still being typed');
+      const short = await typeHex(browser, 'Hex', 'abc');
+      assert.equal(await short.getAttribute('aria-invalid'), null, 'a draft still being typed should not be marked');
       await browser.keys('Enter');
-      await waitStored(h, (value) => redColor(value) === '#aabbcc');
-      await closed('Enter on a shorthand');
-      assert.equal(await focusedLabel(browser), 'Red color', 'Enter on a shorthand should return focus to the trigger');
-      assert.equal(await chipColor(browser, 'Red color'), '#aabbcc', "the trigger's bead should show the expansion");
+      await browser.waitUntil(async () => (await short.getAttribute('aria-invalid')) === 'true', {
+        timeout: 5000,
+        timeoutMsg: 'Enter on a three-digit draft should mark it as wrong',
+      });
+      await colorStays('#336699', 'Enter on a three-digit draft');
+      assert.equal(await dialogIsClosed(browser), false, 'Enter on a draft should keep the popover open');
+      assert.equal(await short.getValue(), 'abc', 'Enter on a draft should keep it as typed');
+      await browser.keys('d');
+      assert.equal(await short.getAttribute('aria-invalid'), null, 'the next edit should clear the mark');
+      await browser.keys('Escape');
+      await closed('Escape after a rejected draft');
+      await colorStays('#336699', 'Escape after a rejected draft');
 
       // A press on the page beside the popover closes it. Focus leaves the field first, so the
-      // field's rule for leaving applies: a draft that is not a colour is dropped, a shorthand is
-      // stored expanded. The popover keeps 12px clear of the window's edges, so this point is
-      // never on it.
+      // draft is dropped whatever it holds. The popover keeps 12px clear of the window's edges, so
+      // this point is never on it.
       const pressOutside = () => dragThrough(browser, [{ x: 4, y: 4 }]);
+      for (const draft of ['12', 'fff']) {
+        await click(browser, 'button[aria-label="Red color"]');
+        await typeHex(browser, 'Hex', draft);
+        await pressOutside();
+        await closed(`a press outside with the draft ${draft}`);
+        await colorStays('#336699', `a press outside with the draft ${draft}`);
+      }
+      assert.equal(await chipColor(browser, 'Red color'), '#336699', "the trigger's bead should be unchanged");
       await click(browser, 'button[aria-label="Red color"]');
-      await typeHex(browser, 'Hex', '12');
-      await pressOutside();
-      await closed('a press outside with a draft');
-      await colorStays('#aabbcc', 'a press outside with a draft');
+      const reopened = await browser.$('[role="dialog"] input[aria-label="Hex"]');
+      await reopened.waitForDisplayed();
+      assert.equal(await reopened.getValue(), '#336699', 'a dropped draft should not come back with the popover');
 
-      await click(browser, 'button[aria-label="Red color"]');
-      await typeHex(browser, 'Hex', 'fff');
-      await colorStays('#aabbcc', 'a shorthand before the press outside');
-      await pressOutside();
-      await waitStored(h, (value) => redColor(value) === '#ffffff');
-      await closed('a press outside on a shorthand');
-      assert.equal(await chipColor(browser, 'Red color'), '#ffffff', "the trigger's bead should show the expansion");
+      // A press on the well takes focus from the field, so a draft, and the mark Enter left on it,
+      // are gone: the field shows the colour picked under the pointer.
+      await fill(browser, reopened, '12');
+      await browser.keys('Enter');
+      assert.equal(await reopened.getAttribute('aria-invalid'), 'true', 'Enter on a draft should mark it');
+      const { face } = await settled(browser, readColorPopover, 'the colour popover');
+      await dragThrough(browser, [{ x: face.left + 60, y: face.top + 50 }]);
+      await browser.waitUntil(async () => /^#[0-9a-f]{6}$/.test(await reopened.getValue()), {
+        timeout: 5000,
+        timeoutMsg: 'a press on the well should replace the draft in the field with the colour picked',
+      });
+      const picked = await reopened.getValue();
+      assert.notEqual(picked, '#336699', 'a press on the well should pick the colour under the pointer');
+      assert.equal(await reopened.getAttribute('aria-invalid'), null, 'the mark should not outlive the draft');
+      await waitStored(h, (value) => redColor(value) === picked);
+      await colorStays(picked, 'a press on the well with a draft');
     });
 
     test('keeps a surface popover still while the choice changes and returns to the kept custom colour without changing it', async () => {

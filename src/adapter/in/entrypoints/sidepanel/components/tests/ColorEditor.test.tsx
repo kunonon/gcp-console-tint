@@ -174,8 +174,8 @@ describe('ColorEditor', () => {
       expect(hexInput().getAttribute('aria-invalid')).toBeNull();
     });
 
-    it.each(['12', '12zz', '#abcd'])(
-      'drops the draft %j when focus leaves the field and shows the value again',
+    it.each(['12', 'fff', '#abc', '12zz', '#abcd'])(
+      'drops the draft %j when focus leaves the field: nothing is written and the value is shown again',
       async (text) => {
         const user = userEvent.setup();
         const { onChange } = renderEditor({ value: '#3b82f6' });
@@ -192,90 +192,35 @@ describe('ColorEditor', () => {
     );
 
     it.each([
-      ['abc', '#aabbcc'],
-      ['#ABC', '#aabbcc'],
-      [' f0f ', '#ff00ff'],
+      ['12', '123'],
+      ['fff', 'fff3'],
+      ['#abc', '#abc3'],
+      [' ABC', ' ABC3'],
     ])(
-      'does not expand the 3-digit shorthand %j while it is typed, and expands it on Enter, then reports done with a change',
-      (text, expanded) => {
+      'Enter on the draft %j marks it invalid, keeps it, writes nothing and does not report done; the next edit clears the mark',
+      async (text, edited) => {
+        const user = userEvent.setup();
         const onDone = vi.fn();
-        const { onChange, hexes } = renderEditor({ onDone });
+        const { onChange } = renderEditor({ onDone });
 
-        fireEvent.change(hexInput(), { target: { value: text } });
-        expect(onChange).not.toHaveBeenCalled();
+        await user.click(hexInput());
+        await user.keyboard(text);
+        expect(hexInput().getAttribute('aria-invalid')).toBeNull();
+        await user.keyboard('{Enter}');
+
         expect(onDone).not.toHaveBeenCalled();
+        expect(onChange).not.toHaveBeenCalled();
         expect(hexInput().value).toBe(text);
+        expect(hexInput().getAttribute('aria-invalid')).toBe('true');
+        expect(hexInput().className).toContain('text-danger');
 
-        fireEvent.keyDown(hexInput(), { key: 'Enter' });
-
-        expect(hexes()).toEqual([expanded]);
-        expect(onChange.mock.calls[0]![0]).toBeInstanceOf(Color);
-        expect(onDone.mock.calls).toEqual([[true]]);
-        expect(hexInput().value).toBe(expanded);
+        await user.keyboard('3');
+        expect(hexInput().value).toBe(edited);
+        expect(hexInput().getAttribute('aria-invalid')).toBeNull();
+        expect(onDone).not.toHaveBeenCalled();
+        expect(onChange).not.toHaveBeenCalled();
       },
     );
-
-    it('typing through a shorthand on the way to a full hex commits only the full hex', async () => {
-      const user = userEvent.setup();
-      const { hexes } = renderEditor();
-
-      await user.click(hexInput());
-      await user.keyboard('d93025');
-
-      expect(hexes()).toEqual(['#d93025']);
-    });
-
-    it('expands a 3-digit shorthand when focus leaves the field, without reporting done', async () => {
-      const user = userEvent.setup();
-      const onDone = vi.fn();
-      const { hexes } = renderEditor({ onDone });
-
-      await user.click(hexInput());
-      await user.keyboard('abc');
-      await user.tab();
-
-      expect(hexes()).toEqual(['#aabbcc']);
-      expect(onDone).not.toHaveBeenCalled();
-      expect(hexInput().value).toBe('#aabbcc');
-    });
-
-    it('a shorthand of the colour already shown is not a change: Enter reports done without one, leaving the field reports nothing', async () => {
-      const user = userEvent.setup();
-      const onDone = vi.fn();
-      const { onChange } = renderEditor({ value: '#ffffff', onDone });
-
-      await user.click(hexInput());
-      await user.keyboard('fff{Enter}');
-      expect(onDone.mock.calls).toEqual([[false]]);
-
-      await user.keyboard('FFF');
-      await user.tab();
-      expect(onChange).not.toHaveBeenCalled();
-      expect(onDone).toHaveBeenCalledTimes(1);
-      expect(hexInput().value).toBe('#ffffff');
-    });
-
-    it('Enter on a draft that is not a colour marks it invalid, keeps it and does not report done; the next edit clears the mark', async () => {
-      const user = userEvent.setup();
-      const onDone = vi.fn();
-      const { onChange } = renderEditor({ onDone });
-
-      await user.click(hexInput());
-      await user.keyboard('12');
-      expect(hexInput().getAttribute('aria-invalid')).toBeNull();
-      await user.keyboard('{Enter}');
-
-      expect(onDone).not.toHaveBeenCalled();
-      expect(onChange).not.toHaveBeenCalled();
-      expect(hexInput().value).toBe('12');
-      expect(hexInput().getAttribute('aria-invalid')).toBe('true');
-      expect(hexInput().className).toContain('text-danger');
-
-      await user.keyboard('3');
-      expect(hexInput().value).toBe('123');
-      expect(hexInput().getAttribute('aria-invalid')).toBeNull();
-      expect(onDone).not.toHaveBeenCalled();
-    });
 
     it('describes the expected form to assistive technology while the draft is marked as wrong, and only then', async () => {
       const user = userEvent.setup();
@@ -295,7 +240,7 @@ describe('ColorEditor', () => {
       expect(hexInput().getAttribute('aria-describedby')).toBe(hint.id);
     });
 
-    it('keeps a draft as typed while the window is not the focused one, and does not select it on the way back, so a hex left at its third digit is typed on', async () => {
+    it('keeps a draft as typed while the window is not the focused one, and does not select it on the way back, so a hex left unfinished is typed on', async () => {
       const user = userEvent.setup();
       const { onChange, hexes } = renderEditor();
       await user.click(hexInput());
@@ -328,7 +273,7 @@ describe('ColorEditor', () => {
       expect(hexInput().getAttribute('aria-invalid')).toBeNull();
     });
 
-    it('Enter with nothing to commit reports done once, without a change; other keys do not', async () => {
+    it('Enter with no draft in the field reports done once and writes nothing; other keys do not', async () => {
       const user = userEvent.setup();
       const onDone = vi.fn();
       const { onChange } = renderEditor({ onDone });
@@ -341,7 +286,7 @@ describe('ColorEditor', () => {
       onChange.mockClear();
       await user.keyboard('{Enter}');
 
-      expect(onDone.mock.calls).toEqual([[false]]);
+      expect(onDone.mock.calls).toEqual([[]]);
       expect(onChange).not.toHaveBeenCalled();
     });
   });
@@ -473,23 +418,32 @@ describe('ColorEditor', () => {
       expect(hexes()).toEqual(['#804040']);
     });
 
-    it('a press on the well with a 3-digit shorthand in the field reports the colour under the pointer alone: the draft is dropped, not committed over it', async () => {
-      const user = userEvent.setup();
-      const { hexes } = renderEditor({ value: '#ff0000' });
-      const face = screen.getByRole('group', { name: /Saturation and brightness/ });
-      face.getBoundingClientRect = () => new DOMRect(0, 0, 200, 140);
-      await user.click(hexInput());
-      await user.keyboard('abc');
+    it.each([
+      ['a draft', 'abc', false],
+      ['a draft marked as wrong by Enter', '12', true],
+    ])(
+      'a press on the well with %s in the field reports the colour under the pointer alone, and the field shows it unmarked',
+      async (_case, text, enter) => {
+        const user = userEvent.setup();
+        const { hexes } = renderEditor({ value: '#ff0000' });
+        const face = screen.getByRole('group', { name: /Saturation and brightness/ });
+        face.getBoundingClientRect = () => new DOMRect(0, 0, 200, 140);
+        await user.click(hexInput());
+        await user.keyboard(text);
+        if (enter) await user.keyboard('{Enter}');
+        expect(hexInput().getAttribute('aria-invalid')).toBe(enter ? 'true' : null);
 
-      const at = { clientX: 100, clientY: 70, pointerId: 1, pointerType: 'mouse', button: 0 };
-      fireEvent.pointerDown(face, { ...at, buttons: 1 });
-      // The press takes focus from the field, as it does in a browser.
-      focus(faceSlider());
-      fireEvent.pointerUp(document, at);
+        const at = { clientX: 100, clientY: 70, pointerId: 1, pointerType: 'mouse', button: 0 };
+        fireEvent.pointerDown(face, { ...at, buttons: 1 });
+        // The press takes focus from the field, as it does in a browser.
+        focus(faceSlider());
+        fireEvent.pointerUp(document, at);
 
-      expect(hexes()).toEqual(['#804040']);
-      expect(hexInput().value).toBe('#804040');
-    });
+        expect(hexes()).toEqual(['#804040']);
+        expect(hexInput().value).toBe('#804040');
+        expect(hexInput().getAttribute('aria-invalid')).toBeNull();
+      },
+    );
 
     it('keeps the hue through a grey: desaturating to nothing and back returns to the same hue, not to red', async () => {
       const user = userEvent.setup();

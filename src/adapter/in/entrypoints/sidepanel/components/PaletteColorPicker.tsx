@@ -138,10 +138,8 @@ export default function PaletteColorPicker({
             active={hasAlternatives && isCustomActive}
             onChange={onSelectCustomColor}
             onActivate={selectKeptCustom}
-            // A colour committed by this same Enter already made custom the choice; selecting
-            // the kept colour on top of it would save the old colour over the new one.
-            onDone={(changed) => {
-              if (!changed) selectKeptCustom();
+            onDone={() => {
+              selectKeptCustom();
               setOpen(false);
             }}
           />

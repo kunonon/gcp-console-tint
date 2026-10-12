@@ -1196,94 +1196,72 @@ describe('App', () => {
       expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toBe('#ff6d00');
     });
 
-    it('Top bar: Enter on a shorthand typed into the custom input while a palette entry is in use saves the expanded colour as the custom choice (one save, not overwritten by re-selecting the old custom colour)', async () => {
+    it('Top bar: Enter on a draft in the custom input while a palette entry is in use saves nothing: the draft is marked as wrong, the popover stays open and the palette entry stays the choice', async () => {
       const { user, save } = await renderRuleDetail();
 
       const dialog = await openPicker(user, 'Top bar color');
-      focusWithoutPress(getCustomColorInput(dialog));
+      const customInput = getCustomColorInput(dialog);
+      focusWithoutPress(customInput);
       await user.keyboard('abc{Enter}');
 
-      await waitFor(() => {
-        expect(screen.queryByRole('dialog')).toBeNull();
-      });
-      await waitFor(async () => {
-        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#aabbcc' });
-      });
-      expect(save).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toBe('#aabbcc');
+      expect(customInput.getAttribute('aria-invalid')).toBe('true');
+      expect(customInput.value).toBe('abc');
+      expect(screen.getByRole('dialog', { name: 'Top bar color' })).toBeTruthy();
+      expect(save).not.toHaveBeenCalled();
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
+      expect(getPaletteSwatch(dialog, 'Primary').getAttribute('aria-pressed')).toBe('true');
     });
 
-    it('Platform Bar text: Enter on a shorthand typed into the custom input while Auto is in use saves the expanded colour and leaves Auto, in one save', async () => {
-      const { user, save } = await renderRuleDetail();
-      let dialog = await openPicker(user, 'Platform Bar text color');
-      await user.click(getAutoButton(dialog));
-      await waitFor(async () => {
-        expect((await storedSettings()).platformBarText.auto).toBe(true);
-      });
-      await closePicker(user);
-      save.mockClear();
-
-      dialog = await openPicker(user, 'Platform Bar text color');
-      focusWithoutPress(getCustomColorInput(dialog));
-      await user.keyboard('123{Enter}');
-
-      await waitFor(() => {
-        expect(screen.queryByRole('dialog')).toBeNull();
-      });
-      await waitFor(async () => {
-        const text = (await storedSettings()).platformBarText;
-        expect(text.auto).toBe(false);
-        expect(text.color).toEqual({ paletteId: null, custom: '#112233' });
-      });
-      expect(save).toHaveBeenCalledTimes(1);
-    });
-
-    it('Platform Bar text: pressing a palette bead with a shorthand draft in the custom input keeps both writes: the draft becomes the custom colour, then the bead is the choice', async () => {
+    it('Platform Bar text: pressing a palette bead with a draft in the custom input drops the draft: one save, the bead is the choice and the kept custom colour is unchanged', async () => {
       const { user, save } = await renderRuleDetail();
 
       const dialog = await openPicker(user, 'Platform Bar text color');
       // Custom is already the choice here, so the press itself saves nothing.
-      await user.click(getCustomColorInput(dialog));
+      const customInput = getCustomColorInput(dialog);
+      await user.click(customInput);
       await user.keyboard('abc');
       expect(save).not.toHaveBeenCalled();
       await user.click(getPaletteSwatch(dialog, 'Primary'));
 
       await waitFor(async () => {
         const text = (await storedSettings()).platformBarText;
-        expect(text.color).toEqual({ paletteId: 'default', custom: '#aabbcc' });
+        expect(text.color).toEqual({ paletteId: 'default', custom: '#ffffff' });
         expect(text.auto).toBe(false);
       });
-      expect(save).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(customInput.value).toBe('#ffffff');
     });
 
-    it('Platform Bar text: pressing Auto with a shorthand draft in the custom input keeps both writes: the draft becomes the custom colour, then Auto is on', async () => {
+    it('Platform Bar text: pressing Auto with a draft in the custom input drops the draft: one save, Auto is on and the kept custom colour is unchanged', async () => {
       const { user, save } = await renderRuleDetail();
 
       const dialog = await openPicker(user, 'Platform Bar text color');
-      await user.click(getCustomColorInput(dialog));
+      const customInput = getCustomColorInput(dialog);
+      await user.click(customInput);
       await user.keyboard('abc');
       await user.click(getAutoButton(dialog));
 
       await waitFor(async () => {
         const text = (await storedSettings()).platformBarText;
         expect(text.auto).toBe(true);
-        expect(text.color).toEqual({ paletteId: null, custom: '#aabbcc' });
+        expect(text.color).toEqual({ paletteId: null, custom: '#ffffff' });
       });
-      expect(save).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(customInput.value).toBe('#ffffff');
     });
 
-    it('Top bar: leaving the custom input by Tab with a shorthand draft while a palette entry is in use commits it as the custom choice, in one save', async () => {
+    it('Top bar: leaving the custom input by Tab with a draft while a palette entry is in use saves nothing and shows the kept custom colour again', async () => {
       const { user, save } = await renderRuleDetail();
 
       const dialog = await openPicker(user, 'Top bar color');
-      focusWithoutPress(getCustomColorInput(dialog));
+      const customInput = getCustomColorInput(dialog);
+      focusWithoutPress(customInput);
       await user.keyboard('abc');
       await user.tab();
 
-      await waitFor(async () => {
-        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#aabbcc' });
-      });
-      expect(save).toHaveBeenCalledTimes(1);
+      expect(customInput.value).toBe('#ff6d00');
+      expect(save).not.toHaveBeenCalled();
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
       expect(screen.getByRole('dialog', { name: 'Top bar color' })).toBeTruthy();
     });
 

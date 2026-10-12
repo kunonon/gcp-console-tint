@@ -145,7 +145,7 @@ describe('ColorSwatchField', () => {
     });
   });
 
-  it('Escape closes the popover without committing a shorthand draft', async () => {
+  it('Escape closes the popover and drops a draft: nothing is written', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn<(color: Color) => void>();
     render(<ColorSwatchField ariaLabel="Test color" value="#ff0000" onChange={onChange} />);
@@ -161,14 +161,9 @@ describe('ColorSwatchField', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  // Leaving by a press outside the popover: focus leaves the field before the popover is gone,
-  // so the field's own rule for leaving applies.
-  it.each([
-    ['a 3-digit shorthand', 'fff', ['#ffffff']],
-    ['a draft that is not a colour', '12', []],
-  ])(
-    'a press outside the popover with %s in the field closes it and commits %j as %j',
-    async (_case, text, written) => {
+  it.each(['fff', '#abc', '12'])(
+    'a press outside the popover with the draft %j in the field closes it and writes nothing; reopened, the field shows the value',
+    async (text) => {
       const user = userEvent.setup();
       const onChange = vi.fn<(color: Color) => void>();
       render(
@@ -186,7 +181,10 @@ describe('ColorSwatchField', () => {
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).toBeNull();
       });
-      expect(onChange.mock.calls.map(([color]) => color.toHex())).toEqual(written);
+      expect(onChange).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'Test color' }));
+      expect((within(screen.getByRole('dialog')).getByLabelText('Hex') as HTMLInputElement).value).toBe('#ff0000');
     },
   );
 });

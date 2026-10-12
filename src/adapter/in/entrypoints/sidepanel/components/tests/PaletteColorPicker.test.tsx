@@ -435,28 +435,23 @@ describe('PaletteColorPicker', () => {
       expect(onSelectCustomColor).not.toHaveBeenCalled();
     });
 
-    it('Enter on a shorthand while a palette entry is in use selects the expanded colour only: no second call re-selecting the old custom colour over it', async () => {
-      const { user, customInput, onSelectCustomColor } = await openPickerWith({ paletteId: defaultEntryId });
+    it.each(['12', 'abc', '#fff'])(
+      'Enter on the draft %j while a palette entry is in use marks it as wrong, keeps the popover open and selects nothing',
+      async (text) => {
+        const { user, customInput, onSelectCustomColor, onSelectPaletteEntry } = await openPickerWith({
+          paletteId: defaultEntryId,
+        });
 
-      focus(customInput);
-      await user.keyboard('abc{Enter}');
+        focus(customInput);
+        await user.keyboard(`${text}{Enter}`);
 
-      expect(customHexes(onSelectCustomColor)).toEqual(['#aabbcc']);
-      await waitFor(() => {
-        expect(screen.queryByRole('dialog')).toBeNull();
-      });
-    });
-
-    it('Enter on a draft that is not a colour keeps the popover open and selects nothing', async () => {
-      const { user, customInput, onSelectCustomColor } = await openPickerWith({ paletteId: defaultEntryId });
-
-      focus(customInput);
-      await user.keyboard('12{Enter}');
-
-      expect(onSelectCustomColor).not.toHaveBeenCalled();
-      expect(customInput.getAttribute('aria-invalid')).toBe('true');
-      expect(screen.getByRole('dialog')).toBeTruthy();
-    });
+        expect(onSelectCustomColor).not.toHaveBeenCalled();
+        expect(onSelectPaletteEntry).not.toHaveBeenCalled();
+        expect(customInput.value).toBe(text);
+        expect(customInput.getAttribute('aria-invalid')).toBe('true');
+        expect(screen.getByRole('dialog')).toBeTruthy();
+      },
+    );
 
     it('a complete hex in the custom input selects that colour once, whichever choice was in use', async () => {
       const { customInput, onSelectCustomColor } = await openPickerWith({ paletteId: defaultEntryId });
