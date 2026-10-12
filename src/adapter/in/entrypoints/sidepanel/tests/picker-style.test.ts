@@ -19,6 +19,23 @@ describe('colour picker rules of style.css', () => {
     expect(rule).not.toMatch(/:\s*none/);
   });
 
+  it('wraps the accent ring of a focused thumb of the colour well in white and a dark hairline', () => {
+    const rule =
+      /\.color-well \.color-area__thumb\[data-focus-visible="true"\], \.color-well \.color-slider__thumb\[data-focus-visible="true"\] \{([^}]*)\}/.exec(
+        style,
+      )?.[1];
+    expect(rule, `${STYLE} must keep the focus rule of the colour well's thumbs`).toBeDefined();
+    // A bare accent ring vanished on a colour near the accent (the seed's blue): the accent band
+    // needs a white band outside it, so that one of the two always differs from the colour under
+    // the thumb. The hairline outside the white band is the mark's edge on a white face.
+    const bands = /0 0 0 (\d+)px var\(--focus\), 0 0 0 (\d+)px #fff, 0 0 0 (\d+)px rgba\(0, 0, 0, 0\.28\)/.exec(
+      rule ?? '',
+    );
+    expect(bands, 'the accent band must be followed by a wider white band and a hairline').not.toBeNull();
+    expect(Number(bands?.[2])).toBeGreaterThan(Number(bands?.[1]));
+    expect(Number(bands?.[3])).toBeGreaterThan(Number(bands?.[2]));
+  });
+
   it('keeps the fill of a bead under forced colours', () => {
     expect(/\.color-chip \{[^}]*forced-color-adjust: none;/.test(style)).toBe(true);
   });

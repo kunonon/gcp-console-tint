@@ -224,11 +224,27 @@ button.outlined-control:focus-visible,
     0 0 0 1px rgba(0, 0, 0, 0.28),
     inset 0 0 0 1px rgba(0, 0, 0, 0.28);
 }
+/* Keyboard focus on a thumb: the accent ring, the panel's focus mark, wrapped in the bead's own rim
+   once more (a 2px white ring with a dark hairline outside it). A bare accent ring sits on the
+   user's colour, and on a blue near the accent (#1a73e8, or the hue strip around 210) it melted
+   into the face: measured 1.0 to 1.3 contrast on the seed's blue, so the focused thumb looked
+   unfocused. With the white ring outside it the mark reads on every colour: where the accent is
+   lost in the face, the white ring and the hairline are not, and where white is lost (a white or
+   yellow face) the accent is not; the weakest edge of the mark measured 3.7 (accent to white) over
+   blue, azure, white, near-black, red, grey, cyan, yellow and the hue strip, in both themes. A white
+   gap inside the accent ring instead (the gapped selection ring's recipe) leaves the accent's
+   outer edge on the face, where it is still lost on blue. The mark reaches 6px past the bead, within
+   the 8px between the well and the dialog's bottom edge, so a thumb flush in a corner of the well
+   is not clipped.
+   Forced colours need no outline here: react-aria sets `forced-color-adjust: none` on both thumbs,
+   so these rings are painted there as they are. */
 .color-well .color-area__thumb[data-focus-visible="true"],
 .color-well .color-slider__thumb[data-focus-visible="true"] {
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.28),
-    0 0 0 4px var(--focus),
+    0 0 0 3px var(--focus),
+    0 0 0 5px #fff,
+    0 0 0 6px rgba(0, 0, 0, 0.28),
     inset 0 0 0 1px rgba(0, 0, 0, 0.28);
 }
 
