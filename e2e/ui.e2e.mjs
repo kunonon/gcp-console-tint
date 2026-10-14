@@ -332,6 +332,24 @@ function pickerSettings() {
 
 const focusedLabel = (browser) => browser.execute(() => document.activeElement?.getAttribute('aria-label') ?? null);
 
+// react-aria's FocusScope returns focus to a popover's trigger from an animation frame it requests
+// as the popover unmounts, so for a frame after the dialog has left the document the focus is on
+// <body>. Where focus lands is therefore waited for, not read once.
+async function waitFocused(browser, expected, message) {
+  let label;
+  await browser.waitUntil(
+    async () => {
+      label = await focusedLabel(browser);
+      return label === expected;
+    },
+    {
+      timeout: 5000,
+      interval: 50,
+      timeoutMsg: () => `${message}: focus stayed on ${JSON.stringify(label)}, expected ${JSON.stringify(expected)}`,
+    },
+  );
+}
+
 // The Auto option of an open surface popover, found by all of its text: the option is named by
 // its content, and the picker's trigger (whose text is "Auto" while Auto is in use) is not in the
 // dialog.
@@ -1652,7 +1670,7 @@ for (const browserName of browserTargets()) {
       await waitStored(h, (value) => redColor(value) === '#336699');
       await browser.keys('Enter');
       await closed('Enter after a complete hex');
-      assert.equal(await focusedLabel(browser), 'Red color', 'Enter should return focus to the trigger');
+      await waitFocused(browser, 'Red color', 'Enter should return focus to the trigger');
 
       // A draft that cannot become a colour is marked, and Escape drops it.
       await click(browser, 'button[aria-label="Red color"]');
@@ -1661,7 +1679,7 @@ for (const browserName of browserTargets()) {
       await browser.keys('Escape');
       await closed('Escape with a draft');
       await colorStays('#336699', 'Escape with a draft');
-      assert.equal(await focusedLabel(browser), 'Red color', 'Escape should return focus to the trigger');
+      await waitFocused(browser, 'Red color', 'Escape should return focus to the trigger');
       assert.equal(await chipColor(browser, 'Red color'), '#336699', "the trigger's bead should be unchanged");
 
       // Only six digits are a colour: Enter on three keeps the popover open with the draft marked,
