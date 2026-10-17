@@ -17,3 +17,14 @@ minimumReleaseAge: 10080
 # Remove once WebdriverIO updates @puppeteer/browsers.
 overrides:
   '@wdio/utils>@puppeteer/browsers': 3.2.3
+  # React Aria, held below 1.22 (react-aria 3.53): HeroUI's react-aria and react-aria-components
+  # peers, plus the react-stately they pin. In 1.22, popovers (and modals, which take the same
+  # code path) can stay invisible for about 600 ms on touch-capable desktops
+  # (adobe/react-spectrum#10798), and an overlay whose exit animation is cancelled never unmounts
+  # (adobe/react-spectrum#10772; the fix in #10783 is unmerged). These overrides also replace
+  # @heroui/react's peer ranges, so pnpm will not warn when a HeroUI update needs a newer React
+  # Aria: check its peerDependencies when bumping HeroUI. Remove once a release fixing both
+  # issues has passed the cooldown above.
+  react-aria: 3.52.1
+  react-aria-components: 1.21.1
+  react-stately: 3.50.0
