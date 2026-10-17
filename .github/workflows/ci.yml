@@ -49,7 +49,7 @@ jobs:
               (value.from === "extract-zip" || Object.hasOwn(value, "extract-zip") ||
                 Object.values(value).some(containsExtractZip));
             assert.equal(containsExtractZip(JSON.parse(readFileSync(0, "utf8"))), false,
-              "extract-zip was reintroduced; review the browser download override");
+              "extract-zip was reintroduced; find the package that brings it in (see e2e/README.md)");
           '
 
       # The checks are independent of each other, so they run as one parallel group

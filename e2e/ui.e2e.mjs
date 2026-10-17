@@ -737,7 +737,7 @@ for (const browserName of browserTargets()) {
       );
 
       const before = reordered.projectRules.map((item) => item.pattern);
-      const fromText = await (await rowAt(browser, 0)).$('span:not([aria-hidden="true"])');
+      const fromText = await (await rowAt(browser, 0)).$(`.//span[normalize-space(.)="${before[0]}"]`);
       await dragWithPointer(browser, fromText, await rowAt(browser, 2), browserName);
       let afterTextDrag;
       const unchangedSince = Date.now();
@@ -1979,7 +1979,9 @@ for (const browserName of browserTargets()) {
 
       await uploadJson(h, 'incoming.json', incoming);
       await dialog(browser);
-      const warning = await browser.$('//*[@role="dialog"]//*[normalize-space(.)="Replaces 1 existing rule"]');
+      const warning = await browser.$(
+        '//*[@role="dialog"]//*[@data-slot="alert-title" and normalize-space(.)="Replaces 1 existing rule"]',
+      );
       await warning.waitForDisplayed();
       assert.equal(await warning.isDisplayed(), true);
       const selectAll = await browser.$('//label[.//input[@type="checkbox"] and contains(., "Select all")]');
@@ -2102,7 +2104,9 @@ for (const browserName of browserTargets()) {
       const input = await browser.$('input[aria-label="Import settings file"]');
       await setFileInput(browser, input, join(h.downloadDir, exportedName));
       await dialog(browser);
-      const warning = await browser.$('//*[@role="dialog"]//*[normalize-space(.)="Replaces 2 existing rules"]');
+      const warning = await browser.$(
+        '//*[@role="dialog"]//*[@data-slot="alert-title" and normalize-space(.)="Replaces 2 existing rules"]',
+      );
       await warning.waitForDisplayed();
       assert.equal(await warning.isDisplayed(), true);
       await click(browser, 'button=Import 2 rules');
