@@ -13,10 +13,7 @@ allowBuilds:
 # younger than a week is rejected until it ages — or until the package is listed under
 # minimumReleaseAgeExclude. pnpm 11's default is one day.
 minimumReleaseAge: 10080
-# Security fix for extract-zip (GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3).
-# Remove once WebdriverIO updates @puppeteer/browsers.
 overrides:
-  '@wdio/utils>@puppeteer/browsers': 3.2.3
   # React Aria, held below 1.22 (react-aria 3.53): HeroUI's react-aria and react-aria-components
   # peers, plus the react-stately they pin. In 1.22, popovers (and modals, which take the same
   # code path) can stay invisible for about 600 ms on touch-capable desktops

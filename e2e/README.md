@@ -32,7 +32,9 @@ ChromeDriver follows the resolved Chrome version. Firefox stable versions need t
 
 The service currently targets `linux/amd64`. Apple Silicon hosts run it through x86 emulation, which can make local runs slower; native Linux arm64 execution of this suite has not been verified.
 
-The parent-scoped `@wdio/utils>@puppeteer/browsers` override keeps `extract-zip` out of the dependency graph across WebdriverIO version updates. CI explicitly checks its absence. The override exceeds WebdriverIO's declared 2.x range, so retain both-browser E2E checks and review compatibility on dependency updates. Review this explicit pin manually; do not assume dependency update automation will update or remove it.
+WebdriverIO 10 downloads browsers through `@puppeteer/browsers` 3, which does not depend on `extract-zip`. (WebdriverIO 9 required the 2.x line, which did, so a pnpm override replaced it until the upgrade.) `extract-zip` has two high-severity advisories with no patched release (GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3), so CI checks that it stays out of the dependency graph, and a dependency update that brings it back fails the build. `pnpm why extract-zip` shows which package brings it in.
+
+WebdriverIO 10 makes `$` strict: a selector that matches more than one element throws `StrictSelectorError` instead of returning the first match. Narrow the selector, or use `$$` when several matches are expected.
 
 This service assumes direct network access for browser downloads. Host `HTTP_PROXY` / `HTTPS_PROXY` variables are not forwarded by default, and the selected Puppeteer downloader has no installed `proxy-agent` peer. Proxy-based browser and driver downloads are not supported or verified by this setup. The browser's local fixture proxy is configured separately and is unrelated to download proxy support.
 
