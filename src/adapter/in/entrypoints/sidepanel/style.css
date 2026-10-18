@@ -1,5 +1,11 @@
-@import "tailwindcss";
+/* Tailwind emits a utility for every class-like word in the files it scans, and by default it
+   scans the whole repository: a bare "blur" in a test title, "resize" in an E2E assertion or
+   "isolate" in a CI comment each became a rule in this stylesheet. Scan only what ships: `src`
+   without its tests. */
+@import "tailwindcss" source("../../../..");
 @import "@heroui/styles";
+@source not "../../../../**/tests";
+@source not "../../../../test-setup.ts";
 
 body {
   margin: 0;
@@ -60,14 +66,25 @@ body {
   --border: oklch(35% 0.006 286.033);
 }
 
+/* How fast the app's hand-built bordered controls answer hover, focus and press. It belongs to the
+   interaction motion rules at the end of this file ("Hand-built controls"); only this one rule
+   sits here, because it has to come before the more specific `.dark .outlined-control` selector
+   below (Biome's noDescendingSpecificity). */
+.outlined-control {
+  transition:
+    background-color 100ms var(--ease-out),
+    box-shadow 150ms var(--ease-out),
+    scale 250ms var(--ease-smooth);
+}
+
 /* In dark, pressable controls sit one step above the dividers. In light, HeroUI lifts inputs and
    the select trigger with --field-shadow, which is transparent in dark. --border-secondary is
    HeroUI's own token for the step (L 38%, contrast 1.78 on the card). It is HeroUI's color-mix of
    --surface and --surface-foreground (22%), so it follows the fade as well. At the theme toggle
    these controls change which token they read, so their 1px edge takes one small step in the
    first frame and then fades with the rest.
-   `.outlined-control` marks the app's hand-built bordered controls (the Height field, the colour
-   field and the picker's trigger and Match contrast button), whose `border border-border`
+   `.outlined-control` marks the app's hand-built bordered controls (the Height field, the pickers'
+   triggers, the Match contrast option and the hex control), whose `border border-border`
    utilities stay as the light-theme edge. Unlayered, so it wins over those utilities. */
 .dark .button--outline,
 .dark .input,
@@ -76,34 +93,159 @@ body {
   border-color: var(--border-secondary);
 }
 
-/* A picked colour is one object everywhere, in both themes: a round bead. The pickers'
-   `.color-chip` already is one (20px in the trigger, 28px in the popover). The colour field shows
-   the colour through a native colour input, which Chrome draws as a square-cornered swatch inside
-   its own padding with a fixed 1px #777 frame. The input keeps its 32x24 box (`h-6 w-8`); this
-   padding leaves a 20x20 content box, so the swatch matches the trigger's dot.
-   Chrome's and Firefox's swatch pseudo-elements are separate rules: a selector list containing a
-   pseudo-element the engine does not know is dropped whole. */
-input[type="color"] {
-  padding: 2px 6px;
-}
-input[type="color"]::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-input[type="color"]::-webkit-color-swatch {
-  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
-  border-radius: 9999px;
-}
-input[type="color"]::-moz-color-swatch {
-  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
-  border-radius: 9999px;
-}
-
-/* The bead's rim is the fill pulled a quarter of the way to the text colour: a translucent
-   --foreground border over the edge of the fill, which extends under it, so the inside of the
-   bead stays the true colour. The swatch rules above use the same colour. No box-shadow here:
-   the selected bead's `ring-2` is a box-shadow. */
+/* A picked colour is one object everywhere, in both themes: a round bead (`.color-chip`, 20px in
+   the triggers and the hex control, 28px for the palette options in the popovers). The bead's
+   rim is the fill pulled a quarter of the way to the text colour: a translucent --foreground
+   border over the edge of the fill, which extends under it, so the inside of the bead stays the
+   true colour. No box-shadow here: the selected bead's `ring-2` is a box-shadow.
+   The fill is the data, so forced colours (a Windows contrast theme) must not repaint it: the
+   bead keeps its colours there, and with them the selection ring and the focus outline. */
 .color-chip {
   border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+  forced-color-adjust: none;
+}
+
+/* The accent ring is this panel's selection mark on beads, so keyboard focus on a bead that can
+   be pressed (the palette options) cannot be an accent ring too: it is an outline in the text
+   colour, one step further out than the selection ring (offset 4 against the ring's 2), so it
+   reads as the cursor, and on the selected bead both show. How a bead answers a press is with the
+   other hand-built controls at the end of this file. */
+button.color-chip:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 4px;
+}
+
+/* The bordered controls of the pickers (triggers, Match contrast, the hex control) focus like
+   HeroUI's text inputs: a 2px --focus ring against the border. Listed before the Tailwind ring
+   variables so that on a control that is also the selected choice (`ring-2` with a 2px gap) the
+   focus ring fills the gap, and the two states stay distinct: gapped ring = selected, tight ring
+   = focused, solid 4px = both. The variables are registered by Tailwind with a no-shadow initial
+   value, so the rule is complete on an unselected control too.
+   Forced colours drop every box-shadow, so both marks also exist as outlines there: the selected
+   choice wears a gapped outline in the system's highlight colour, and the focus outline, which is
+   transparent everywhere else, is repainted by the browser in the system's text colour (tight on
+   an unselected control, in the selected one's gap otherwise). The forced-colours rule comes
+   first so the focus rule's outline wins on a control that is both. */
+@media (forced-colors: active) {
+  button.outlined-control[aria-pressed="true"],
+  .hex-control.ring-2 {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+  /* A bead keeps its own colours there, but its focus outline lies on the system's canvas. */
+  button.color-chip:focus-visible {
+    outline-color: CanvasText;
+  }
+}
+button.outlined-control:focus-visible,
+.hex-control:focus-within {
+  outline: 2px solid transparent;
+  box-shadow:
+    0 0 0 2px var(--focus),
+    var(--tw-ring-offset-shadow),
+    var(--tw-ring-shadow);
+}
+
+/* The colour well: the bead opened up. HeroUI's ColorArea (saturation across, brightness down)
+   with its hue ColorSlider fused under it into one rounded shape, edged with the bead's own rim
+   instead of HeroUI's fixed 10% black hairlines (which vanish in dark where the area's black
+   bottom meets the popover). The radius is 12px: concentric with the popover's 24px corners
+   behind 12px of dialog padding, like DeleteConfirmPopover's button.
+   HeroUI's rules live in @layer components; these are unlayered and win regardless of
+   specificity, which is why the nested `.color-slider[data-orientation] .color-slider__track`
+   rules need no matching selector here. The gradients themselves are inline styles from
+   react-aria.
+   Thumb travel: react-aria centres a thumb on its value, so at an edge value half of it would
+   hang outside the painted surface (a white colour's thumb floating off the corner). A
+   transparent border of half a bead shrinks the padding box the thumbs travel in, while the
+   gradients are laid out over the border box (`background-origin`, `!important` because
+   react-aria rewrites the inline `background` shorthand, which resets the origin, on every
+   change). The pointer is still mapped over the whole border box, so near an edge the thumb
+   trails the pointer by up to half a bead, and the colour painted under its centre is a few
+   percent off its value; the thumb's own fill is exact. */
+.color-well {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  border-radius: 12px;
+}
+.color-well::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  border: 1px solid color-mix(in oklab, var(--foreground) 25%, transparent);
+  pointer-events: none;
+}
+.color-well .color-area {
+  max-width: none;
+  aspect-ratio: auto;
+  height: 140px;
+  border: 10px solid transparent;
+  border-radius: 12px 12px 0 0;
+  /* biome-ignore lint/complexity/noImportantStyles: beats react-aria's inline `background` shorthand */
+  background-origin: border-box !important;
+  box-shadow: none;
+}
+/* The hue strip spans the well. HeroUI's end caps (which repaint the start and end hue beside a
+   narrower track) are not needed once the track extends under the thumb's travel: the gradient
+   stays in the padding box, where the thumb reads its hue exactly, and the transparent borders
+   show the colour both of its ends are, red (hue 0 is hue 360). Without this the gradient would
+   repeat under the borders, a magenta sliver before red and an orange one after it. The same
+   `!important` as the face: react-aria's inline `background` shorthand resets both longhands on
+   every change. */
+.color-well .color-slider__track {
+  width: 100%;
+  border-inline: 10px solid transparent;
+  border-radius: 0 0 12px 12px;
+  box-shadow: none;
+  /* biome-ignore lint/complexity/noImportantStyles: beats react-aria's inline `background` shorthand */
+  background-repeat: no-repeat !important;
+  /* biome-ignore lint/complexity/noImportantStyles: beats react-aria's inline `background` shorthand */
+  background-color: #ff0000 !important;
+}
+.color-well .color-slider__track::before,
+.color-well .color-slider__track::after {
+  display: none;
+}
+/* Both thumbs are the trigger's 20px bead, filled with the colour under them. They sit on the
+   user's colour, never on the surface, so their edge is theme-independent: a white ring with a
+   dark hairline on both sides of it, so the ring survives on white and the fill survives on black.
+   Constant size: nothing grows under the pointer. z-index keeps both above the well's rim. */
+.color-well .color-area__thumb,
+.color-well .color-slider__thumb {
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #fff;
+  border-radius: 9999px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+/* Keyboard focus on a thumb: the accent ring, the panel's focus mark, wrapped in the bead's own rim
+   once more (a 2px white ring with a dark hairline outside it). A bare accent ring sits on the
+   user's colour, and on a blue near the accent (#1a73e8, or the hue strip around 210) it melted
+   into the face: measured 1.0 to 1.3 contrast on the seed's blue, so the focused thumb looked
+   unfocused. With the white ring outside it the mark reads on every colour: where the accent is
+   lost in the face, the white ring and the hairline are not, and where white is lost (a white or
+   yellow face) the accent is not; the weakest edge of the mark measured 3.7 (accent to white) over
+   blue, azure, white, near-black, red, grey, cyan, yellow and the hue strip, in both themes. A white
+   gap inside the accent ring instead (the gapped selection ring's recipe) leaves the accent's
+   outer edge on the face, where it is still lost on blue. The mark reaches 6px past the bead, within
+   the 8px between the well and the dialog's bottom edge, so a thumb flush in a corner of the well
+   is not clipped.
+   Forced colours need no outline here: react-aria sets `forced-color-adjust: none` on both thumbs,
+   so these rings are painted there as they are. */
+.color-well .color-area__thumb[data-focus-visible="true"],
+.color-well .color-slider__thumb[data-focus-visible="true"] {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.28),
+    0 0 0 3px var(--focus),
+    0 0 0 5px #fff,
+    0 0 0 6px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.28);
 }
 
 /* The Settings tab's theme switch: a HeroUI ToggleButtonGroup (`.theme-switch` is the className
@@ -407,5 +549,194 @@ html.theme-transitions {
 @media (prefers-reduced-motion: reduce) {
   html.theme-transitions {
     transition: none;
+  }
+}
+
+/* Interaction motion: tab changes, list <-> detail navigation, the sections, rows and messages
+   that open and close, and the hover and press feedback of the hand-built controls. Unlayered like
+   the rules above, and built on HeroUI's easing tokens only. Four duration tokens, plus the delays
+   written next to them, run the panels, views, sections and rows: things arrive in 250ms (the
+   length of the tab pill's slide, on the curve the 300ms switch thumb uses), leave in 160ms, and
+   fade in 150ms / out 100ms (HeroUI's own overlay fades). The hand-built controls repeat HeroUI's
+   own literal 100/150/250ms instead. `--ease-out-fluid` is a hard ease-out, so most of any travel
+   is over by half time and the rest is settling. Enter and exit are never symmetric: exits are
+   shorter and fade before they collapse. */
+:root {
+  --motion-enter: 250ms;
+  --motion-exit: 160ms;
+  --motion-fade-in: 150ms;
+  --motion-fade-out: 100ms;
+}
+
+/* Tab panels: a fade-through. react-aria marks the incoming panel `data-entering` for one style
+   flush and keeps the outgoing one mounted (`data-exiting`, inert) while a transition declared on
+   the panel itself runs. HeroUI makes the outgoing panel absolute at top: 0, so the panels need a
+   positioned box of their own (`.tab-panels`). The outgoing panel is all but gone (100ms) when the
+   incoming one starts (80ms delay); a plain cross-fade showed both texts at once. The incoming
+   slide lands at 250ms, together with the pill. Direction needs no JS: the first panel always
+   lives on the left, so it leaves and returns to the left. HeroUI declares no transition on
+   `.tabs__panel`, so this shorthand replaces nothing. */
+.tab-panels {
+  position: relative;
+}
+.tabs__panel {
+  transition:
+    opacity var(--motion-fade-in) var(--ease-smooth) 80ms,
+    translate calc(var(--motion-enter) - 80ms) var(--ease-out-fluid) 80ms;
+}
+.tabs__panel[data-entering],
+.tabs__panel[data-exiting] {
+  opacity: 0;
+}
+.tabs__panel[data-exiting] {
+  transition-duration: var(--motion-fade-out);
+  transition-delay: 0ms;
+}
+.tab-panel-start[data-entering],
+.tab-panel-start[data-exiting] {
+  translate: -8px 0;
+}
+.tab-panel-end[data-entering],
+.tab-panel-end[data-exiting] {
+  translate: 8px 0;
+}
+
+/* List <-> detail: enter only. The two view roots are keyed, so each navigation mounts a new
+   root; the attribute is absent on the first paint of the panel, and absent on the list unless the
+   user pressed Back. The fade is shorter than the slide so the new view is readable while it is
+   still settling. 12px, more than the tab's 8px: a level change, not a lateral one. */
+@keyframes view-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes view-slide {
+  from {
+    translate: var(--view-enter-x) 0;
+  }
+}
+[data-view-enter] {
+  --view-enter-x: 12px;
+  animation:
+    view-fade var(--motion-fade-in) var(--ease-out-fluid),
+    view-slide var(--motion-enter) var(--ease-out-fluid);
+}
+[data-view-enter="back"] {
+  --view-enter-x: -12px;
+}
+/* A Backup notice raised while the Settings tab is open (BackupCard sets the class only then)
+   borrows the fade. It has no slide, no height animation (nothing sits below it) and no exit: a
+   cleared notice leaves the document at once. */
+.notice-enter {
+  animation: view-fade var(--motion-fade-in) var(--ease-smooth);
+}
+
+/* Presence wrapper (components/Presence.tsx) for the switch-gated sections, the rule and palette
+   rows and the validation line: height via grid rows 1fr <-> 0fr. The inner div is the grid item
+   that shrinks; it carries only the 4px of focus-ring room (block padding cancelled by an equal
+   negative margin, see the rule below). Any other padding or border on it would keep the 0fr row
+   from collapsing. The wrapper's negative margin-top cancels the parent's flex gap while collapsed.
+   Content opacity trails the box on the way in (60ms) and leads it on the way out (40ms), so the
+   clip edge never slices visible text or buttons. */
+.reveal {
+  --reveal-gap: 0.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--motion-enter) var(--ease-out-fluid),
+    margin-top var(--motion-enter) var(--ease-out-fluid),
+    opacity var(--motion-fade-in) var(--ease-smooth) 60ms;
+}
+/* Clipped on the block axis only, so a row wider than a narrow panel stays reachable. Focus rings
+   reach 4px outside their control: the padding, taken back by the margin, leaves them that room
+   (overflow-clip-margin has no effect unless both axes clip). */
+.reveal > div {
+  min-height: 0;
+  overflow-x: visible;
+  overflow-y: clip;
+  padding-block: 4px;
+  margin-block: -4px;
+}
+/* Both ends share the collapsed state. Presence marks a new wrapper `data-entering` for one style
+   flush, the way react-aria marks an entering tab panel: it is first styled collapsed, and the
+   transition above opens it once the attribute is gone. A leaving wrapper keeps `data-exiting`,
+   and stays mounted and inert, until the shorter transition below has finished. */
+.reveal[data-entering],
+.reveal[data-exiting] {
+  grid-template-rows: 0fr;
+  margin-top: calc(-1 * var(--reveal-gap));
+  opacity: 0;
+}
+.reveal[data-exiting] {
+  transition:
+    grid-template-rows var(--motion-exit) var(--ease-out-fluid) 40ms,
+    margin-top var(--motion-exit) var(--ease-out-fluid) 40ms,
+    opacity var(--motion-fade-out) var(--ease-smooth);
+}
+
+/* Hand-built controls (picker triggers, Auto option, palette chips) answer hover and press exactly
+   like the HeroUI buttons beside them: `.button` is background 100ms, transform 250ms
+   `--ease-smooth`, hover `--default` at 60%, press 0.97/0.98; the small round close button presses
+   to 0.93. The selection ring is a box-shadow, so it fades between chips at the ring speed HeroUI
+   uses (150ms). No hover movement: this is a dense list. The hex control is a text field, so like
+   the Height field it does not tint under the pointer. None of these elements carries a HeroUI
+   class, so no HeroUI transition list is replaced. The transition of `.outlined-control` is
+   declared near the top of this file, above the `.dark .outlined-control` rule. */
+.color-chip {
+  transition:
+    box-shadow 150ms var(--ease-out),
+    scale 250ms var(--ease-smooth);
+}
+button.outlined-control:hover {
+  background-color: color-mix(in srgb, var(--default) 60%, transparent);
+}
+button.outlined-control:active {
+  scale: 0.98;
+}
+button.color-chip:active {
+  scale: 0.93;
+}
+
+/* Reduced motion: nothing travels or resizes over time; only short opacity, colour and ring changes
+   remain, which WCAG 2.3.3 does not count as motion. Durations stay non-zero so react-aria and
+   Presence still get an animation to wait for. This is a block of its own because
+   tests/theme-tokens.test.ts expects the theme fade's reduced-motion block above exactly as it is
+   written. */
+@media (prefers-reduced-motion: reduce) {
+  .tabs__panel {
+    transition-property: opacity;
+    transition-duration: var(--motion-fade-out);
+  }
+  .tabs__panel[data-entering],
+  .tabs__panel[data-exiting] {
+    translate: none;
+  }
+  [data-view-enter] {
+    --view-enter-x: 0px;
+    animation-duration: var(--motion-fade-out);
+  }
+  .notice-enter {
+    animation-duration: var(--motion-fade-out);
+  }
+  .reveal,
+  .reveal[data-exiting] {
+    transition-property: opacity;
+    transition-duration: var(--motion-fade-out);
+    transition-timing-function: var(--ease-smooth);
+    transition-delay: 0ms;
+  }
+  /* A chip keeps its ring fade only. Listing background-color here, as for the outlined controls,
+     would add a transition it does not have otherwise, and a recoloured chip would then lag
+     behind the thumb being dragged in the colour well. */
+  .color-chip {
+    transition-property: box-shadow;
+  }
+  .outlined-control {
+    transition-property: background-color, box-shadow;
+  }
+  button.outlined-control:active,
+  button.color-chip:active {
+    scale: none;
   }
 }

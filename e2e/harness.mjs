@@ -615,6 +615,9 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
             try {
               const extensionApi = globalThis.browser || globalThis.chrome;
               await extensionApi.storage.local.clear();
+              // The panel's first-paint theme hint is the only thing kept in localStorage; without
+              // this a test would open on the theme the previous test left behind.
+              localStorage.clear();
               return { ok: true };
             } catch (error) {
               return { ok: false, message: String(error) };
@@ -624,52 +627,48 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
         await harness.reloadPanel();
         await harness.openConsole();
       },
+      // Leaves `handle` in front. Switching back after each read hides the tab between polls, and
+      // Chrome 154 can then leave a colour transition created during a read pending (computed
+      // style stays on the old colour, observed for 11 s and after the tab returned to the front).
       async snapshotConsole(handle = mockHandle) {
-        const originalHandle = await browser.getWindowHandle();
-        try {
-          await browser.switchToWindow(handle);
-          return await browser.execute(() => {
-            const computed = (selector) => {
-              const element = document.querySelector(selector);
-              return element ? getComputedStyle(element) : null;
-            };
-            const bar = [...document.documentElement.children].find(
-              (element) =>
-                element.tagName === 'DIV' &&
-                element.style.position === 'fixed' &&
-                element.style.zIndex === '2147483647',
-            );
-            const overlay = bar ? getComputedStyle(bar) : null;
-            const platformBar = computed('#ocb-platform-bar');
-            return {
-              origin: location.origin,
-              href: location.href,
-              title: document.title,
-              topBar: {
-                exists: Boolean(bar),
-                display: overlay?.display ?? null,
-                height: overlay?.height ?? null,
-                backgroundColor: overlay?.backgroundColor ?? null,
-                backgroundImage: overlay?.backgroundImage ?? null,
+        await browser.switchToWindow(handle);
+        return await browser.execute(() => {
+          const computed = (selector) => {
+            const element = document.querySelector(selector);
+            return element ? getComputedStyle(element) : null;
+          };
+          const bar = [...document.documentElement.children].find(
+            (element) =>
+              element.tagName === 'DIV' && element.style.position === 'fixed' && element.style.zIndex === '2147483647',
+          );
+          const overlay = bar ? getComputedStyle(bar) : null;
+          const platformBar = computed('#ocb-platform-bar');
+          return {
+            origin: location.origin,
+            href: location.href,
+            title: document.title,
+            topBar: {
+              exists: Boolean(bar),
+              display: overlay?.display ?? null,
+              height: overlay?.height ?? null,
+              backgroundColor: overlay?.backgroundColor ?? null,
+              backgroundImage: overlay?.backgroundImage ?? null,
+            },
+            platformBar: {
+              exists: Boolean(platformBar),
+              backgroundColor: platformBar?.backgroundColor ?? null,
+              backgroundImage: platformBar?.backgroundImage ?? null,
+              textColors: {
+                left: computed('#platform-left-text')?.color ?? null,
+                right: computed('#platform-right-text')?.color ?? null,
+                button: computed('#platform-button-text')?.color ?? null,
               },
-              platformBar: {
-                exists: Boolean(platformBar),
-                backgroundColor: platformBar?.backgroundColor ?? null,
-                backgroundImage: platformBar?.backgroundImage ?? null,
-                textColors: {
-                  left: computed('#platform-left-text')?.color ?? null,
-                  right: computed('#platform-right-text')?.color ?? null,
-                  button: computed('#platform-button-text')?.color ?? null,
-                },
-              },
-              unaffectedColor: computed('#unaffected-content')?.color ?? null,
-              unaffectedButtonColor: computed('#navigate-project')?.color ?? null,
-              bodyText: document.body.innerText,
-            };
-          });
-        } finally {
-          await browser.switchToWindow(originalHandle);
-        }
+            },
+            unaffectedColor: computed('#unaffected-content')?.color ?? null,
+            unaffectedButtonColor: computed('#navigate-project')?.color ?? null,
+            bodyText: document.body.innerText,
+          };
+        });
       },
       async openNativePanel() {
         await harness.openPanel();

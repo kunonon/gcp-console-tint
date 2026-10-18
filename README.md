@@ -13,6 +13,7 @@ A browser extension (Chrome MV3 / Firefox MV2) that tints parts of the [Google C
 - **Live updates** — settings apply immediately via `storage.onChanged`, and the tint follows the console's SPA project switches without a reload, with a short crossfade (disabled under `prefers-reduced-motion`).
 - **Export / import** — the Settings tab saves every rule (with its palette and colors) to a JSON file, as stored once pending changes have been written, and imports rules back from one: pick the rules to take, and a rule with the same match type and pattern as an existing one replaces that rule in place instead of being added.
 - **Theme** — the Settings tab picks *Auto* (follow the system), *Light*, or *Dark* for the side panel. The colours fade from one theme to the other instead of flipping.
+- **Motion** — the side panel animates tab, navigation, section, and row changes, and keeps only short fades under `prefers-reduced-motion`.
 
 ## Usage
 
@@ -79,11 +80,13 @@ See [E2E coverage and scope](e2e/README.md) for the scenarios and browser-covera
 
 If dev-mode styles look stale after larger edits, restart the server: `docker compose restart dev` (the dev side panel loads a pre-render chunk that is fixed at server start).
 
-Dependency updates sit behind a one-week cooldown: `minimumReleaseAge` in `pnpm-workspace.yaml` makes pnpm resolve only versions published at least 7 days ago (transitive dependencies included), so a compromised release that gets pulled within hours never lands in the lockfile. pnpm applies the same check to the versions already in `pnpm-lock.yaml` on every install, so a lockfile that carries a younger version (for example from a dependency PR resolved elsewhere) fails to install — in CI and in the dev container — until that version is a week old. For an urgent fix, add the package to `minimumReleaseAgeExclude` in the same file.
+Dependency updates sit behind a one-week cooldown: `minimumReleaseAge` in `pnpm-workspace.yaml` makes pnpm resolve only versions published at least 7 days ago (transitive dependencies included), so a compromised release that gets pulled within hours never lands in the lockfile. pnpm applies the same check to the versions already in `pnpm-lock.yaml` on every install, so a lockfile that carries a younger version (for example from a dependency PR resolved elsewhere) fails to install — in CI and in the dev container — until that version is a week old. Dependabot waits the same week before proposing a version (`cooldown` in `.github/dependabot.yml`; its default is only 3 days), so its version update PRs carry only versions that pnpm accepts. Security updates skip that wait and can still fail this check. For an urgent fix, add the package to `minimumReleaseAgeExclude` in the same file.
 
 ## CI
 
 GitHub Actions runs on every pull request and push to `main`: Biome lint, typecheck, the Vitest suite, and both browser builds run as a parallel step group, followed by the Chrome and Firefox extension end-to-end tests. On failure, the workflow uploads only the E2E screenshots and startup diagnostics. Commits on `develop` are validated by the pull-request runs (feature PRs, and the release PR whose head is `develop`), so there is no separate develop push run. CodeQL code scanning (GitHub default setup: JavaScript/TypeScript and Actions workflows) runs independently on pushes and pull requests.
+
+Workflow actions are pinned to full commit SHAs and also recorded in `.github/workflows/actions.lock`, a [workflow dependency lockfile](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles) (public preview) maintained with the [`gh actions-lock`](https://github.com/github/gh-actions-lock) extension. For workflows listed in it, GitHub Actions requires every action to have a lockfile entry and checks at run time that each action's repository is still the one that was locked. Dependabot regenerates the lockfile in its action update PRs. When you add, remove or change a `uses:` reference (keep the `owner/repo@<full SHA> # vX.Y.Z` form), or add or remove a workflow, run `gh actions-lock --no-narrow` and commit the lockfile; without `--no-narrow` the tool rewrites the SHA pins to version tags. Keep `uses:` steps outside `- parallel:` groups for now, because the tool does not record actions inside them yet ([github/gh-actions-lock#175](https://github.com/github/gh-actions-lock/issues/175)). Don't edit the lockfile by hand.
 
 ## Branching and releases
 
@@ -117,7 +120,7 @@ Release notes are generated from merged PRs and categorized by PR label (config 
 | `ci:` / `build:` | `ci` | 🧰 Maintenance |
 | `chore:` / `refactor:` / `test:` / `perf:` / `style:` | `maintenance` | 🧰 Maintenance |
 
-Dependabot PRs keep Dependabot's own `dependencies` label (📦 Dependencies). PRs without a recognized prefix land under "Other Changes".
+Dependabot PRs keep Dependabot's own `dependencies` label (📦 Dependencies). PRs from forks are skipped, because their workflow token is read-only, so add their label by hand. PRs without a recognized prefix land under "Other Changes".
 
 ### Rolling back a release
 

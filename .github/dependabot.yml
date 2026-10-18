@@ -1,13 +1,22 @@
 # Routine version updates (grouped weekly PRs), on top of the security alerts
 # GitHub raises by default. The github-actions ecosystem also keeps the
 # SHA-pinned actions in .github/workflows/ current (Dependabot updates the SHA
-# and the trailing version comment together).
+# and the trailing version comment together, and regenerates the matching
+# .github/workflows/actions.lock entries in the same PR).
+#
+# `cooldown` makes Dependabot wait a week after a release before proposing it,
+# the same window as `minimumReleaseAge` in pnpm-workspace.yaml. Keep
+# `default-days` at or above minimumReleaseAge / 1440: with Dependabot's
+# default of 3 days, npm PRs carried versions that pnpm still rejected on
+# install. Security updates ignore the cooldown.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns:
@@ -17,6 +26,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       npm-dependencies:
         patterns:

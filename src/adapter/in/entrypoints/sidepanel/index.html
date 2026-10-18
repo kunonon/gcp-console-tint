@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GCP Console Tint</title>
+    <!-- Applies the theme before the first paint (see ../theme-init.ts). Deliberately a classic,
+         blocking script. `vite-ignore`: it is built as its own entrypoint, not bundled from here. -->
+    <script vite-ignore src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
