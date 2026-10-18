@@ -1,7 +1,8 @@
 # Routine version updates (grouped weekly PRs), on top of the security alerts
 # GitHub raises by default. The github-actions ecosystem also keeps the
 # SHA-pinned actions in .github/workflows/ current (Dependabot updates the SHA
-# and the trailing version comment together).
+# and the trailing version comment together, and regenerates the matching
+# .github/workflows/actions.lock entries in the same PR).
 version: 2
 updates:
   - package-ecosystem: github-actions
