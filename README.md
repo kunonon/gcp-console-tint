@@ -118,7 +118,7 @@ Release notes are generated from merged PRs and categorized by PR label (config 
 | `ci:` / `build:` | `ci` | 🧰 Maintenance |
 | `chore:` / `refactor:` / `test:` / `perf:` / `style:` | `maintenance` | 🧰 Maintenance |
 
-Dependabot PRs keep Dependabot's own `dependencies` label (📦 Dependencies). PRs without a recognized prefix land under "Other Changes".
+Dependabot PRs keep Dependabot's own `dependencies` label (📦 Dependencies). PRs from forks are skipped, because their workflow token is read-only, so add their label by hand. PRs without a recognized prefix land under "Other Changes".
 
 ### Rolling back a release
 

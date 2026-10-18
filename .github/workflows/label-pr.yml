@@ -1,13 +1,16 @@
 name: Label PR
 
-# pull_request_target (not pull_request) so labeling also works for fork PRs,
-# whose pull_request token is read-only. Safe here because this workflow never
-# checks out or executes PR code — it only reads the title and edits labels.
+# pull_request, not pull_request_target: GitHub's default policy blocks
+# pull_request_target in public repositories from 2026-11-02, and same-repo PRs
+# get a writable token under pull_request too. Fork PRs don't (see the job
+# condition), so they need their label applied by hand.
 # reopened is included so a PR whose initial labeling failed (or that was closed
 # before the run completed) gets re-labeled on reopen without needing a title edit.
+# synchronize is included because pull_request runs are skipped while a PR has a
+# merge conflict; the push that resolves the conflict then applies the label.
 on:
-  pull_request_target:
-    types: [opened, reopened, edited]
+  pull_request:
+    types: [opened, reopened, edited, synchronize]
 
 permissions:
   pull-requests: write
@@ -21,7 +24,11 @@ jobs:
     # Dependabot PRs keep only Dependabot's own `dependencies` label — a type
     # label derived from its chore/build title would misfile the PR under
     # Maintenance in the release notes (categories match first-wins).
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    # Fork PRs are skipped: their pull_request token is read-only, so the label
+    # edits would fail.
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Apply type label from the PR title prefix
