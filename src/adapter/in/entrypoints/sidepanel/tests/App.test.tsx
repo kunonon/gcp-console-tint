@@ -175,9 +175,9 @@ function hexOrRgb(hex: string): (string | undefined)[] {
   return [hex, `rgb(${r}, ${g}, ${b})`];
 }
 
-// Rule rows are the only list-page elements with the native `draggable` attribute.
+// Rule rows are the list-page elements marked `data-rule-row`.
 function getAllRuleRows(): HTMLElement[] {
-  return Array.from(document.querySelectorAll('[draggable="true"]')) as HTMLElement[];
+  return Array.from(document.querySelectorAll('[data-rule-row]')) as HTMLElement[];
 }
 
 function getRuleRowAt(index: number): HTMLElement {
@@ -190,7 +190,7 @@ function getRuleRowAt(index: number): HTMLElement {
 // Duplicate, when two rows briefly share the same pattern text); use getRuleRowAt for those.
 function getRuleRow(pattern: string): HTMLElement {
   const label = screen.getByText(pattern);
-  const row = label.closest('[draggable="true"]');
+  const row = label.closest('[data-rule-row]');
   if (!row) throw new Error(`rule row not found for pattern "${pattern}"`);
   return row as HTMLElement;
 }
@@ -258,18 +258,55 @@ async function goBack(user: ReturnType<typeof userEvent.setup>) {
   });
 }
 
-function makeDataTransferInit() {
-  const store: Record<string, string> = {};
-  return {
-    dataTransfer: {
-      setData: (format: string, data: string) => {
-        store[format] = data;
-      },
-      getData: (format: string) => store[format] ?? '',
-      effectAllowed: '',
-      dropEffect: '',
-    },
-  };
+// jsdom lays nothing out, so the rule rows are given a layout for the reordering to measure: 36px
+// tall, 44px apart, in their current document order. Transforms are not reflected. The list's row
+// gap computes to nothing in jsdom, which the reordering takes as 0.
+const ROW_PITCH = 44;
+const ROW_HEIGHT = 36;
+// About two thirds of a row past a midpoint: never exactly on one.
+const DRAG_PAST = 24;
+const rowCenter = (index: number) => index * ROW_PITCH + ROW_HEIGHT / 2;
+
+function layOutRuleRows() {
+  const measure = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rowRect(this: Element) {
+    const index = getAllRuleRows().indexOf(this as HTMLElement);
+    if (index < 0) return measure.call(this);
+    const top = index * ROW_PITCH;
+    return {
+      x: 0,
+      y: top,
+      left: 0,
+      top,
+      right: 300,
+      bottom: top + ROW_HEIGHT,
+      width: 300,
+      height: ROW_HEIGHT,
+      toJSON: () => ({}),
+    };
+  });
+}
+
+// A primary mouse button. PointerEventInit's isPrimary defaults to false, which the grip ignores.
+// jsdom has no setPointerCapture, so these also check that reordering works without it.
+const POINTER = { pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 };
+
+// Presses the row's grip at the row's center, moves through `path` (viewport y) and releases on its
+// last point.
+function dragGrip(row: HTMLElement, path: number[]) {
+  const grip = getGrip(row);
+  fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(getAllRuleRows().indexOf(row)) });
+  for (const clientY of path) fireEvent.pointerMove(grip, { ...POINTER, clientY });
+  fireEvent.pointerUp(grip, { ...POINTER, clientY: path.at(-1) });
+}
+
+// Nothing of a drag may stay behind: a leftover attribute on <html> would block text selection,
+// or scroll anchoring, for the whole panel.
+function expectReorderIdle() {
+  expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(false);
+  expect(document.documentElement.hasAttribute('data-reordering-drop')).toBe(false);
+  expect(document.querySelector('[data-reordering], [data-settling], [data-dragging]')).toBeNull();
+  for (const row of getAllRuleRows()) expect(row.style.transform).toBe('');
 }
 
 // Switches the list page from the default Rules tab to Settings, and waits for the Backup card.
@@ -340,9 +377,6 @@ function replacementFor(rule: ProjectRule, topBarHeight: number): ProjectRule {
 function newRule(rule: ProjectRule, pattern: string): ProjectRule {
   return { ...rule, id: 'file-beta', pattern };
 }
-
-const TOP_INDICATOR = 'shadow-[inset_0_2px_0_0_var(--focus)]';
-const BOTTOM_INDICATOR = 'shadow-[inset_0_-2px_0_0_var(--focus)]';
 
 beforeEach(() => {
   fakeBrowser.reset();
@@ -1948,7 +1982,7 @@ describe('App', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
 
-    it('reorders rules via drag-and-drop from the grip handle, and persists the new order to storage', async () => {
+    it('reorders a rule downward by dragging its grip, and persists the new order to storage', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
@@ -1956,44 +1990,58 @@ describe('App', () => {
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
       expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      layOutRuleRows();
 
-      const alphaRow = getRuleRow('alpha');
-      const betaRow = getRuleRow('beta');
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
-
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      fireEvent.drop(betaRow, dt);
-      fireEvent.dragEnd(alphaRow, dt);
+      dragGrip(getRuleRow('alpha'), [40, rowCenter(1) + DRAG_PAST]);
 
       await waitFor(async () => {
         expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['beta', 'alpha']);
       });
+      expect(getAllRuleRows().map((row) => row.textContent)).toEqual([
+        expect.stringContaining('beta'),
+        expect.stringContaining('alpha'),
+      ]);
+      expectReorderIdle();
     });
 
-    it('does not start a drag when the gesture does not originate on the grip handle', async () => {
+    it('reorders a rule upward by dragging its grip', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      await addRule(user, 'gamma');
+      layOutRuleRows();
 
-      const alphaRow = getRuleRow('alpha');
-      const betaRow = getRuleRow('beta');
-      const dt = makeDataTransferInit();
+      dragGrip(getRuleRow('gamma'), [rowCenter(1) - DRAG_PAST, rowCenter(0) - DRAG_PAST]);
 
-      // No mousedown on the grip first: dragstart should be cancelled and no reorder should occur.
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      fireEvent.drop(betaRow, dt);
-
-      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['gamma', 'alpha', 'beta']);
+      });
+      expectReorderIdle();
     });
 
-    it('dropping a row onto itself is a no-op: order and storage stay unchanged, and no drop indicator is shown', async () => {
+    it('does nothing when the drag starts on the rule text instead of the grip', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      layOutRuleRows();
+
+      const text = screen.getByText('alpha');
+      fireEvent.pointerDown(text, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(text, { ...POINTER, clientY: rowCenter(1) + DRAG_PAST });
+      expect(document.querySelector('[data-dragging]')).toBeNull();
+      fireEvent.pointerUp(text, { ...POINTER, clientY: rowCenter(1) + DRAG_PAST });
+
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      expectReorderIdle();
+    });
+
+    it('does nothing when the pointer is released before it has moved 3px', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
@@ -2001,120 +2049,155 @@ describe('App', () => {
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
       const before = (await getStoredSettings()).projectRules.map((r) => r.id);
+      layOutRuleRows();
 
-      const alphaRow = getRuleRow('alpha');
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
-
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt); // draggingIndex = 0
-      fireEvent.dragOver(alphaRow, dt); // dragOverIndex = 0 === draggingIndex -> no indicator
-      expect(alphaRow.className).not.toContain('var(--focus)');
-
-      fireEvent.drop(alphaRow, dt);
-      fireEvent.dragEnd(alphaRow, dt);
+      const grip = getGrip(getRuleRow('alpha'));
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: rowCenter(0) + 2 });
+      expect(document.querySelector('[data-dragging]')).toBeNull();
+      expect(getRuleRow('alpha').style.transform).toBe('');
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: rowCenter(0) + 2 });
 
       expect((await getStoredSettings()).projectRules.map((r) => r.id)).toEqual(before);
+      expectReorderIdle();
+    });
+
+    it('saves nothing when the row is dragged away and back to its own place', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      const before = (await getStoredSettings()).projectRules.map((r) => r.id);
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      dragGrip(getRuleRow('alpha'), [rowCenter(1) + DRAG_PAST, rowCenter(0) + 1]);
+
+      expect(save).not.toHaveBeenCalled();
+      expect((await getStoredSettings()).projectRules.map((r) => r.id)).toEqual(before);
+      expectReorderIdle();
+    });
+
+    it('cancels the drag on Escape: the rows go back and the release saves nothing', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      const grip = getGrip(getRuleRow('alpha'));
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      expect(getRuleRow('alpha').hasAttribute('data-dragging')).toBe(true);
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expectReorderIdle();
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
+
+      expect(save).not.toHaveBeenCalled();
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      expectReorderIdle();
+    });
+
+    it('cancels the drag when the browser cancels the pointer', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      const grip = getGrip(getRuleRow('alpha'));
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      fireEvent.pointerCancel(grip, { ...POINTER, clientY: target });
+      expectReorderIdle();
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
+
+      expect(save).not.toHaveBeenCalled();
       expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
     });
 
-    it('shows a bottom-edge drop indicator on the target row when dragging downward (dragOverIndex > draggingIndex)', async () => {
+    it('cancels the drag when the window loses focus', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
 
-      const alphaRow = getRuleRow('alpha'); // index 0
-      const betaRow = getRuleRow('beta'); // index 1
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
+      const grip = getGrip(getRuleRow('alpha'));
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      fireEvent.blur(window);
+      expectReorderIdle();
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
 
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt); // draggingIndex = 0
-      fireEvent.dragOver(betaRow, dt); // dragOverIndex = 1 (> 0) -> downward -> bottom line on beta
-
-      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
-      expect(betaRow.className).not.toContain(TOP_INDICATOR);
-      // The dragged row itself never shows an indicator.
-      expect(alphaRow.className).not.toContain('var(--focus)');
+      expect(save).not.toHaveBeenCalled();
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
     });
 
-    it('shows a top-edge drop indicator on the target row when dragging upward (dragOverIndex < draggingIndex)', async () => {
+    it('leaves nothing on <html> and saves nothing when the panel unmounts mid-drag', async () => {
       const user = userEvent.setup();
-      render(<App settingsStore={new SettingsStoreImpl()} />);
+      const { unmount } = render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
 
-      const alphaRow = getRuleRow('alpha'); // index 0
-      const betaRow = getRuleRow('beta'); // index 1
-      const grip = getGrip(betaRow);
-      const dt = makeDataTransferInit();
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(getGrip(getRuleRow('alpha')), { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(window, { ...POINTER, clientY: target });
+      expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(true);
+      unmount();
+      expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(false);
+      fireEvent.pointerUp(window, { ...POINTER, clientY: target });
 
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(betaRow, dt); // draggingIndex = 1
-      fireEvent.dragOver(alphaRow, dt); // dragOverIndex = 0 (< 1) -> upward -> top line on alpha
-
-      expect(alphaRow.className).toContain(TOP_INDICATOR);
-      expect(alphaRow.className).not.toContain(BOTTOM_INDICATOR);
-      expect(betaRow.className).not.toContain('var(--focus)');
+      expect(save).not.toHaveBeenCalled();
     });
 
-    it('clears the drop indicator once the drop is handled', async () => {
+    it('lifts the dragged row and moves the passed row aside while dragging, and clears both on release', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      layOutRuleRows();
 
       const alphaRow = getRuleRow('alpha');
       const betaRow = getRuleRow('beta');
       const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(true);
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
 
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
+      expect(alphaRow.hasAttribute('data-dragging')).toBe(true);
+      expect(betaRow.hasAttribute('data-dragging')).toBe(false);
+      // The dragged row stops at the end of the list: its top at beta's.
+      expect(alphaRow.style.transform).toBe(`translateY(${ROW_PITCH}px)`);
+      // jsdom computes no flex gap, so beta makes way by one row height.
+      expect(betaRow.style.transform).toBe(`translateY(-${ROW_HEIGHT}px)`);
 
-      fireEvent.drop(betaRow, dt);
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
       await waitFor(async () => {
         expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['beta', 'alpha']);
       });
-      // Rows are recreated post-reorder; re-fetch and confirm neither shows an indicator.
-      expect(getRuleRow('alpha').className).not.toContain('var(--focus)');
-      expect(getRuleRow('beta').className).not.toContain('var(--focus)');
-    });
-
-    it('clears the drop indicator on dragEnd even when the drag ends outside any row (e.g. dropped outside the list)', async () => {
-      const user = userEvent.setup();
-      render(<App settingsStore={new SettingsStoreImpl()} />);
-      await screen.findByRole('button', { name: 'Add rule' });
-
-      await addRule(user, 'alpha');
-      await addRule(user, 'beta');
-
-      const alphaRow = getRuleRow('alpha');
-      const betaRow = getRuleRow('beta');
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
-
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
-
-      // dragEnd without a preceding drop, as happens when the drag is released outside the list.
-      fireEvent.dragEnd(alphaRow, dt);
-
-      expect(getRuleRow('beta').className).not.toContain('var(--focus)');
-      // Cancelling the drag (no drop) must not reorder anything: handleRowDrop, which is the
-      // only place that calls save() with a reordered array, was never invoked.
-      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      expectReorderIdle();
     });
 
     it("editing a rule's settings in detail saves to that rule only, without affecting other rules", async () => {

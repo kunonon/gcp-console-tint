@@ -557,7 +557,8 @@ html.theme-transitions {
    the rules above, and built on HeroUI's easing tokens only. Four duration tokens, plus the delays
    written next to them, run the panels, views, sections and rows: things arrive in 250ms (the
    length of the tab pill's slide, on the curve the 300ms switch thumb uses), leave in 160ms, and
-   fade in 150ms / out 100ms (HeroUI's own overlay fades). The hand-built controls repeat HeroUI's
+   fade in 150ms / out 100ms (HeroUI's own overlay fades). A fifth, 200ms, moves the rule rows that
+   make way for a dragged row and lands them on release. The hand-built controls repeat HeroUI's
    own literal 100/150/250ms instead. `--ease-out-fluid` is a hard ease-out, so most of any travel
    is over by half time and the rest is settling. Enter and exit are never symmetric: exits are
    shorter and fade before they collapse. */
@@ -566,6 +567,7 @@ html.theme-transitions {
   --motion-exit: 160ms;
   --motion-fade-in: 150ms;
   --motion-fade-out: 100ms;
+  --motion-reorder: 200ms;
 }
 
 /* Tab panels: a fade-through. react-aria marks the incoming panel `data-entering` for one style
@@ -675,6 +677,60 @@ html.theme-transitions {
     opacity var(--motion-fade-out) var(--ease-smooth);
 }
 
+/* Rule reordering (hooks/useRowReorder.ts). While a row is dragged the list carries
+   `data-reordering`, and `data-settling` while the rows land after the release; the grabbed row
+   carries `data-dragging`. The hook moves rows with inline transforms: the others slide aside on the
+   transition below, and the landing is a Web Animation that reads `--motion-reorder` from the row.
+   Rows sit inside the `.reveal` clip, which leaves only 4px outside them, so the clip is lifted for
+   the gesture: the rows' own wrappers and the one around the whole list, which would cut the
+   shadow of a row at the list's end. The grabbed row follows the pointer without a transition and
+   is lifted like a popover: the card's surface under it (in dark, one step up), the overlay shadow
+   around it. That surface is a pseudo-element reaching past the row, 6px above and below and 8px
+   to the sides, so the row's 36px buttons and its text get room inside it without the row's
+   layout changing; its 16px corners sit concentric with the card's 24px ones, 8px further out. */
+[data-reordering] .reveal > div,
+[data-settling] .reveal > div,
+.reveal > div:has(> [data-reordering]),
+.reveal > div:has(> [data-settling]) {
+  overflow-y: visible;
+}
+[data-reordering] [data-rule-row]:not([data-dragging]) {
+  transition: transform var(--motion-reorder) var(--ease-out-fluid);
+}
+[data-rule-row][data-dragging] {
+  position: relative;
+  z-index: 1;
+}
+[data-rule-row][data-dragging]::before {
+  content: "";
+  position: absolute;
+  inset: -6px -8px;
+  z-index: -1;
+  background-color: var(--surface);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--overlay-shadow);
+}
+/* In dark the overlay shadow is only a faint rim, so the lifted row also takes the next surface
+   step up, as raised surfaces do in dark themes. */
+.dark [data-rule-row][data-dragging]::before {
+  background-color: var(--surface-secondary);
+}
+/* From a drop until the rows land: the browser's scroll anchoring would otherwise answer the new
+   row order by shifting a scrolled window by a row. Set on <html>, the scroller, before React
+   commits the order. */
+:root[data-reordering-drop] {
+  overflow-anchor: none;
+}
+/* From the press on a grip to the release: no text selection starts, and the pointer shows a grab
+   wherever it travels. */
+:root[data-reordering-pending] {
+  user-select: none;
+}
+:root[data-reordering-pending],
+:root[data-reordering-pending] * {
+  cursor: grabbing;
+}
+
 /* Hand-built controls (picker triggers, Auto option, palette chips) answer hover and press exactly
    like the HeroUI buttons beside them: `.button` is background 100ms, transform 250ms
    `--ease-smooth`, hover `--default` at 60%, press 0.97/0.98; the small round close button presses
@@ -738,5 +794,13 @@ button.color-chip:active {
   button.outlined-control:active,
   button.color-chip:active {
     scale: none;
+  }
+}
+
+/* Reduced motion for rule reordering: the rows that make way swap at once and nothing glides on
+   release. The grabbed row still follows the pointer, which is the gesture itself. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-reorder: 0ms;
   }
 }

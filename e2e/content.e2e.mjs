@@ -787,12 +787,12 @@ for (const browserName of browserTargets()) {
 
       await h.openPanel();
       const browser = h.browser;
-      await browser.waitUntil(async () => (await browser.$$('[draggable="true"]')).length === 1, {
+      await browser.waitUntil(async () => (await browser.$$('[data-rule-row]')).length === 1, {
         timeout: 5000,
         interval: 100,
         timeoutMsg: 'partially corrupt settings did not render only the valid rule',
       });
-      const visibleRules = await browser.$$('[draggable="true"]');
+      const visibleRules = await browser.$$('[data-rule-row]');
       assert.equal(visibleRules.length, 1);
       assert.match(await visibleRules[0].getText(), /alpha/);
       await visibleRules[0].$('button[aria-label="Edit"]').click();

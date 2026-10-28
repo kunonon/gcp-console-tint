@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { Key } from 'webdriverio';
 import { projectSettings, rule, SCHEMA_VERSION, settings, THEME_HINT_KEY } from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
@@ -159,7 +157,7 @@ async function rowAt(browser, index) {
   let rows = [];
   await browser.waitUntil(
     async () => {
-      rows = await browser.$$('[draggable="true"]');
+      rows = await browser.$$('[data-rule-row]');
       return rows.length > index;
     },
     { timeout: 5000, timeoutMsg: 'rule row did not render' },
@@ -258,7 +256,7 @@ function assertWellCss(css, label) {
 }
 
 // A held mouse drag through viewport points, as WebDriver pointer actions: the pointer events
-// react-aria's colour area and slider listen to. (dragWithPointer is for HTML drag-and-drop.)
+// react-aria's colour area and slider, and the rule list's grips, listen to.
 async function dragThrough(browser, points) {
   const [start, ...rest] = points.map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) }));
   try {
@@ -282,6 +280,28 @@ async function dragThrough(browser, points) {
   } finally {
     await browser.releaseActions();
   }
+}
+
+// Viewport points for a reorder drag: from the center of `from` to two thirds of a row past the
+// center of the `target` row, in the drag's direction, so the end is never exactly on a midpoint.
+// Three points between let the passed rows make way on the way there.
+async function reorderPath(browser, from, target) {
+  const { start, end } = await browser.execute(
+    (source, row) => {
+      source.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const a = source.getBoundingClientRect();
+      const b = row.getBoundingClientRect();
+      const x = a.left + a.width / 2;
+      const y = a.top + a.height / 2;
+      const middle = b.top + b.height / 2;
+      const past = (b.height * 2) / 3;
+      return { start: { x, y }, end: { x, y: middle + (middle > y ? past : -past) } };
+    },
+    from,
+    target,
+  );
+  const between = [1, 2, 3].map((step) => ({ x: start.x, y: start.y + ((end.y - start.y) * step) / 4 }));
+  return [start, ...between, end];
 }
 
 const centerOf = (box) => ({ x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 });
@@ -467,78 +487,6 @@ async function setFileInput(browser, input, path) {
   }
 }
 
-async function dragWithPointer(browser, from, to, browserName) {
-  const { start, end, viewport } = await browser.execute(
-    (source, target) => {
-      source.scrollIntoView({ block: 'center', inline: 'nearest' });
-      target.scrollIntoView({ block: 'center', inline: 'nearest' });
-      const center = (element) => {
-        const rect = element.getBoundingClientRect();
-        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-      };
-      return { start: center(source), end: center(target), viewport: { width: innerWidth, height: innerHeight } };
-    },
-    from,
-    to,
-  );
-  for (const point of [start, end]) {
-    assert.ok(
-      point.x >= 0 && point.x < viewport.width && point.y >= 0 && point.y < viewport.height,
-      `drag point (${point.x}, ${point.y}) is outside the ${viewport.width}x${viewport.height} viewport`,
-    );
-  }
-  if (browserName === 'firefox') {
-    assert.equal(process.env.E2E_CONTAINER, '1', 'Firefox XTest drag requires the dedicated E2E Compose container');
-    const origin = await browser.execute(() => ({
-      x: window.mozInnerScreenX,
-      y: window.mozInnerScreenY,
-      dpr: window.devicePixelRatio,
-    }));
-    assert.equal(origin.dpr, 1, 'Firefox XTest coordinates require a 1:1 Xvfb display scale');
-    assert.ok(Number.isFinite(origin.x) && Number.isFinite(origin.y), 'Firefox did not expose the panel screen origin');
-    const screenStart = { x: Math.round(origin.x + start.x), y: Math.round(origin.y + start.y) };
-    const screenEnd = { x: Math.round(origin.x + end.x), y: Math.round(origin.y + end.y) };
-    const move = (point) => execFileSync('xdotool', ['mousemove', '--sync', String(point.x), String(point.y)]);
-    let pressed = false;
-    try {
-      move(screenStart);
-      pressed = true;
-      execFileSync('xdotool', ['mousedown', '1']);
-      await sleep(150);
-      for (let step = 1; step <= 8; step++) {
-        move({
-          x: Math.round(screenStart.x + ((screenEnd.x - screenStart.x) * step) / 8),
-          y: Math.round(screenStart.y + ((screenEnd.y - screenStart.y) * step) / 8),
-        });
-        await sleep(80);
-      }
-      await sleep(200);
-    } finally {
-      if (pressed) execFileSync('xdotool', ['mouseup', '1']);
-    }
-    return;
-  }
-  try {
-    await browser.performActions([
-      {
-        type: 'pointer',
-        id: 'e2e-mouse',
-        parameters: { pointerType: 'mouse' },
-        actions: [
-          { type: 'pointerMove', duration: 0, ...start },
-          { type: 'pointerDown', button: 0 },
-          { type: 'pause', duration: 100 },
-          { type: 'pointerMove', duration: 150, ...end },
-          { type: 'pause', duration: 100 },
-          { type: 'pointerUp', button: 0 },
-        ],
-      },
-    ]);
-  } finally {
-    await browser.releaseActions();
-  }
-}
-
 for (const browserName of browserTargets()) {
   describe(`side panel UI: ${browserName}`, { concurrency: false }, () => {
     let h;
@@ -674,7 +622,7 @@ for (const browserName of browserTargets()) {
       await motionIdle(browser);
       assert.deepEqual(
         await browser.execute(() => ({
-          rows: document.querySelectorAll('[draggable="true"]').length,
+          rows: document.querySelectorAll('[data-rule-row]').length,
           inert: document.querySelectorAll('[inert]').length,
           hidden: [...document.querySelectorAll('.reveal')].filter(
             (element) => getComputedStyle(element).opacity !== '1' || element.getBoundingClientRect().height === 0,
@@ -729,7 +677,7 @@ for (const browserName of browserTargets()) {
       await panel(h);
       const first = await rowAt(browser, 0);
       const third = await rowAt(browser, 2);
-      await dragWithPointer(browser, await first.$('span[aria-hidden="true"]'), third, browserName);
+      await dragThrough(browser, await reorderPath(browser, await first.$('span[aria-hidden="true"]'), third));
       const reordered = await waitStored(h, (value) => value.projectRules?.[0]?.matchType === 'prefix');
       assert.deepEqual(
         reordered.projectRules.map((item) => item.pattern),
@@ -738,7 +686,7 @@ for (const browserName of browserTargets()) {
 
       const before = reordered.projectRules.map((item) => item.pattern);
       const fromText = await (await rowAt(browser, 0)).$(`.//span[normalize-space(.)="${before[0]}"]`);
-      await dragWithPointer(browser, fromText, await rowAt(browser, 2), browserName);
+      await dragThrough(browser, await reorderPath(browser, fromText, await rowAt(browser, 2)));
       let afterTextDrag;
       const unchangedSince = Date.now();
       await browser.waitUntil(

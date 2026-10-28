@@ -37,7 +37,6 @@ RUN apt-get update \
       unzip \
       xz-utils \
       xauth \
-      xdotool \
       xvfb \
     && rm -rf /var/lib/apt/lists/*
 
