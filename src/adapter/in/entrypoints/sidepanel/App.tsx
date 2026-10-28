@@ -6,6 +6,7 @@ import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../dom
 import { ProjectSettings } from '../../../../domain/project-settings';
 import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
+import { useRowReorder } from '../../hooks/useRowReorder';
 import { useTheme } from '../../hooks/useTheme';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
@@ -171,13 +172,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // notice raised since it mounted from one that was already showing.
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeIdRef = useRef(0);
-  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  // Native HTML5 drag-and-drop only lets an element itself be `draggable`; to restrict drag
-  // initiation to the grip handle (rather than the whole row, e.g. its icon buttons or text)
-  // we track whether the most recent mousedown landed on the grip, and cancel dragstart
-  // otherwise.
-  const dragHandleActiveRef = useRef(false);
+  // Rows are dragged by their grip only; the hook moves them on screen and hands the drop here.
+  const reorder = useRowReorder({
+    keys: settings.projectRules.map((rule) => rule.id.toString()),
+    onMove: (from, to) => save(settings.moveRule(from, to)),
+  });
 
   // Defensive: if the rule currently open in detail view disappears (there is no UI path to
   // this today since Delete only acts from the list, but this keeps the view consistent
@@ -254,57 +253,6 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // this handler is only ever invoked from that popover's confirm action.
   const handleDeleteRule = (id: ProjectRuleId) => {
     save(settings.removeRule(id));
-  };
-
-  const handleGripMouseDown = () => {
-    dragHandleActiveRef.current = true;
-  };
-
-  const handleGripMouseUp = () => {
-    dragHandleActiveRef.current = false;
-  };
-
-  const handleRowDragStart = (index: number) => (e: React.DragEvent) => {
-    if (!dragHandleActiveRef.current) {
-      e.preventDefault();
-      return;
-    }
-    e.dataTransfer.effectAllowed = 'move';
-    setDraggingIndex(index);
-  };
-
-  const handleRowDragOver = (index: number) => (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOverIndex(index);
-  };
-
-  const handleRowDrop = (index: number) => (e: React.DragEvent) => {
-    e.preventDefault();
-    dragHandleActiveRef.current = false;
-    setDragOverIndex(null);
-    if (draggingIndex === null || draggingIndex === index) {
-      setDraggingIndex(null);
-      return;
-    }
-    save(settings.moveRule(draggingIndex, index));
-    setDraggingIndex(null);
-  };
-
-  const handleRowDragEnd = () => {
-    dragHandleActiveRef.current = false;
-    setDraggingIndex(null);
-    setDragOverIndex(null);
-  };
-
-  // Shows a 2px inset accent line at the edge of `index` marking where the dragged row would
-  // land if dropped there right now (matches the splice-based reorder in handleRowDrop:
-  // dropping on a row before the dragged one inserts above it, after inserts below). Uses an
-  // inset box-shadow rather than a border so it never shifts layout/row height.
-  const dropIndicatorClassName = (index: number): string => {
-    if (draggingIndex === null || dragOverIndex !== index || index === draggingIndex) return '';
-    return dragOverIndex < draggingIndex
-      ? 'shadow-[inset_0_2px_0_0_var(--focus)]'
-      : 'shadow-[inset_0_-2px_0_0_var(--focus)]';
   };
 
   const handleAddColor = () => {
@@ -725,24 +673,22 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     single rows. */}
                 <Presence>
                   {settings.projectRules.length > 0 && (
-                    <div key="rules" className="flex flex-col gap-2 border-t border-border pt-2">
+                    <div key="rules" ref={reorder.listRef} className="flex flex-col gap-2 border-t border-border pt-2">
                       <Presence>
                         {settings.projectRules.map((rule, index) => (
-                          // biome-ignore lint/a11y/noStaticElementInteractions: native HTML5 drag-and-drop row reordering; no keyboard-accessible equivalent yet
                           <div
                             key={rule.id.toString()}
-                            draggable
-                            onDragStart={handleRowDragStart(index)}
-                            onDragOver={handleRowDragOver(index)}
-                            onDrop={handleRowDrop(index)}
-                            onDragEnd={handleRowDragEnd}
-                            className={`flex min-h-8 items-center gap-2 ${draggingIndex === index ? 'opacity-50' : ''} ${dropIndicatorClassName(index)}`}
+                            ref={reorder.rowRef(rule.id.toString())}
+                            data-rule-row
+                            className="flex min-h-8 items-center gap-2"
                           >
+                            {/* Pointer only: a keyboard and screen reader way to reorder is not built
+                                yet. The hit area is 24x36 while the layout keeps the icon's 16px:
+                                the padding is taken back by an equal negative margin. */}
                             <span
                               aria-hidden="true"
-                              className="cursor-grab text-muted"
-                              onMouseDown={handleGripMouseDown}
-                              onMouseUp={handleGripMouseUp}
+                              className="-mx-1 -my-2.5 flex shrink-0 cursor-grab touch-none px-1 py-2.5 text-muted hover:text-foreground"
+                              {...reorder.gripProps(index)}
                             >
                               <GripIcon />
                             </span>
