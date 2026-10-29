@@ -605,8 +605,9 @@ html.theme-transitions {
    fade in 150ms / out 100ms (HeroUI's own overlay fades). A fifth, 200ms, moves the rule rows that
    make way for a dragged row and lands them on release. The hand-built controls repeat HeroUI's
    own literal 100/150/250ms instead. `--ease-out-fluid` is a hard ease-out, so most of any travel
-   is over by half time and the rest is settling. Enter and exit are never symmetric: exits are
-   shorter and fade before they collapse. */
+   is over by half time and the rest is settling. Enter and exit are symmetric only where two
+   panels swap in one place (the tab panels' cross-fade); elsewhere exits are shorter and fade
+   before they collapse. */
 :root {
   --motion-enter: 250ms;
   --motion-exit: 160ms;
@@ -615,43 +616,31 @@ html.theme-transitions {
   --motion-reorder: 200ms;
 }
 
-/* Tab panels: a fade-through. react-aria marks the incoming panel `data-entering` for one style
-   flush and keeps the outgoing one mounted (`data-exiting`, inert) while a transition declared on
-   the panel itself runs. HeroUI makes the outgoing panel absolute at top: 0, so the panels need a
-   positioned box of their own (`.tab-panels`). The outgoing panel is all but gone (100ms) when the
-   incoming one starts (80ms delay); a plain cross-fade showed both texts at once. The incoming
-   slide lands at 250ms, together with the pill. Direction needs no JS: the first panel always
-   lives on the left, so it leaves and returns to the left. HeroUI declares no transition on
+/* Tab panels: a cross-fade in place. react-aria marks the incoming panel `data-entering` for one
+   style flush and keeps the outgoing one mounted (`data-exiting`, inert) while a transition
+   declared on the panel itself runs. HeroUI makes the outgoing panel absolute at top: 0, so the
+   panels need a positioned box of their own (`.tab-panels`), where the two share their top edge
+   and width. Both fades start together on one duration and curve, so where the cards of the two
+   panels overlap their surfaces stay on screen and only the content changes. A fade-through (the
+   outgoing panel gone before the incoming one shows) left both all but invisible for a moment,
+   which read as a blink. Neither panel slides: two overlapping texts moving apart read as a double
+   image, and the pill already shows the direction. HeroUI declares no transition on
    `.tabs__panel`, so this shorthand replaces nothing. */
 .tab-panels {
   position: relative;
 }
 .tabs__panel {
-  transition:
-    opacity var(--motion-fade-in) var(--ease-smooth) 80ms,
-    translate calc(var(--motion-enter) - 80ms) var(--ease-out-fluid) 80ms;
+  transition: opacity var(--motion-fade-in) var(--ease-smooth);
 }
 .tabs__panel[data-entering],
 .tabs__panel[data-exiting] {
   opacity: 0;
 }
-.tabs__panel[data-exiting] {
-  transition-duration: var(--motion-fade-out);
-  transition-delay: 0ms;
-}
-.tab-panel-start[data-entering],
-.tab-panel-start[data-exiting] {
-  translate: -8px 0;
-}
-.tab-panel-end[data-entering],
-.tab-panel-end[data-exiting] {
-  translate: 8px 0;
-}
 
 /* List <-> detail: enter only. The two view roots are keyed, so each navigation mounts a new
    root; the attribute is absent on the first paint of the panel, and absent on the list unless the
    user pressed Back. The fade is shorter than the slide so the new view is readable while it is
-   still settling. 12px, more than the tab's 8px: a level change, not a lateral one. */
+   still settling. Unlike the tab panels it slides, 12px: a level change, not a lateral one. */
 @keyframes view-fade {
   from {
     opacity: 0;
@@ -981,12 +970,7 @@ button.color-chip:active {
    written. */
 @media (prefers-reduced-motion: reduce) {
   .tabs__panel {
-    transition-property: opacity;
     transition-duration: var(--motion-fade-out);
-  }
-  .tabs__panel[data-entering],
-  .tabs__panel[data-exiting] {
-    translate: none;
   }
   [data-view-enter] {
     --view-enter-x: 0px;
