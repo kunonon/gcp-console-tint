@@ -432,7 +432,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                         />
                         <DeleteConfirmPopover
                           question="Remove this color?"
-                          target={entry.name || '(unnamed)'}
+                          items={[
+                            { id: entry.id.toString(), text: entry.name || '(unnamed)', swatch: entry.color.toHex() },
+                          ]}
+                          itemsLabel="Color to remove"
+                          monospace={false}
                           confirmLabel="Remove"
                           tooltipLabel="Remove color"
                           onConfirm={() => handleRemoveColor(entry.id)}
@@ -705,8 +709,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                   alike, and keeps them shown while anything is selected (style.css,
                   `.rule-select`). */}
               <Card.Content data-selecting={selectedRules.length > 0 ? '' : undefined} className="flex flex-col gap-2">
-                {/* With rules selected, the title gives way to the count, and the bulk Delete joins
-                    Add rule on the right. The select-all checkbox is there whenever there are rules,
+                {/* With rules selected, the title gives way to the count, and the bulk Delete stands
+                    right after it, acting on what it counts; Add rule stays on the right. The select-all checkbox is there whenever there are rules,
                     placed and shown like a row's (same hit area): it fades in as the first rule is
                     selected, while the title slides right to make room for it, in line with the
                     rows' checkboxes. */}
@@ -726,17 +730,22 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                       </Checkbox.Content>
                     </Checkbox>
                   )}
-                  <div className="text-sm font-medium">
-                    {selectedRules.length === 0 ? 'Projects' : `${selectedRules.length} selected`}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="text-sm font-medium">
+                      {selectedRules.length === 0 ? 'Projects' : `${selectedRules.length} selected`}
+                    </div>
                     {selectedRules.length > 0 && (
                       <DeleteConfirmPopover
                         question={
                           selectedRules.length === 1 ? 'Delete this rule?' : `Delete ${selectedRules.length} rules?`
                         }
-                        target={selectedRules.map((rule) => rule.pattern).join(', ')}
-                        confirmLabel="Delete"
+                        items={selectedRules.map((rule) => ({
+                          id: rule.id.toString(),
+                          text: rule.pattern,
+                          detail: rule.matchType,
+                        }))}
+                        itemsLabel={selectedRules.length === 1 ? 'Rule to delete' : 'Rules to delete'}
+                        confirmLabel={selectedRules.length === 1 ? 'Delete' : `Delete ${selectedRules.length} rules`}
                         tooltipLabel="Delete selected"
                         onConfirm={handleDeleteSelected}
                       >
@@ -745,12 +754,12 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                         </Button>
                       </DeleteConfirmPopover>
                     )}
-                    <AddRuleModal onAdd={handleAddRule}>
-                      <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
-                        <PlusIcon />
-                      </Button>
-                    </AddRuleModal>
                   </div>
+                  <AddRuleModal onAdd={handleAddRule}>
+                    <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
+                      <PlusIcon />
+                    </Button>
+                  </AddRuleModal>
                 </div>
 
                 {/* Two levels of Presence: the outer one brings the divider and the list in with
@@ -761,7 +770,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     <div
                       key="rules"
                       ref={reorder.listRef}
-                      className="flex flex-col gap-2 border-t border-border pt-2"
+                      data-select-list
+                      className="relative flex flex-col gap-2 border-t border-border pt-2"
                       {...selectHint.listProps}
                     >
                       <Presence>
@@ -837,7 +847,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                             </IconButtonTooltip>
                             <DeleteConfirmPopover
                               question="Delete this rule?"
-                              target={rule.pattern}
+                              items={[{ id: rule.id.toString(), text: rule.pattern, detail: rule.matchType }]}
+                              itemsLabel="Rule to delete"
                               confirmLabel="Delete"
                               tooltipLabel="Delete"
                               onConfirm={() => handleDeleteRule(rule.id)}

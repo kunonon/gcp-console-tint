@@ -21,8 +21,8 @@ function isValidRegex(pattern: string): boolean {
 
 // Opens a modal (rather than App's old inline row) so a match type can be picked alongside the
 // pattern text. Follows DeleteConfirmPopover's trigger-composition idiom: a Tooltip wraps the
-// whole overlay tree (not just the trigger button), and there is no Cancel button — dismissal
-// (Esc / backdrop / the modal's own close trigger) is the only cancel path.
+// whole overlay tree (not just the trigger button). The modal has no Cancel button of its own —
+// dismissal (Esc / backdrop / the modal's own close trigger) is its only cancel path.
 //
 // Body anatomy deliberately mirrors the detail page's Pattern card (two 32px label/control
 // rows via MatchTypeSelect) rather than a radio list: one shared vocabulary for "match type"

@@ -763,6 +763,93 @@ html.theme-transitions {
   cursor: grabbing;
 }
 
+/* The delete confirmation (DeleteConfirmPopover). `.confirm-popover` is on Popover.Content
+   (HeroUI's `.popover`, which sets no overflow of its own) and `.confirm` on Popover.Dialog: a flex
+   column with min-height 0 at each level, so when the max-height react-aria gives the popover is
+   less than the content, only the item list shrinks and scrolls, and nothing spills out of the
+   surface. The heading and the note share the items' text column (the tiles' 10px padding). */
+.confirm-popover {
+  display: flex;
+  flex-direction: column;
+}
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  max-width: 20rem;
+  padding: 12px;
+}
+.confirm-heading,
+.confirm-note {
+  padding-inline: 10px;
+}
+.confirm-note {
+  margin-top: -4px;
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: var(--muted);
+}
+/* The items: one tile each in a 12px-radius well (the popover's 24px less its 12px padding). The
+   2px gaps show the popover's surface, which stays visible in both themes where a hairline would
+   not. The scroller is HeroUI's ScrollShadow with a short fade, so a cut tile still reads as cut;
+   its scrollbar stays. The fade spans the full width: HeroUI keeps a 10px strip at the right
+   unmasked for a classic scrollbar, which left a notch in the cut tile's corner where scrollbars
+   overlay the content. */
+.confirm-list {
+  --scroll-shadow-scrollbar-size: 0px;
+  min-height: 0;
+  max-height: 13.5rem;
+  border-radius: var(--radius-xl);
+  overscroll-behavior: contain;
+}
+/* The list takes focus only while it scrolls. An inset ring, as HeroUI draws them: the fade's
+   mask would clip an outline. The mask fades the ring's bottom edge along with the list's, so the
+   ring shows on the other three sides. */
+.confirm-list:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+.confirm-list > ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.confirm-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background-color: var(--surface-secondary);
+}
+/* A long pattern fills each line and wraps at any character: a pattern is not prose, and
+   wrapping at hyphens left lines half empty and took more of them. */
+.confirm-item {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+.confirm-detail {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: var(--muted);
+}
+.confirm-swatch {
+  flex-shrink: 0;
+  align-self: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* Rule selection (App.tsx). The header's select-all checkbox and every row's checkbox
    (`.rule-select`, in a `data-select-row`) are placed and shown the same way.
    With nothing selected a checkbox stays out of sight until it is wanted: a row's under the
@@ -802,6 +889,17 @@ html.theme-transitions {
 }
 [data-rule-row][data-select-hint-moving] .rule-select {
   transition: none;
+}
+/* The checkboxes' column, left of the rows, belongs to the list for the pointer, gaps included:
+   a pointer going down it would otherwise leave the list at every gap between two rows (the card
+   is under it there) and fade the checkbox out and in again instead of moving it. Painted before
+   the rows, it never covers a checkbox. */
+[data-select-list]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: -1.5rem;
+  width: 1.5rem;
 }
 [data-reordering] [data-rule-row] .rule-select,
 [data-settling] [data-rule-row] .rule-select {

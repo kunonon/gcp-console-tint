@@ -1,15 +1,26 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { createPortal } from 'react-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useSelectHint } from '../useSelectHint';
 
-// Rows with a checkbox stand-in each, as App's rule rows carry `.rule-select`.
-function List({ keys, sliding = true }: { keys: readonly string[]; sliding?: boolean }) {
+// Rows with a checkbox stand-in each, as App's rule rows carry `.rule-select`. `portal` puts an
+// element in document.body from inside the first row, as a row's Delete popover does.
+function List({
+  keys,
+  sliding = true,
+  portal = false,
+}: {
+  keys: readonly string[];
+  sliding?: boolean;
+  portal?: boolean;
+}) {
   const { rowProps, listProps } = useSelectHint({ sliding });
   return (
     <div data-testid="list" {...listProps}>
-      {keys.map((key) => (
+      {keys.map((key, index) => (
         <div key={key} data-testid={`row-${key}`} {...rowProps}>
           <span className="rule-select" data-testid={`box-${key}`} />
+          {portal && index === 0 && createPortal(<div data-testid="popover" />, document.body)}
         </div>
       ))}
     </div>
@@ -61,10 +72,25 @@ describe('useSelectHint', () => {
     render(<List keys={['a', 'b']} />);
 
     fireEvent.pointerOver(screen.getByTestId('row-a'), MOUSE);
+    fireEvent.pointerOut(screen.getByTestId('row-a'), { ...MOUSE, relatedTarget: screen.getByTestId('list') });
     fireEvent.pointerOver(screen.getByTestId('list'), MOUSE);
     expect(hinted()).toEqual(['row-a']);
 
-    fireEvent.pointerLeave(screen.getByTestId('list'), MOUSE);
+    fireEvent.pointerOut(screen.getByTestId('row-a'), { ...MOUSE, relatedTarget: document.body });
+    expect(hinted()).toEqual([]);
+  });
+
+  it("goes by the DOM for a row's portal: the pointer over it does not hint the row, and leaving the row for it leaves the list", () => {
+    render(<List keys={['a', 'b']} portal />);
+
+    // The portal is the row's child in React only; its events still reach the row's handlers.
+    fireEvent.pointerOver(screen.getByTestId('popover'), MOUSE);
+    expect(hinted()).toEqual([]);
+
+    fireEvent.pointerOver(screen.getByTestId('row-a'), MOUSE);
+    // A popover's underlay covers the page; the pointer moving onto it has left the list, which
+    // React's own leave would never report for the row it belongs to.
+    fireEvent.pointerOut(screen.getByTestId('row-a'), { ...MOUSE, relatedTarget: screen.getByTestId('popover') });
     expect(hinted()).toEqual([]);
   });
 
@@ -99,7 +125,7 @@ describe('useSelectHint', () => {
     const { animate } = layOut({ a: 0, b: 40 });
 
     fireEvent.pointerOver(screen.getByTestId('row-a'), MOUSE);
-    fireEvent.pointerLeave(screen.getByTestId('list'), MOUSE);
+    fireEvent.pointerOut(screen.getByTestId('row-a'), { ...MOUSE, relatedTarget: document.body });
     fireEvent.pointerOver(screen.getByTestId('row-b'), MOUSE);
 
     expect(hinted()).toEqual(['row-b']);

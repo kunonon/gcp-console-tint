@@ -2351,7 +2351,10 @@ describe('App', () => {
       await selectRules(user, ['gamma']);
       popover = await openDeleteConfirm(user, screen.getByRole('button', { name: 'Delete selected' }));
       expect(within(popover).getByText('Delete 2 rules?')).toBeTruthy();
-      expect(within(popover).getByText('alpha, gamma')).toBeTruthy();
+      // Every selected rule is listed on its own row, not joined into one cut line.
+      const listed = within(within(popover).getByRole('list', { name: 'Rules to delete' })).getAllByRole('listitem');
+      expect(listed.map((row) => row.querySelector('.confirm-item')?.textContent)).toEqual(['alpha', 'gamma']);
+      expect(within(popover).getByRole('button', { name: 'Delete 2 rules' })).toBeTruthy();
       await user.click(heading);
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).toBeNull();
@@ -2369,7 +2372,7 @@ describe('App', () => {
       await selectRules(user, ['alpha', 'gamma']);
       const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
 
-      await confirmDelete(user, screen.getByRole('button', { name: 'Delete selected' }), 'Delete');
+      await confirmDelete(user, screen.getByRole('button', { name: 'Delete selected' }), 'Delete 2 rules');
 
       await waitFor(async () => {
         expect(await storedPatterns()).toEqual(['beta', 'delta']);

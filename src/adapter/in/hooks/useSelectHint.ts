@@ -7,9 +7,14 @@ const checkboxOf = (row: HTMLElement) => row.querySelector<HTMLElement>('.rule-s
  * Which row of a list shows its select checkbox for the pointer. The first row the pointer reaches
  * fades its checkbox in; from then on, while the pointer stays over the list, the checkbox moves
  * from row to row instead of fading out and in again, and it fades out once the pointer leaves the
- * list (the gaps between rows are part of the list, so crossing one keeps it). Rows are entered
- * through `pointerover`, which the browser also sends when the rows move under a still pointer, as
- * when a checkbox slides out from under it or a dropped row lands there.
+ * list (the gaps between rows are part of the list, so crossing one keeps it; style.css makes the
+ * checkboxes' column part of it too). Rows are entered through `pointerover`, which the browser also
+ * sends when the rows move under a still pointer, as when a checkbox slides out from under it or a
+ * dropped row lands there.
+ *
+ * Over and out go by the DOM, as :hover does, not by the React tree: a row's popover is a portal,
+ * so its events reach the row's handlers, and React would never call the list's onPointerLeave for
+ * a pointer that left through a popover's underlay, which is removed rather than left.
  *
  * - Spread `rowProps` on each row and `listProps` on the list. The hinted row carries
  *   `data-select-hint`, which CSS turns into a shown `.rule-select`. For a move, both rows carry
@@ -28,7 +33,7 @@ export function useSelectHint({ sliding }: { sliding: boolean }) {
   const onPointerOver = (event: ReactPointerEvent<HTMLElement>) => {
     const row = event.currentTarget;
     const from = hinted.current;
-    if (event.pointerType === 'touch' || row === from) return;
+    if (event.pointerType === 'touch' || row === from || !row.contains(event.target as Node)) return;
     hinted.current = row;
     const fromBox = from?.isConnected ? checkboxOf(from) : null;
     const toBox = checkboxOf(row);
@@ -58,10 +63,12 @@ export function useSelectHint({ sliding }: { sliding: boolean }) {
     });
   };
 
-  const onPointerLeave = () => {
+  const onPointerOut = (event: ReactPointerEvent<HTMLElement>) => {
+    const to = event.relatedTarget;
+    if (to instanceof Node && event.currentTarget.contains(to)) return;
     hinted.current?.removeAttribute('data-select-hint');
     hinted.current = null;
   };
 
-  return { rowProps: { onPointerOver }, listProps: { onPointerLeave } };
+  return { rowProps: { onPointerOver }, listProps: { onPointerOut } };
 }

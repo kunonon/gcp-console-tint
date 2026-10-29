@@ -754,6 +754,31 @@ for (const browserName of browserTargets()) {
       opacities = await ruleSelectOpacities(browser);
       assert.equal(opacities[3], '1', 'the checkbox faded in on the next row instead of moving there');
       assert.equal(opacities[1], '0', 'the checkbox faded out of the row it left instead of moving away');
+      // The checkboxes' column counts as the list, gaps included: in the gap above the last row,
+      // left of the rows, the pointer has not left the list, so the checkbox stays where it is.
+      const gap = await browser.execute(() => {
+        const rows = document.querySelectorAll('[data-rule-row]');
+        const box = rows[3].querySelector('.rule-select').getBoundingClientRect();
+        return {
+          x: Math.round(box.left + box.width / 2),
+          y: Math.round((rows[2].getBoundingClientRect().bottom + rows[3].getBoundingClientRect().top) / 2),
+        };
+      });
+      await browser.performActions([
+        {
+          type: 'pointer',
+          id: 'e2e-mouse',
+          parameters: { pointerType: 'mouse' },
+          actions: [{ type: 'pointerMove', duration: 0, x: gap.x, y: gap.y }],
+        },
+      ]);
+      assert.deepEqual(
+        await browser.execute(() =>
+          [...document.querySelectorAll('[data-rule-row]')].map((row) => row.hasAttribute('data-select-hint')),
+        ),
+        [false, false, false, true],
+        'the pointer in the gap of the checkboxes column left the list',
+      );
 
       for (const index of [0, 2]) {
         const row = await rowAt(browser, index);
@@ -804,9 +829,24 @@ for (const browserName of browserTargets()) {
         ['beta', 'delta', 'alpha', 'gamma'],
       );
 
+      // The confirmation lists every selected rule on its own row; Cancel keeps them.
       await click(browser, 'button[aria-label="Delete selected"]');
-      const confirmation = await dialog(browser);
-      await confirmation.$('button=Delete').click();
+      let confirmation = await dialog(browser);
+      assert.deepEqual(
+        await browser.execute(() =>
+          [...document.querySelectorAll('[role="dialog"] ul[aria-label="Rules to delete"] li')].map(
+            (item) => item.textContent,
+          ),
+        ),
+        ['alphaexact', 'gammaexact'],
+      );
+      await confirmation.$('button=Cancel').click();
+      await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
+      assert.equal((await stored(h)).projectRules.length, 4);
+
+      await click(browser, 'button[aria-label="Delete selected"]');
+      confirmation = await dialog(browser);
+      await confirmation.$('button=Delete 2 rules').click();
       const remaining = await waitStored(h, (value) => value.projectRules?.length === 2);
       assert.deepEqual(
         remaining.projectRules.map((item) => item.pattern),
