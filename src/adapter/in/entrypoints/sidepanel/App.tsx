@@ -289,6 +289,15 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     setSelected(new Set(isSelected ? settings.projectRules.map((rule) => rule.id.toString()) : []));
   };
 
+  // One save for the whole selection; the selection then moves to the copies, so they can be
+  // dragged or deleted next.
+  const handleDuplicateSelected = () => {
+    const next = settings.duplicateRules(selectedRules.map((rule) => rule.id));
+    const before = new Set(settings.projectRules.map((rule) => rule.id.toString()));
+    save(next);
+    setSelected(new Set(next.projectRules.map((rule) => rule.id.toString()).filter((id) => !before.has(id))));
+  };
+
   // Confirm-gated like the per-row Delete: one save for the whole selection, which then empties.
   // The emptied selection takes the bulk Delete button away, so the popover has no trigger to
   // return focus to: it goes to Add rule, which stays in the same header.
@@ -709,8 +718,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                   alike, and keeps them shown while anything is selected (style.css,
                   `.rule-select`). */}
               <Card.Content data-selecting={selectedRules.length > 0 ? '' : undefined} className="flex flex-col gap-2">
-                {/* With rules selected, the title gives way to the count, and the bulk Delete stands
-                    right after it, acting on what it counts; Add rule stays on the right. The select-all checkbox is there whenever there are rules,
+                {/* With rules selected, the title gives way to the count, and the bulk Duplicate and
+                    Delete stand right after it, acting on what it counts, in the rows' order; Add rule
+                    stays on the right. The select-all checkbox is there whenever there are rules,
                     placed and shown like a row's (same hit area): it fades in as the first rule is
                     selected, while the title slides right to make room for it, in line with the
                     rows' checkboxes. */}
@@ -734,6 +744,19 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     <div className="text-sm font-medium">
                       {selectedRules.length === 0 ? 'Projects' : `${selectedRules.length} selected`}
                     </div>
+                    {selectedRules.length > 0 && (
+                      <IconButtonTooltip label="Duplicate selected">
+                        <Button
+                          isIconOnly
+                          variant="outline"
+                          aria-label="Duplicate selected"
+                          className="shrink-0"
+                          onPress={handleDuplicateSelected}
+                        >
+                          <DuplicateIcon />
+                        </Button>
+                      </IconButtonTooltip>
+                    )}
                     {selectedRules.length > 0 && (
                       <DeleteConfirmPopover
                         question={

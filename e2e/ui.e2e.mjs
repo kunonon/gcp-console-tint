@@ -861,6 +861,21 @@ for (const browserName of browserTargets()) {
         { rows: 2, selecting: 0 },
         'the deleted selection should have left the list, with nothing selected',
       );
+
+      // Duplicate selected copies each selected rule right after its original, in one change.
+      for (const index of [0, 1]) {
+        const row = await rowAt(browser, index);
+        await pointTo(browser, row);
+        await (await row.$('.rule-select label')).click();
+        await motionIdle(browser);
+      }
+      await click(browser, 'button[aria-label="Duplicate selected"]');
+      const duplicated = await waitStored(h, (value) => value.projectRules?.length === 4);
+      assert.deepEqual(
+        duplicated.projectRules.map((item) => item.pattern),
+        ['beta', 'beta', 'delta', 'delta'],
+      );
+      assert.equal(new Set(duplicated.projectRules.map((item) => item.id)).size, 4);
     });
 
     test('edits a rule-scoped palette, surface colors, auto text, stripes, and bounded height', async () => {

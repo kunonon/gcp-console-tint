@@ -101,6 +101,7 @@ describe('TintSettings theme', () => {
     ['addRule', (settings) => settings.addRule(rule('3', 'added'))],
     ['removeRule', (settings) => settings.removeRule(ProjectRuleId.recreate('1'))],
     ['duplicateRule', (settings) => settings.duplicateRule(ProjectRuleId.recreate('1'))],
+    ['duplicateRules', (settings) => settings.duplicateRules([ProjectRuleId.recreate('1')])],
     ['removeRules', (settings) => settings.removeRules([ProjectRuleId.recreate('1')])],
     ['moveRules', (settings) => settings.moveRules([0], 1)],
     ['updateRule', (settings) => settings.updateRule(ProjectRuleId.recreate('1'), (r) => r.changePattern('x'))],
@@ -151,6 +152,41 @@ describe('TintSettings.moveRules', () => {
     { name: 'only indices outside the list', from: [-1, 5] },
   ])('returns the same instance with $name', ({ from }) => {
     expect(original.moveRules(from, 0)).toBe(original);
+  });
+});
+
+describe('TintSettings.duplicateRules', () => {
+  const rule = (id: string): ProjectRule => ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', id, DEFAULTS);
+  const patterns = (settings: TintSettings) => settings.projectRules.map((r) => r.pattern);
+  const original = new TintSettings(['a', 'b', 'c', 'd'].map(rule), 'dark');
+
+  it('puts a copy of every listed rule right after its original, in one change', () => {
+    const duplicated = original.duplicateRules([ProjectRuleId.recreate('c'), ProjectRuleId.recreate('a')]);
+
+    expect(patterns(duplicated)).toEqual(['a', 'a', 'b', 'c', 'c', 'd']);
+    expect(patterns(original)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('gives each copy a new id and keeps the originals as they are', () => {
+    const duplicated = original.duplicateRules([ProjectRuleId.recreate('b')]);
+    const [, b, copy] = duplicated.projectRules;
+
+    expect(b).toBe(original.projectRules[1]);
+    expect(copy?.id.equals(ProjectRuleId.recreate('b'))).toBe(false);
+    expect(copy?.matchType).toBe('exact');
+    expect(new Set(duplicated.projectRules.map((r) => r.id.toString())).size).toBe(5);
+  });
+
+  it('ignores ids that match no rule, and returns the same instance when none match', () => {
+    expect(patterns(original.duplicateRules([ProjectRuleId.recreate('x'), ProjectRuleId.recreate('d')]))).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'd',
+    ]);
+    expect(original.duplicateRules([ProjectRuleId.recreate('x')])).toBe(original);
+    expect(original.duplicateRules([])).toBe(original);
   });
 });
 

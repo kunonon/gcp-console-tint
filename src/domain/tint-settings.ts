@@ -74,6 +74,16 @@ export class TintSettings extends ValueObject<TintSettings> {
     return new TintSettings(next, this.theme);
   }
 
+  // Duplicates every rule whose id is listed, in one change (the list's bulk duplicate): each copy
+  // right after its original, as duplicateRule places one. Ids that match no rule are ignored.
+  duplicateRules(ids: readonly ProjectRuleId[]): TintSettings {
+    if (!this.projectRules.some((rule) => ids.some((id) => rule.id.equals(id)))) return this;
+    return new TintSettings(
+      this.projectRules.flatMap((rule) => (ids.some((id) => rule.id.equals(id)) ? [rule, rule.duplicate()] : [rule])),
+      this.theme,
+    );
+  }
+
   // Removes every rule whose id is listed, in one change (the list's bulk delete). Ids that match no
   // rule are ignored.
   removeRules(ids: readonly ProjectRuleId[]): TintSettings {

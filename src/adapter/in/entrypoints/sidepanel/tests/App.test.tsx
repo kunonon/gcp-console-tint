@@ -1484,7 +1484,7 @@ describe('App', () => {
     });
   });
 
-  it('wraps every icon-only button (Edit/Duplicate/Delete/Add rule/Delete selected/Back/Remove color/Add color) in a HeroUI Tooltip.Trigger with a single Tab stop (the button itself, not the trigger wrapper)', async () => {
+  it('wraps every icon-only button (Edit/Duplicate/Delete/Add rule/Duplicate selected/Delete selected/Back/Remove color/Add color) in a HeroUI Tooltip.Trigger with a single Tab stop (the button itself, not the trigger wrapper)', async () => {
     const user = userEvent.setup();
     render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
@@ -1525,8 +1525,10 @@ describe('App', () => {
     expectSingleTabStop(screen.getByRole('button', { name: 'Add rule' }));
     expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Add rule' }), 'modal-trigger');
 
-    // Delete selected, the bulk Delete in the header, is there only while a rule is selected.
+    // Duplicate selected and Delete selected, in the header, are there only while a rule is selected.
     await user.click(within(row).getByRole('checkbox'));
+    expectSingleTabStop(screen.getByRole('button', { name: 'Duplicate selected' }));
+    expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Duplicate selected' }), 'tooltip-trigger');
     expectSingleTabStop(screen.getByRole('button', { name: 'Delete selected' }));
     expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Delete selected' }), 'popover-trigger');
 
@@ -2286,11 +2288,22 @@ describe('App', () => {
       expect(getSelectAll().indeterminate).toBe(false);
       expect(getSelectAll().closest('.rule-select')).not.toBeNull();
       expect(screen.queryByRole('button', { name: 'Delete selected' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Duplicate selected' })).toBeNull();
       expect(content.hasAttribute('data-selecting')).toBe(false);
 
       await selectRules(user, ['alpha', 'gamma']);
 
       expect(screen.getByText('2 selected')).toBeTruthy();
+      // The bulk actions follow the count, in the rows' order: Duplicate, then Delete.
+      const count = screen.getByText('2 selected');
+      const duplicate = screen.getByRole('button', { name: 'Duplicate selected' });
+      const remove = screen.getByRole('button', { name: 'Delete selected' });
+      expect(count.compareDocumentPosition(duplicate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(duplicate.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(
+        remove.compareDocumentPosition(screen.getByRole('button', { name: 'Add rule' })) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
       expect(screen.queryByText('Projects')).toBeNull();
       expect(getSelectAll()).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Delete selected' })).toBeTruthy();
@@ -2361,6 +2374,29 @@ describe('App', () => {
       });
 
       expect(await storedPatterns()).toEqual(['alpha', 'beta', 'gamma']);
+      expect(screen.getByText('2 selected')).toBeTruthy();
+    });
+
+    it('Duplicate selected copies every selected rule right after its original in one save, and moves the selection to the copies', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      await user.click(screen.getByRole('button', { name: 'Duplicate selected' }));
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['alpha', 'alpha', 'beta', 'gamma', 'gamma']);
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      const stored = (await getStoredSettings()).projectRules;
+      expect(new Set(stored.map((r) => r.id)).size).toBe(5);
+      // The copies (rows 2 and 5) are the selection now; the originals are not.
+      await waitFor(() => {
+        expect(getAllRuleRows().map((row) => getRowCheckbox(row).checked)).toEqual([false, true, false, false, true]);
+      });
       expect(screen.getByText('2 selected')).toBeTruthy();
     });
 
