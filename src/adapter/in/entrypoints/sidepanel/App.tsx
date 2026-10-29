@@ -708,11 +708,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
 
         {/* A positioned box for the panels. While a panel leaves, HeroUI makes it
             `position: absolute; top: 0`, and no ancestor up to here is positioned: without this
-            box it would jump to the top of the page, over the title and the tab list.
-            `tab-panel-start` / `tab-panel-end` name the side each panel slides to and from
-            (style.css): the first tab's panel to the left, the last one's to the right. */}
+            box it would jump to the top of the page, over the title and the tab list. Inside it
+            the leaving panel lies over the entering one, sharing its top edge and width, and the
+            two cross-fade (style.css). */}
         <div className="tab-panels">
-          <Tabs.Panel id="rules" className="tab-panel-start mt-0 p-0">
+          <Tabs.Panel id="rules" className="mt-0 p-0">
             <Card>
               {/* `data-selecting` makes room for every checkbox inside the card, header and rows
                   alike, and keeps them shown while anything is selected (style.css,
@@ -892,7 +892,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
 
           {/* BackupCard returns a fragment (card + an optional result Alert), so both land directly
               in this panel and pick up the page column's spacing. */}
-          <Tabs.Panel id="settings" className="tab-panel-end mt-0 flex flex-col gap-3 p-0">
+          <Tabs.Panel id="settings" className="mt-0 flex flex-col gap-3 p-0">
             <AppearanceCard theme={settings.theme} onChange={(theme) => save(settings.changeTheme(theme))} />
             <BackupCard
               settingsStore={settingsStore}
