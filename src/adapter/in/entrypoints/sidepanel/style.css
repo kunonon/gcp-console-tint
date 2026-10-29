@@ -66,6 +66,24 @@ body {
   --border: oklch(35% 0.006 286.033);
 }
 
+/* An unchecked checkbox needs an edge of its own. HeroUI draws none (--field-border-width is 0px)
+   and fills the box with --field-background, which is the card's own surface in both themes, so
+   only the light theme's faint --field-shadow outlined it, and nothing did in dark. The edge is a
+   1px inset ring of a light grey: --muted, the grip's colour, taken 40% of the way to the card's
+   surface, so it reads well under the grip's dots: 2.4:1 against the card in light and 3.0:1 in
+   dark (WCAG asks 3:1 of a control's edge; the lighter edge in light is a deliberate choice).
+   It stays that grey under the pointer: a row's checkbox appears on hover, and a darker edge
+   there made it stand out against the row. An inset ring leaves the 16px box as it is, composes
+   with the focus ring (both are Tailwind's ring variables in the control's box-shadow), and is
+   painted under the accent fill that covers a checked box. An indeterminate box is filled by its background
+   instead, which the ring would paint over, so it has none. */
+.checkbox__control {
+  --tw-inset-ring-shadow: inset 0 0 0 1px color-mix(in oklab, var(--muted) 60%, var(--surface));
+}
+.checkbox[data-indeterminate="true"] .checkbox__control {
+  --tw-inset-ring-shadow: 0 0 #0000;
+}
+
 /* How fast the app's hand-built bordered controls answer hover, focus and press. It belongs to the
    interaction motion rules at the end of this file ("Hand-built controls"); only this one rule
    sits here, because it has to come before the more specific `.dark .outlined-control` selector
@@ -677,17 +695,27 @@ html.theme-transitions {
     opacity var(--motion-fade-out) var(--ease-smooth);
 }
 
-/* Rule reordering (hooks/useRowReorder.ts). While a row is dragged the list carries
-   `data-reordering`, and `data-settling` while the rows land after the release; the grabbed row
-   carries `data-dragging`. The hook moves rows with inline transforms: the others slide aside on the
-   transition below, and the landing is a Web Animation that reads `--motion-reorder` from the row.
-   Rows sit inside the `.reveal` clip, which leaves only 4px outside them, so the clip is lifted for
-   the gesture: the rows' own wrappers and the one around the whole list, which would cut the
-   shadow of a row at the list's end. The grabbed row follows the pointer without a transition and
-   is lifted like a popover: the card's surface under it (in dark, one step up), the overlay shadow
-   around it. That surface is a pseudo-element reaching past the row, 6px above and below and 8px
-   to the sides, so the row's 36px buttons and its text get room inside it without the row's
-   layout changing; its 16px corners sit concentric with the card's 24px ones, 8px further out. */
+/* Rule reordering (hooks/useRowReorder.ts). While rows are dragged the list carries
+   `data-reordering`, and `data-settling` while the rows land after the release; every moving row
+   carries `data-dragging`: the grabbed row alone, or a whole selection, which travels as one block
+   whose top row (the lead) has the empty value and the others `follow`. The hook moves rows with
+   inline transforms: the others slide aside on the transition below, and the gathering of a
+   selection and the landing are Web Animations that read `--motion-reorder` from the row. Rows sit
+   inside the `.reveal` clip, which leaves only 4px outside them, so the clip is lifted for the
+   gesture: the rows' own wrappers and the one around the whole list, which would cut the shadow of
+   a row at the list's end. The moving rows follow the pointer without a transition and are lifted
+   like a popover: the card's surface under them (in dark, one step up), the overlay shadow around
+   them. That surface is one pseudo-element on the lead, reaching past it 6px above and 8px to the
+   sides (a selection's checkboxes are inside the rows then, see "Rule selection" below), and below
+   it 6px past the
+   block's last row: the hook sets `--reorder-block-rest` on the lead to the block's height below
+   the lead's own (0 for a single row). The follow rows paint above it, being later in the
+   document at the same z-index, each on a flat surface of the same colour reaching half the gap
+   above and below, with no shadow: inside the block they disappear into the lead's surface, so a
+   block reads as one lifted card rather than a stack, and while a scattered selection gathers, or
+   lands apart again after a cancel, the rows they cross do not show through them. The row's 36px
+   buttons and its text get room inside it without the row's layout changing; its 16px corners sit
+   concentric with the card's 24px ones, 8px further out. */
 [data-reordering] .reveal > div,
 [data-settling] .reveal > div,
 .reveal > div:has(> [data-reordering]),
@@ -704,7 +732,7 @@ html.theme-transitions {
 [data-rule-row][data-dragging]::before {
   content: "";
   position: absolute;
-  inset: -6px -8px;
+  inset: -6px -8px calc(-6px - var(--reorder-block-rest, 0px));
   z-index: -1;
   background-color: var(--surface);
   border-radius: var(--radius-2xl);
@@ -714,6 +742,10 @@ html.theme-transitions {
    step up, as raised surfaces do in dark themes. */
 .dark [data-rule-row][data-dragging]::before {
   background-color: var(--surface-secondary);
+}
+[data-rule-row][data-dragging="follow"]::before {
+  inset: -4px -8px;
+  box-shadow: none;
 }
 /* From a drop until the rows land: the browser's scroll anchoring would otherwise answer the new
    row order by shifting a scrolled window by a row. Set on <html>, the scroller, before React
@@ -729,6 +761,63 @@ html.theme-transitions {
 :root[data-reordering-pending],
 :root[data-reordering-pending] * {
   cursor: grabbing;
+}
+
+/* Rule selection (App.tsx). The header's select-all checkbox and every row's checkbox
+   (`.rule-select`, in a `data-select-row`) are placed and shown the same way.
+   With nothing selected a checkbox stays out of sight until it is wanted: a row's under the
+   pointer, any of them with keyboard focus in its row. It shows outside the row, left of it, as
+   far from the grip's box as the grip is from the pattern, half over the card's edge: no column
+   is kept for it, so the rows keep even edges and nothing in them moves as it shows.
+   Once anything is selected (`data-selecting` on the card's content) every checkbox fades in and
+   makes room for itself inside the card: the content of the header and of each row slides right
+   by the checkbox and its gap, and the checkbox slides in to the row's start, so the title and the
+   rows move together and the checkboxes stand in one column. While a row is dragged with nothing
+   selected its checkbox stays hidden, so the lifted row carries only what lies inside it.
+   Keyboard focus is react-aria's `data-focus-visible`, not the :focus-visible pseudo-class: the
+   browser keeps the checkbox's own <input> matching :focus-visible after a click on it, so a
+   checkbox just cleared by the mouse would stay shown while the pointer is away.
+   Hidden, a checkbox only turns transparent, never invisible or undisplayed, so it stays in the
+   Tab order and in the accessibility tree, and it still answers the pointer: lying outside the
+   row's box, it is what makes a pointer coming in from the card's edge hover the row and so reveal
+   it. Without hover (touch) there is no way to reveal a row's, so those always show. The fade is
+   an opacity change, which the reduced-motion blocks leave alone; the slides are movement, so
+   reduced motion makes them at once (the last block of this file). */
+[data-select-row] {
+  transition: padding-left var(--motion-enter) var(--ease-out-fluid);
+}
+[data-select-row] .rule-select {
+  left: -1.5rem;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fade-in) var(--ease-smooth),
+    left var(--motion-enter) var(--ease-out-fluid);
+}
+[data-rule-row]:hover .rule-select,
+[data-select-row]:has([data-focus-visible="true"]) .rule-select {
+  opacity: 1;
+}
+[data-reordering] [data-rule-row] .rule-select,
+[data-settling] [data-rule-row] .rule-select {
+  opacity: 0;
+}
+/* The header's checkbox does not show under the pointer, so until a selection shows it, it does
+   not take the pointer either: a press there would select every rule unseen. */
+[data-select-row]:not([data-rule-row]) .rule-select {
+  pointer-events: none;
+}
+[data-selecting] [data-select-row] {
+  padding-left: 1.5rem;
+}
+[data-selecting] [data-select-row] .rule-select {
+  left: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  [data-rule-row] .rule-select {
+    opacity: 1;
+  }
 }
 
 /* Hand-built controls (picker triggers, Auto option, palette chips) answer hover and press exactly
@@ -798,9 +887,16 @@ button.color-chip:active {
 }
 
 /* Reduced motion for rule reordering: the rows that make way swap at once and nothing glides on
-   release. The grabbed row still follows the pointer, which is the gesture itself. */
+   release. The grabbed row still follows the pointer, which is the gesture itself. A selection's
+   checkboxes, and the rows' content, move into place at once. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-reorder: 0ms;
+  }
+  [data-select-row] {
+    transition: none;
+  }
+  [data-select-row] .rule-select {
+    transition: opacity var(--motion-fade-in) var(--ease-smooth);
   }
 }
