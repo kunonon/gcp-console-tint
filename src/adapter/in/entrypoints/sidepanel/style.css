@@ -594,11 +594,11 @@ html.theme-transitions {
    declared on the panel itself runs. HeroUI makes the outgoing panel absolute at top: 0, so the
    panels need a positioned box of their own (`.tab-panels`), where the two share their top edge
    and width. Both fades start together on one duration and curve, so where the cards of the two
-   panels overlap their surfaces stay on screen and only the content changes. A fade-through (the outgoing panel gone before the incoming one shows)
-   left both all but invisible for a moment, which read as a blink. Neither panel slides: two
-   overlapping texts moving apart read as a double image, and the pill already shows the
-   direction. HeroUI declares no transition on `.tabs__panel`, so this shorthand replaces
-   nothing. */
+   panels overlap their surfaces stay on screen and only the content changes. A fade-through (the
+   outgoing panel gone before the incoming one shows) left both all but invisible for a moment,
+   which read as a blink. Neither panel slides: two overlapping texts moving apart read as a double
+   image, and the pill already shows the direction. HeroUI declares no transition on
+   `.tabs__panel`, so this shorthand replaces nothing. */
 .tab-panels {
   position: relative;
 }
