@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Color } from '../../../domain/color';
 import { ColorSelection } from '../../../domain/color-selection';
+import { type Fill, Gradient } from '../../../domain/gradient';
 import { type Palette, PaletteEntry, PaletteEntryId } from '../../../domain/palette';
-import { MATCH_TYPES, ProjectRuleId } from '../../../domain/project-rule';
+import { MATCH_TYPES, ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import {
   type PlatformBarSettings,
   type PlatformBarTextSettings,
@@ -28,6 +29,9 @@ const DEFAULTS = ProjectSettings.DEFAULT;
 
 // Every test color here is a real '#rrggbb' value: Color has no other way in.
 const color = (value: string): Color => Color.fromHex(value)!;
+const gradient = (...values: string[]): Gradient => Gradient.fromStops(values.map(color))!;
+// A solid fill's hex; a gradient (or nothing) reads as undefined, so a solid assertion fails on it.
+const hexOf = (fill: Fill | undefined): string | undefined => (fill instanceof Color ? fill.toHex() : undefined);
 
 // Section-by-section builder for expected ProjectSettings values; sections not overridden come
 // from ProjectSettings.DEFAULT.
@@ -142,7 +146,7 @@ describe('toDomain', () => {
           { id: '1', matchType: 'exact', pattern: 'x', settings: { topBar: { color: { custom: '#00ff00' } } } },
         ],
       });
-      expect(wellAbove.projectRules[0]!.settings.topBar.color.custom.toHex()).toBe('#00ff00');
+      expect(hexOf(wellAbove.projectRules[0]!.settings.topBar.color.custom)).toBe('#00ff00');
     });
   });
 
@@ -463,7 +467,7 @@ describe('toDomain', () => {
         expect(entries).toHaveLength(1);
         expect(entries[0]!.id.toString()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
         expect(entries[0]!.name).toBe('');
-        expect(entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
+        expect(hexOf(entries[0]!.color)).toBe(DEFAULT_COLOR);
       });
     });
 
@@ -607,8 +611,8 @@ describe('toDomain', () => {
       });
 
       it('recovers a string field to its default when the stored value is the wrong type', () => {
-        expect(loadWithSettings({ topBar: { color: { custom: 42 } } }).topBar.color.custom.toHex()).toBe(
-          DEFAULTS.topBar.color.custom.toHex(),
+        expect(hexOf(loadWithSettings({ topBar: { color: { custom: 42 } } }).topBar.color.custom)).toBe(
+          hexOf(DEFAULTS.topBar.color.custom),
         );
       });
 
@@ -616,15 +620,17 @@ describe('toDomain', () => {
       // verbatim (CSS would silently ignore it); it now recovers to the default like any other
       // invalid value, and valid uppercase hex is normalized to lowercase.
       it('recovers an invalid (non-#rrggbb) color string to its default and normalizes uppercase hex', () => {
-        expect(loadWithSettings({ topBar: { color: { custom: 'banana' } } }).topBar.color.custom.toHex()).toBe(
-          DEFAULTS.topBar.color.custom.toHex(),
+        expect(hexOf(loadWithSettings({ topBar: { color: { custom: 'banana' } } }).topBar.color.custom)).toBe(
+          hexOf(DEFAULTS.topBar.color.custom),
         );
         expect(
-          loadWithSettings({
-            palette: { entries: [{ id: 'e1', name: 'X', color: 'banana' }] },
-          }).palette.entries[0]!.color.toHex(),
+          hexOf(
+            loadWithSettings({
+              palette: { entries: [{ id: 'e1', name: 'X', color: 'banana' }] },
+            }).palette.entries[0]!.color,
+          ),
         ).toBe(DEFAULT_COLOR);
-        expect(loadWithSettings({ topBar: { color: { custom: '#ABCDEF' } } }).topBar.color.custom.toHex()).toBe(
+        expect(hexOf(loadWithSettings({ topBar: { color: { custom: '#ABCDEF' } } }).topBar.color.custom)).toBe(
           '#abcdef',
         );
       });
@@ -654,6 +660,81 @@ describe('toDomain', () => {
         });
       });
     });
+  });
+});
+
+describe('gradient fills', () => {
+  const load = (settings: unknown): ProjectSettings =>
+    toDomain({
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      projectRules: [{ id: '1', matchType: 'exact', pattern: 'a', settings }],
+    }).projectRules[0]!.settings;
+
+  it('round-trips gradients in a palette entry and both bars', () => {
+    const sunsetId = PaletteEntryId.recreate('sunset');
+    const sunset = gradient('#ff6d00', '#e91e63', '#3f51b5');
+    const settings = projectSettings({
+      palette: DEFAULTS.palette.addEntry(PaletteEntry.recreate(sunsetId, 'Sunset', sunset)),
+      topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, gradient('#ff6d00', '#1a73e8'))),
+      platformBar: DEFAULTS.platformBar.changeColor(new ColorSelection(sunsetId, gradient('#000000', '#ffffff'))),
+    });
+    const tint = new TintSettings([ProjectRule.recreate(ProjectRuleId.recreate('1'), 'exact', 'a', settings)], 'auto');
+
+    const stored = toStored(tint, CURRENT_SCHEMA_VERSION);
+    const storedSettings = (stored.projectRules as { settings: Record<string, Record<string, unknown>> }[])[0]!
+      .settings;
+
+    expect(storedSettings.palette!.entries).toEqual([
+      { id: 'default', name: 'Primary', color: DEFAULT_COLOR },
+      { id: 'sunset', name: 'Sunset', color: { stops: ['#ff6d00', '#e91e63', '#3f51b5'] } },
+    ]);
+    expect(storedSettings.topBar!.color).toEqual({ paletteId: null, custom: { stops: ['#ff6d00', '#1a73e8'] } });
+    expect(storedSettings.platformBar!.color).toEqual({
+      paletteId: 'sunset',
+      custom: { stops: ['#000000', '#ffffff'] },
+    });
+    expect(storedSettings.platformBarText!.color).toEqual({ paletteId: null, custom: DEFAULT_TEXT_COLOR });
+    expect(toStored(toDomain(stored), CURRENT_SCHEMA_VERSION)).toEqual(stored);
+  });
+
+  it('normalizes uppercase stops to lowercase', () => {
+    const custom = load({ topBar: { color: { custom: { stops: ['#ABCDEF', '#123456'] } } } }).topBar.color.custom;
+    expect(custom).toEqual(gradient('#abcdef', '#123456'));
+  });
+
+  // Whole or nothing: a partly repaired gradient would look silently different.
+  it.each([
+    ['a single stop', { stops: ['#123456'] }],
+    ['five stops', { stops: ['#111111', '#222222', '#333333', '#444444', '#555555'] }],
+    ['a bad stop', { stops: ['#123456', 'banana'] }],
+    ['a bad stop among three', { stops: ['#111111', 'banana', '#333333'] }],
+    ['a non-array stops', { stops: '#123456' }],
+    ['a non-string stop', { stops: ['#123456', 1] }],
+    ['an object without stops', {}],
+  ])('recovers %s to the fallback color', (_label, value) => {
+    const settings = load({
+      palette: { entries: [{ id: 'e1', name: 'X', color: value }] },
+      topBar: { color: { paletteId: null, custom: value } },
+      platformBar: { color: { paletteId: null, custom: value } },
+    });
+    expect(hexOf(settings.palette.entries[0]!.color)).toBe(DEFAULT_COLOR);
+    expect(hexOf(settings.topBar.color.custom)).toBe(DEFAULT_COLOR);
+    expect(hexOf(settings.platformBar.color.custom)).toBe(DEFAULT_COLOR);
+  });
+
+  it('recovers a gradient in the text color to its default color', () => {
+    const text = load({ platformBarText: { color: { paletteId: null, custom: { stops: ['#000000', '#111111'] } } } })
+      .platformBarText.color.custom;
+    expect(text.toHex()).toBe(DEFAULT_TEXT_COLOR);
+  });
+
+  it('keeps a text reference to a gradient entry', () => {
+    const settings = load({
+      palette: { entries: [{ id: 'sunset', name: 'Sunset', color: { stops: ['#000000', '#ffffff'] } }] },
+      platformBarText: { color: { paletteId: 'sunset', custom: '#123456' } },
+    });
+    expect(settings.platformBarText.color.paletteId?.toString()).toBe('sunset');
+    expect(settings.palette.resolveSolid(settings.platformBarText.color).toHex()).toBe('#123456');
   });
 });
 
@@ -718,9 +799,9 @@ describe('ProjectSettings.DEFAULT (the values this repository recovers to)', () 
     const recolored = first.changePalette(
       first.palette.changeEntryColor(PaletteEntryId.recreate('default'), Color.BLACK),
     );
-    expect(recolored.palette.entries[0]!.color.toHex()).toBe('#000000');
-    expect(first.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
-    expect(second.palette.entries[0]!.color.toHex()).toBe(DEFAULT_COLOR);
+    expect(hexOf(recolored.palette.entries[0]!.color)).toBe('#000000');
+    expect(hexOf(first.palette.entries[0]!.color)).toBe(DEFAULT_COLOR);
+    expect(hexOf(second.palette.entries[0]!.color)).toBe(DEFAULT_COLOR);
   });
 });
 
@@ -768,7 +849,7 @@ describe('effectiveSchemaVersion', () => {
   });
 
   it('returns currentVersion unchanged when it is above CURRENT_SCHEMA_VERSION', () => {
-    expect(effectiveSchemaVersion('0.3.1')).toBe('0.3.1');
+    expect(effectiveSchemaVersion('0.5.1')).toBe('0.5.1');
     expect(effectiveSchemaVersion('9.9.9')).toBe('9.9.9');
   });
 });

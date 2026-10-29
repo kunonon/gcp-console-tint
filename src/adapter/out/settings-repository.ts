@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Color } from '../../domain/color';
 import { ColorSelection } from '../../domain/color-selection';
+import { type Fill, Gradient } from '../../domain/gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from '../../domain/palette';
 import { MATCH_TYPES, ProjectRule, ProjectRuleId } from '../../domain/project-rule';
 import {
@@ -18,7 +19,7 @@ import { compareVersions, VersionComparisonResult } from './version';
 // `.catch()` below reads its fallback out of ProjectSettings.DEFAULT rather than restating it.
 const DEFAULTS = ProjectSettings.DEFAULT;
 // The product default color, reached through the domain's public surface; a junk palette entry
-// color falls back to it the same way the surfaces' own colors do.
+// fill falls back to it the same way the bars' own fills do.
 const DEFAULT_ENTRY_COLOR = DEFAULTS.topBar.color.custom;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,10 +40,35 @@ function colorField(fallback: Color) {
     .transform((value) => (typeof value === 'string' ? Color.fromHex(value) : undefined) ?? fallback);
 }
 
+// A stored fill: a '#rrggbb' string, or { stops: [...] } whose every element is such a string and
+// whose count Gradient.fromStops accepts. Whole or nothing: one bad stop makes the whole value
+// unreadable, since a partly repaired gradient would look silently different.
+function parseStoredFill(value: unknown): Fill | undefined {
+  if (typeof value === 'string') return Color.fromHex(value);
+  if (!isRecord(value) || !Array.isArray(value.stops)) return undefined;
+  const stops: Color[] = [];
+  for (const stop of value.stops) {
+    const parsed = typeof stop === 'string' ? Color.fromHex(stop) : undefined;
+    if (!parsed) return undefined;
+    stops.push(parsed);
+  }
+  return Gradient.fromStops(stops);
+}
+
+// colorField's counterpart for the slots that may hold a gradient (palette entries and the bars).
+function fillField(fallback: Fill) {
+  return z
+    .unknown()
+    .optional()
+    .transform((value) => parseStoredFill(value) ?? fallback);
+}
+
 // Parameterized by defaults because each surface falls back to a different selection: topBar
 // and platformBar point at the default palette entry, while platformBarText has no palette
-// reference and falls back to a plain custom color instead.
-function colorSelectionSchema(defaults: ColorSelection) {
+// reference and falls back to a plain custom color instead. `custom` reads the surface's own
+// fill type: the bars pass fillField, the text colorField (a gradient there recovers to its
+// default color).
+function colorSelectionSchema<C extends Fill>(defaults: ColorSelection<C>, custom: z.ZodType<C>) {
   return z
     .object({
       // JSON has no undefined: stored paletteId is null, the domain uses undefined.
@@ -51,7 +77,7 @@ function colorSelectionSchema(defaults: ColorSelection) {
         .nullable()
         .transform((value) => (value === null ? undefined : PaletteEntryId.recreate(value)))
         .catch(defaults.paletteId),
-      custom: colorField(defaults.custom),
+      custom,
     })
     .transform((value) => new ColorSelection(value.paletteId, value.custom))
     .catch(() => new ColorSelection(defaults.paletteId, defaults.custom));
@@ -64,7 +90,7 @@ const paletteEntrySchema = z
       .transform((value) => PaletteEntryId.recreate(value))
       .catch(() => PaletteEntryId.create()),
     name: z.string().catch(''),
-    color: colorField(DEFAULT_ENTRY_COLOR),
+    color: fillField(DEFAULT_ENTRY_COLOR),
   })
   .transform((value) => PaletteEntry.recreate(value.id, value.name, value.color));
 
@@ -95,7 +121,7 @@ const paletteSchema = paletteObjectSchema.catch(() => paletteObjectSchema.parse(
 const topBarObjectSchema = z
   .object({
     enabled: z.boolean().catch(DEFAULTS.topBar.enabled),
-    color: colorSelectionSchema(DEFAULTS.topBar.color),
+    color: colorSelectionSchema(DEFAULTS.topBar.color, fillField(DEFAULTS.topBar.color.custom)),
     // Stored numeric heights are rounded before the domain enforces its 1–40 pixel range;
     // invalid types and rounded values outside that range recover to the default.
     height: z
@@ -114,7 +140,7 @@ const topBarSchema = topBarObjectSchema.catch(() => topBarObjectSchema.parse({})
 const platformBarObjectSchema = z
   .object({
     enabled: z.boolean().catch(DEFAULTS.platformBar.enabled),
-    color: colorSelectionSchema(DEFAULTS.platformBar.color),
+    color: colorSelectionSchema(DEFAULTS.platformBar.color, fillField(DEFAULTS.platformBar.color.custom)),
     stripes: z.boolean().catch(DEFAULTS.platformBar.stripes),
   })
   .transform((value) => new PlatformBarSettings(value.enabled, value.color, value.stripes));
@@ -123,7 +149,7 @@ const platformBarSchema = platformBarObjectSchema.catch(() => platformBarObjectS
 const platformBarTextObjectSchema = z
   .object({
     enabled: z.boolean().catch(DEFAULTS.platformBarText.enabled),
-    color: colorSelectionSchema(DEFAULTS.platformBarText.color),
+    color: colorSelectionSchema(DEFAULTS.platformBarText.color, colorField(DEFAULTS.platformBarText.color.custom)),
     auto: z.boolean().catch(DEFAULTS.platformBarText.auto),
   })
   .transform((value) => new PlatformBarTextSettings(value.enabled, value.color, value.auto));
@@ -205,9 +231,10 @@ export function toDomain(stored: unknown): TintSettings {
   return new TintSettings(projectRules, theme);
 }
 
-// The stored JSON shape. Colors leave the model as '#rrggbb' strings, everything else is
-// written verbatim — this is the persisted contract, so keep it in sync with the schemas
-// that read it back (adapter/out/tests/browser-settings-store.test.ts asserts it).
+// The stored JSON shape. Colors leave the model as '#rrggbb' strings or { stops } objects (see
+// storedFill), everything else is written verbatim — this is the persisted contract, so keep it
+// in sync with the schemas that read it back (adapter/out/tests/browser-settings-store.test.ts
+// asserts it).
 export function toStored(settings: TintSettings, schemaVersion: string): Record<string, unknown> {
   return {
     schemaVersion,
@@ -222,7 +249,7 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
           entries: rule.settings.palette.entries.map((entry) => ({
             id: entry.id.toString(),
             name: entry.name,
-            color: entry.color.toHex(),
+            color: storedFill(entry.color),
           })),
         },
         topBar: {
@@ -246,6 +273,13 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
   };
 }
 
+// A gradient is written as { stops: ['#rrggbb', ...] }: string-vs-object already tells the two
+// kinds apart, so the object needs no type key.
+function storedFill(fill: Fill) {
+  return fill instanceof Gradient ? { stops: fill.stops.map((stop) => stop.toHex()) } : fill.toHex();
+}
+
+// One function for all three surfaces: the text's Color becomes a string like any solid fill.
 function storedSelection(selection: ColorSelection) {
-  return { paletteId: selection.paletteId?.toString() ?? null, custom: selection.custom.toHex() };
+  return { paletteId: selection.paletteId?.toString() ?? null, custom: storedFill(selection.custom) };
 }

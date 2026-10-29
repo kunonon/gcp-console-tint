@@ -1,7 +1,7 @@
 import type { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
 import { SettingsStoreImpl } from '../../out/browser-settings-store';
-import { stripeGradient } from '../stripes';
+import { fillBackground } from '../fill-css';
 
 export default defineContentScript({
   matches: ['https://console.cloud.google.com/*'],
@@ -18,7 +18,9 @@ export default defineContentScript({
     bar.style.right = '0';
     bar.style.zIndex = '2147483647';
     bar.style.pointerEvents = 'none';
-    // Shared viewport coordinates keep stripes aligned as the overlay height animates.
+    // Shared viewport coordinates keep stripes aligned as the overlay height animates, and make
+    // the viewport the gradient box, so the top bar and the platform bar show the same color at
+    // the same x. Single values apply to every image layer.
     bar.style.backgroundAttachment = 'fixed';
     bar.style.backgroundPosition = '0 0';
     bar.style.backgroundSize = 'auto';
@@ -33,19 +35,24 @@ export default defineContentScript({
       if (project.topBar.enabled) {
         bar.style.display = '';
         bar.style.height = `${project.topBar.height.toPixels()}px`;
-        const topBarColor = palette.resolve(project.topBar.color);
-        bar.style.backgroundColor = topBarColor.toHex();
-        bar.style.backgroundImage = project.topBar.stripes ? stripeGradient(topBarColor) : '';
+        const { color, image } = fillBackground(palette.resolve(project.topBar.color), project.topBar.stripes);
+        bar.style.backgroundColor = color;
+        bar.style.backgroundImage = image;
       } else {
         bar.style.display = 'none';
       }
 
       const rules: string[] = [];
       if (project.platformBar.enabled) {
-        const platformBarColor = palette.resolve(project.platformBar.color);
-        const declarations = [`background-color: ${platformBarColor.toHex()} !important;`];
-        if (project.platformBar.stripes) {
-          declarations.push(`background-image: ${stripeGradient(platformBarColor)} !important;`);
+        const { color, image } = fillBackground(
+          palette.resolve(project.platformBar.color),
+          project.platformBar.stripes,
+        );
+        const declarations = [`background-color: ${color} !important;`];
+        // background-image is discrete, so a gradient change snaps while the color underneath
+        // (a gradient's first stop) still crossfades.
+        if (image !== '') {
+          declarations.push(`background-image: ${image} !important;`);
           declarations.push('background-attachment: fixed !important;');
           declarations.push('background-position: 0 0 !important;');
           declarations.push('background-size: auto !important;');
@@ -58,7 +65,7 @@ export default defineContentScript({
       if (project.platformBarText.enabled) {
         const textColor = project.platformBarText.auto
           ? palette.resolve(project.platformBar.color).contrastingTextColor()
-          : palette.resolve(project.platformBarText.color);
+          : palette.resolveSolid(project.platformBarText.color);
         const textDeclarations = [`color: ${textColor.toHex()} !important;`];
         if (animate) {
           textDeclarations.push('transition: color 300ms ease !important;');

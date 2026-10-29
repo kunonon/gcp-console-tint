@@ -19,11 +19,21 @@ describe('runMigrations', () => {
   describe('the real SCHEMA_MIGRATIONS registry', () => {
     const data = { projectRules: [{ id: '1', pattern: 'p', settings: { topBarColor: '#123456' } }] };
 
-    it.each(['0.1.0', '0.2.1'])('adds theme auto to %s data at 0.3.0, keeping every other key', (fromVersion) => {
-      expect(runMigrations(data, fromVersion)).toEqual({ data: { ...data, theme: 'auto' }, version: '0.3.0' });
+    // The 0.5.0 step only moves the stamp, so the chain ends there with the 0.3.0 theme added.
+    it.each(['0.1.0', '0.2.1'])(
+      'adds theme auto to %s data and ends at 0.5.0, keeping every other key',
+      (fromVersion) => {
+        expect(runMigrations(data, fromVersion)).toEqual({ data: { ...data, theme: 'auto' }, version: '0.5.0' });
+      },
+    );
+
+    it.each(['0.3.0', '0.3.1'])('moves %s data to 0.5.0 without changing it', (fromVersion) => {
+      const current = { ...data, theme: 'dark' };
+
+      expect(runMigrations(current, fromVersion)).toEqual({ data: current, version: '0.5.0' });
     });
 
-    it.each(['0.3.0', '0.3.1', '9.9.9'])('applies nothing from %s up', (fromVersion) => {
+    it.each(['0.5.0', '0.5.1', '9.9.9'])('applies nothing from %s up', (fromVersion) => {
       const current = { ...data, theme: 'dark' };
 
       expect(runMigrations(current, fromVersion)).toEqual({ data: current, version: fromVersion });

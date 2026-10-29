@@ -14,12 +14,22 @@ import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 
+// A fill as stored: '#rrggbb' or a gradient's stops.
+type StoredFill = string | { stops: string[] };
+
 interface PaletteEntry {
   id: string;
   name: string;
-  color: string;
+  color: StoredFill;
 }
 
+// The bars' selection: the custom fill may be a gradient.
+interface FillSelection {
+  paletteId: string | null;
+  custom: StoredFill;
+}
+
+// The Platform Bar text's selection: always a colour.
 interface ColorSelection {
   paletteId: string | null;
   custom: string;
@@ -32,14 +42,14 @@ interface PaletteSettings {
 
 interface TopBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   height: number;
   stripes: boolean;
 }
 
 interface PlatformBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   stripes: boolean;
 }
 
@@ -71,7 +81,7 @@ interface StoredTintSettings {
 
 // The manifest version these tests run under: equal to CURRENT_SCHEMA_VERSION, so the storage
 // stamp is this version itself.
-const CURRENT_VERSION = '0.3.0';
+const CURRENT_VERSION = '0.5.0';
 
 async function getStoredSettings(): Promise<StoredTintSettings> {
   const result = await fakeBrowser.storage.local.get('tintSettings');
@@ -1388,6 +1398,87 @@ describe('App', () => {
       expect(hexOrRgb('#000000')).toContain(autoBead(dialog).style.backgroundColor);
     });
 
+    const GRADIENT = /^linear-gradient\(to right, (#ff6d00|rgb\(255, 109, 0\)), (#1a73e8|rgb\(26, 115, 232\))\)$/;
+
+    it('Top bar: Add stop, a stop edit and Remove stop each change the custom fill in one save, and the trigger shows "Gradient" meanwhile', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      let dialog = await openPicker(user, 'Top bar color');
+      await user.click(within(dialog).getByRole('button', { name: 'Add stop' }));
+      await waitFor(async () => {
+        // The kept custom colour grows, not the entry in use, which the bar then leaves.
+        expect((await storedSettings()).topBar.color).toEqual({
+          paletteId: null,
+          custom: { stops: ['#ff6d00', '#ff6d00'] },
+        });
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+
+      fireEvent.change(within(dialog).getByLabelText('Custom color, stop 2'), { target: { value: '#1a73e8' } });
+      await waitFor(async () => {
+        expect((await storedSettings()).topBar.color.custom).toEqual({ stops: ['#ff6d00', '#1a73e8'] });
+      });
+      expect(save).toHaveBeenCalledTimes(2);
+
+      await closePicker(user);
+      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toBe('Gradient');
+      expect(getTriggerSwatch('Top bar color').style.backgroundImage).toMatch(GRADIENT);
+
+      // Reopened, the editor starts on stop 1: removing it leaves stop 2's colour.
+      dialog = await openPicker(user, 'Top bar color');
+      await user.click(within(dialog).getByRole('button', { name: 'Remove stop' }));
+      await waitFor(async () => {
+        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#1a73e8' });
+      });
+      expect(save).toHaveBeenCalledTimes(3);
+      expect(getCustomColorInput(dialog).value).toBe('#1a73e8');
+    });
+
+    it('a palette entry made a gradient paints both bars that use it, its delete swatch shows it, and the text picker leaves it out', async () => {
+      const { user } = await renderRuleDetail();
+      // The text follows the entry while it is a colour.
+      let dialog = await openPicker(user, 'Platform Bar text color');
+      await user.click(getPaletteSwatch(dialog, 'Primary'));
+      await closePicker(user);
+
+      dialog = await openPaletteRowEditor(user, 'Primary');
+      await user.click(within(dialog).getByRole('button', { name: 'Add stop' }));
+      fireEvent.change(within(dialog).getByLabelText('Hex, stop 2'), { target: { value: '#1a73e8' } });
+      await closePicker(user);
+      await waitFor(async () => {
+        expect((await storedSettings()).palette.entries[0]!.color).toEqual({ stops: ['#ff6d00', '#1a73e8'] });
+      });
+
+      expect(screen.getByRole('button', { name: 'Primary color' }).textContent).toBe('Gradient');
+      for (const label of ['Top bar color', 'Platform Bar color']) {
+        expect(screen.getByRole('button', { name: label }).textContent).toBe('Primary');
+        expect(getTriggerSwatch(label).style.backgroundImage).toMatch(GRADIENT);
+      }
+      // The text keeps its reference but paints its custom colour, and its trigger says so.
+      expect((await storedSettings()).platformBarText.color).toEqual({ paletteId: 'default', custom: '#ffffff' });
+      expect(screen.getByRole('button', { name: 'Platform Bar text color' }).textContent).toBe('#ffffff');
+      expect(hexOrRgb('#ffffff')).toContain(getTriggerSwatch('Platform Bar text color').style.backgroundColor);
+      expect(getTriggerSwatch('Platform Bar text color').style.backgroundImage).toBe('');
+
+      const remove = await openDeleteConfirm(user, screen.getByRole('button', { name: 'Remove color' }));
+      expect((remove.querySelector('.confirm-swatch') as HTMLElement).style.background).toMatch(
+        /linear-gradient\(to right, (#ff6d00|rgb\(255, 109, 0\)), (#1a73e8|rgb\(26, 115, 232\))\)/,
+      );
+      await closePicker(user);
+
+      // The text picker offers no gradient entry; its custom colour is the one in use, and a press
+      // on it drops the reference.
+      dialog = await openPicker(user, 'Platform Bar text color');
+      expect(within(dialog).queryByRole('button', { name: 'Primary' })).toBeNull();
+      expect(within(dialog).queryByRole('group', { name: 'Gradient stops' })).toBeNull();
+      const customInput = getCustomColorInput(dialog);
+      expect(customInput.parentElement?.className).toContain('ring-2');
+      await user.click(customInput);
+      await waitFor(async () => {
+        expect((await storedSettings()).platformBarText.color).toEqual({ paletteId: null, custom: '#ffffff' });
+      });
+    });
+
     it('names every picker dialog after its trigger', async () => {
       const { user } = await renderRuleDetail();
 
@@ -1659,9 +1750,9 @@ describe('App', () => {
 
     await addRule(user, 'my-project');
 
-    // CURRENT_VERSION ('0.3.0') currently equals CURRENT_SCHEMA_VERSION, so
+    // CURRENT_VERSION ('0.5.0') currently equals CURRENT_SCHEMA_VERSION, so
     // effectiveSchemaVersion is a no-op here; asserting through the real function (rather
-    // than the literal '0.3.0') keeps this test meaningful if that ever changes. The
+    // than the literal '0.5.0') keeps this test meaningful if that ever changes. The
     // dedicated regression test below exercises a manifest version that actually differs
     // from CURRENT_SCHEMA_VERSION.
     await waitFor(async () => {
@@ -1670,12 +1761,12 @@ describe('App', () => {
   });
 
   it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a toDomain round-trip unchanged', async () => {
-    // '0.3.5' is newer than CURRENT_SCHEMA_VERSION ('0.3.0'), so effectiveSchemaVersion
+    // '0.5.5' is newer than CURRENT_SCHEMA_VERSION ('0.5.0'), so effectiveSchemaVersion
     // passes it through unfloored (effectiveSchemaVersion's floor is unit-tested in
     // settings-repository.test.ts). What this guards: a save-then-reload round-trip on
     // current-shape data keeps the user's values, whichever valid schemaVersion label it carries.
     (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({
-      version: '0.3.5',
+      version: '0.5.5',
     });
 
     const user = userEvent.setup();
@@ -1690,7 +1781,7 @@ describe('App', () => {
     });
 
     const stored = await getStoredSettings();
-    expect(stored.schemaVersion).toBe('0.3.5');
+    expect(stored.schemaVersion).toBe('0.5.5');
 
     const reloaded = toDomain(stored);
     expect(reloaded.projectRules[0]!.settings.topBar.height.toPixels()).toBe(19);
@@ -3022,7 +3113,7 @@ describe('App', () => {
       await addRule(user, 'alpha');
       const existing = (await getStoredSettings()).projectRules[0]!;
       const before = await getStoredSettings();
-      // The manifest here is CURRENT_VERSION ('0.3.0'); a file this build could not have written.
+      // The manifest here is CURRENT_VERSION ('0.5.0'); a file this build could not have written.
       const fromTheFuture = JSON.parse(settingsFile(existing));
       fromTheFuture.schemaVersion = '9.9.9';
 

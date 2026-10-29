@@ -1907,46 +1907,201 @@ for (const browserName of browserTargets()) {
       assert.deepEqual(await where('pressing Auto'), opened, 'Auto should not move the popover');
     });
 
+    test('keeps a bar popover still while its gradient stops and the choice change', async () => {
+      // pickerSettings() with the top bar's kept custom fill a gradient, while Red is in use.
+      const base = pickerSettings();
+      const settingsRule = base.projectRules[0];
+      const kept = { stops: ['#123456', '#abcdef'] };
+      await h.seedSettings({
+        ...base,
+        projectRules: [
+          {
+            ...settingsRule,
+            settings: {
+              ...settingsRule.settings,
+              topBar: { ...settingsRule.settings.topBar, color: { paletteId: 'red', custom: kept } },
+            },
+          },
+        ],
+      });
+      const browser = await panel(h);
+      await openDetail(browser);
+      const color = (value) => value.projectRules?.[0]?.settings.topBar.color;
+      const press = async (selector) => (await browser.$(`[role="dialog"] ${selector}`)).click();
+      const where = async (label) => {
+        const { dialog: box, placement } = await settled(browser, readColorPopover, `the popover after ${label}`);
+        return { box, placement };
+      };
+
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      const opened = await where('opening');
+
+      // A stop is part of the custom choice: picking one to edit leaves Red for the kept gradient
+      // as it is, like a press on the hex control.
+      await press('button[aria-label="Stop 2"]');
+      let saved = await waitStored(h, (value) => color(value)?.paletteId === null);
+      assert.deepEqual(color(saved), { paletteId: null, custom: kept }, 'a stop press should only clear the reference');
+      assert.equal(await browser.$('button[aria-label="Top bar color"]').getText(), 'Gradient');
+      assert.deepEqual(await where('pressing a stop'), opened, 'a stop press should not move the popover');
+
+      // The beads come before Add stop: once the pointer rests on Add or Remove stop, a tooltip
+      // can open over the end of the palette row.
+      await press('button[aria-label="Blue"]');
+      await waitStored(h, (value) => color(value)?.paletteId === 'blue');
+      assert.deepEqual(await where('pressing a palette bead'), opened, 'a palette bead should not move the popover');
+      await press('.hex-control');
+      saved = await waitStored(h, (value) => color(value)?.paletteId === null);
+      assert.deepEqual(color(saved).custom, kept, 'the custom control should keep the gradient as it is');
+      assert.deepEqual(await where('pressing the custom control'), opened, 'the custom control should not move it');
+
+      // The stops row keeps its height whether the fill is a gradient or, after the last Remove, a
+      // colour again.
+      await press('button[aria-label="Add stop"]');
+      await waitStored(h, (value) => color(value)?.custom.stops?.length === 3);
+      assert.deepEqual(await where('adding a stop'), opened, 'Add stop should not move the popover');
+      await press('button[aria-label="Remove stop"]');
+      await waitStored(h, (value) => color(value)?.custom.stops?.length === 2);
+      await press('button[aria-label="Remove stop"]');
+      saved = await waitStored(h, (value) => typeof color(value)?.custom === 'string');
+      assert.equal(color(saved).custom, '#123456', 'removing one of two stops should leave the other colour');
+      assert.deepEqual(await where('removing the stops'), opened, 'Remove stop should not move the popover');
+    });
+
+    test('grows a surface colour into a gradient and back, and lets a palette entry become one that both bars follow and the text picker leaves out', async () => {
+      await h.seedSettings(
+        settings(
+          rule(
+            'gradient',
+            'project-a',
+            'exact',
+            projectSettings({
+              palette: { enabled: true, entries: [{ id: 'brand', name: 'Brand', color: '#cc3366' }] },
+              topBar: { enabled: true, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false },
+              platformBar: { enabled: true, color: { paletteId: 'brand', custom: '#234567' }, stripes: false },
+              platformBarText: { enabled: true, color: { paletteId: 'brand', custom: '#345678' }, auto: false },
+            }),
+          ),
+        ),
+      );
+      const browser = await panel(h);
+      await openDetail(browser);
+      const surface = (value, name) => value.projectRules?.[0]?.settings[name];
+      const brand = (value) => value.projectRules?.[0]?.settings.palette.entries[0]?.color;
+      const chip = (label) =>
+        browser.execute((name) => {
+          const style = getComputedStyle(document.querySelector(`button[aria-label="${name}"] .color-chip`));
+          return { color: style.backgroundColor, image: style.backgroundImage };
+        }, label);
+      const gradient = /linear-gradient\(to right,\s*rgb\(204,\s*51,\s*102\)(?:\s+\d+%)?,\s*rgb\(26,\s*115,\s*232\)/;
+
+      // Add stop repeats the colour, so the bar does not change until the new stop is edited.
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      await click(browser, '[role="dialog"] button[aria-label="Add stop"]');
+      await waitStored(h, (value) => surface(value, 'topBar')?.color.custom.stops?.[1] === '#123456');
+      await waitFocused(browser, 'Stop 2', 'Add stop should focus the new stop');
+      await typeHex(browser, 'Custom color, stop 2', '#1a73e8');
+      let saved = await waitStored(h, (value) => surface(value, 'topBar')?.color.custom.stops?.[1] === '#1a73e8');
+      assert.deepEqual(surface(saved, 'topBar').color, { paletteId: null, custom: { stops: ['#123456', '#1a73e8'] } });
+      assert.equal(await browser.$('button[aria-label="Top bar color"]').getText(), 'Gradient');
+      await click(browser, '[role="dialog"] button[aria-label="Remove stop"]');
+      saved = await waitStored(h, (value) => typeof surface(value, 'topBar')?.color.custom === 'string');
+      assert.equal(surface(saved, 'topBar').color.custom, '#123456', 'Remove stop should leave the first colour');
+      await waitFocused(browser, 'Add stop', 'with no stop left to pick, focus should move to Add stop');
+      await click(browser, '[role="dialog"] button[aria-label="Brand"]');
+      await waitStored(h, (value) => surface(value, 'topBar')?.color.paletteId === 'brand');
+      await waitForPopoverClosed(browser);
+
+      // The palette row's own popover grows the entry the same way.
+      await click(browser, 'button[aria-label="Brand color"]');
+      await dialog(browser);
+      await click(browser, '[role="dialog"] button[aria-label="Add stop"]');
+      await waitStored(h, (value) => brand(value)?.stops?.length === 2);
+      await typeHex(browser, 'Hex, stop 2', '#1a73e8');
+      saved = await waitStored(h, (value) => brand(value)?.stops?.[1] === '#1a73e8');
+      assert.deepEqual(brand(saved), { stops: ['#cc3366', '#1a73e8'] });
+      await waitForPopoverClosed(browser);
+
+      // Both bars follow the entry; the text keeps its reference but paints its own colour.
+      for (const label of ['Top bar color', 'Platform Bar color']) {
+        assert.equal(await browser.$(`button[aria-label="${label}"]`).getText(), 'Brand');
+        const { color, image } = await chip(label);
+        assert.equal(color, 'rgb(204, 51, 102)', `${label} chip should sit on the first stop`);
+        assert.match(image, gradient, `${label} chip should show the Brand gradient`);
+      }
+      assert.equal(surface(saved, 'platformBarText').color.paletteId, 'brand');
+      assert.equal(await browser.$('button[aria-label="Platform Bar text color"]').getText(), '#345678');
+      assert.deepEqual(await chip('Platform Bar text color'), { color: 'rgb(52, 86, 120)', image: 'none' });
+
+      // The text picker lists no gradient entry and no stops, and its custom control drops the
+      // reference that no entry honours any more.
+      await click(browser, 'button[aria-label="Platform Bar text color"]');
+      await dialog(browser);
+      await (await browser.$('[role="dialog"] input[aria-label="Custom color"]')).waitForDisplayed();
+      assert.equal((await browser.$$('[role="dialog"] button[aria-label="Brand"]')).length, 0);
+      assert.equal((await browser.$$('[role="dialog"] fieldset')).length, 0);
+      await (await browser.$('[role="dialog"] .hex-control')).click();
+      saved = await waitStored(h, (value) => surface(value, 'platformBarText')?.color.paletteId === null);
+      assert.deepEqual(surface(saved, 'platformBarText').color, { paletteId: null, custom: '#345678' });
+      await waitForPopoverClosed(browser);
+    });
+
     test('scrolls a surface popover that a short window cannot fit on either side of its trigger', async () => {
       await h.seedSettings(pickerSettings());
       const browser = await panel(h);
       const windowSize = await browser.getWindowSize();
       try {
-        // Short enough that the tallest popover (Auto, palette beads, custom control and well:
-        // 312px) fits neither above nor below its trigger, wherever the trigger is.
+        // Short enough that the tallest popovers (312px: the text picker's Auto, palette beads,
+        // custom control and well, and a bar picker's palette beads, stops row, custom control
+        // and well) fit neither above nor below their trigger, wherever the trigger is.
         await browser.setWindowSize(windowSize.width, 420);
         await openDetail(browser);
-        await click(browser, 'button[aria-label="Platform Bar text color"]');
-        await dialog(browser);
+        for (const trigger of ['Platform Bar text color', 'Top bar color']) {
+          await waitForPopoverClosed(browser);
+          await click(browser, `button[aria-label="${trigger}"]`);
+          await dialog(browser);
 
-        const top = await settled(browser, readPopoverScroll, 'the capped popover', 'start');
-        assert.ok(
-          top.maxHeight !== '' && top.contentHeight > top.popoverHeight,
-          `setup: the window should be too short for the popover, got ${JSON.stringify(top)}`,
-        );
-        assert.equal(top.below, false, `the dialog should not show past the popover: ${JSON.stringify(top)}`);
-        assert.ok(top.firstControl, `the first control should be reachable at the start: ${JSON.stringify(top)}`);
-        assert.ok(
-          top.scrollWidth <= top.clientWidth && top.dialogWidth <= top.popoverWidth,
-          `the capped popover should not scroll sideways: ${JSON.stringify(top)}`,
-        );
-        // The dialog gives up height by scrolling, not by squeezing what is in it.
-        assert.deepEqual(
-          await browser.execute(readAutoOption),
-          { height: 32, mutedWithin: true },
-          'the Auto option should keep its 32px in a capped popover',
-        );
-        assert.equal(
-          (await browser.execute(readColorPopover)).well.height,
-          160,
-          'the well should keep its height in a capped popover',
-        );
+          const top = await settled(browser, readPopoverScroll, `the capped ${trigger} popover`, 'start');
+          assert.ok(
+            top.maxHeight !== '' && top.contentHeight > top.popoverHeight,
+            `setup: the window should be too short for the ${trigger} popover, got ${JSON.stringify(top)}`,
+          );
+          assert.equal(
+            top.below,
+            false,
+            `${trigger}: the dialog should not show past the popover: ${JSON.stringify(top)}`,
+          );
+          assert.ok(top.firstControl, `${trigger}: the first control should be reachable: ${JSON.stringify(top)}`);
+          assert.ok(
+            top.scrollWidth <= top.clientWidth && top.dialogWidth <= top.popoverWidth,
+            `${trigger}: the capped popover should not scroll sideways: ${JSON.stringify(top)}`,
+          );
+          // The dialog gives up height by scrolling, not by squeezing what is in it. Only the
+          // text picker has an Auto option.
+          if (trigger === 'Platform Bar text color') {
+            assert.deepEqual(
+              await browser.execute(readAutoOption),
+              { height: 32, mutedWithin: true },
+              'the Auto option should keep its 32px in a capped popover',
+            );
+          }
+          assert.equal(
+            (await browser.execute(readColorPopover)).well.height,
+            160,
+            `${trigger}: the well should keep its height in a capped popover`,
+          );
 
-        const last = await settled(browser, readPopoverScroll, 'the popover scrolled to its last control', 'last');
-        assert.ok(last.scrollTop > 0, `the capped popover should scroll: ${JSON.stringify(last)}`);
-        // Reachable also means clear of a scroll bar, which takes its width out of the dialog.
-        assert.ok(last.hueStrip, `the hue strip should be reachable after scrolling: ${JSON.stringify(last)}`);
-        assert.equal(last.below, false, `the dialog should not show past the popover: ${JSON.stringify(last)}`);
+          const last = await settled(browser, readPopoverScroll, `the ${trigger} popover scrolled to its end`, 'last');
+          assert.ok(last.scrollTop > 0, `${trigger}: the capped popover should scroll: ${JSON.stringify(last)}`);
+          // Reachable also means clear of a scroll bar, which takes its width out of the dialog.
+          assert.ok(last.hueStrip, `${trigger}: the hue strip should be reachable: ${JSON.stringify(last)}`);
+          assert.equal(
+            last.below,
+            false,
+            `${trigger}: the dialog should not show past the popover: ${JSON.stringify(last)}`,
+          );
+        }
       } finally {
         await browser.keys('Escape');
         await browser.setWindowSize(windowSize.width, windowSize.height);
@@ -1960,11 +2115,23 @@ for (const browserName of browserTargets()) {
           'same',
           'exact',
           projectSettings({
-            palette: { enabled: true, entries: [{ id: 'brand', name: 'Brand', color: '#cc3366' }] },
-            topBar: { enabled: true, color: { paletteId: 'brand', custom: '#123456' }, height: 13, stripes: true },
+            // Gradients in an entry and in a kept custom fill travel through the file as { stops }.
+            palette: {
+              enabled: true,
+              entries: [
+                { id: 'brand', name: 'Brand', color: '#cc3366' },
+                { id: 'sunrise', name: 'Sunrise', color: { stops: ['#ff6d00', '#e91e63', '#3f51b5'] } },
+              ],
+            },
+            topBar: {
+              enabled: true,
+              color: { paletteId: 'brand', custom: { stops: ['#ff6d00', '#1a73e8'] } },
+              height: 13,
+              stripes: true,
+            },
             platformBar: {
               enabled: true,
-              color: { paletteId: 'brand', custom: '#234567' },
+              color: { paletteId: 'sunrise', custom: '#234567' },
               stripes: true,
             },
             platformBarText: { enabled: true, color: { paletteId: null, custom: '#345678' }, auto: true },

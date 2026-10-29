@@ -318,7 +318,7 @@ describe('ColorEditor', () => {
       for (const className of RING) expect(hexControl().classList.contains(className), className).toBe(false);
     });
 
-    it('calls onActivate for a primary-button press anywhere on the control while it is not active', () => {
+    it('calls onActivate for a primary-button press anywhere on the control', () => {
       const onActivate = vi.fn();
       renderEditor({ active: false, onActivate });
 
@@ -341,14 +341,20 @@ describe('ColorEditor', () => {
       expect(onActivate).not.toHaveBeenCalled();
     });
 
-    it('does not call onActivate while active, for keyboard focus, or for a press on the well', async () => {
-      const user = userEvent.setup();
+    // The picker decides what a press on the choice already in use does: nothing, unless the
+    // selection still holds a reference the palette no longer honours, which the press drops.
+    it('calls onActivate for a primary-button press while active as well', () => {
       const onActivate = vi.fn();
       renderEditor({ active: true, onActivate });
-      fireEvent.pointerDown(hexInput(), { button: 0 });
-      expect(onActivate).not.toHaveBeenCalled();
-      cleanup();
 
+      fireEvent.pointerDown(hexInput(), { button: 0 });
+
+      expect(onActivate).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call onActivate for keyboard focus, or for a press on the well', async () => {
+      const user = userEvent.setup();
+      const onActivate = vi.fn();
       renderEditor({ active: false, onActivate });
       await user.tab();
       expect(document.activeElement).toBe(hexInput());

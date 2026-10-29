@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Color } from '../../domain/color';
 import { ColorSelection } from '../../domain/color-selection';
+import { type Fill, Gradient } from '../../domain/gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from '../../domain/palette';
 import { isMatchType, MATCH_TYPES, type MatchType, ProjectRule, ProjectRuleId } from '../../domain/project-rule';
 import {
@@ -25,8 +26,8 @@ import { compareVersions, VersionComparisonResult } from './version';
 //   1. STRUCTURE (checkStructure, with the Zod schemas below) — required keys and JSON types only. No enums, ranges
 //      or formats live here; that would put the domain's rules in the adapter.
 //   2. VALUES (toRules) — every value is handed to the domain factory that owns it
-//      (isTheme, Color.fromHex, TopBarHeight.fromPixels, isMatchType), and a rejection becomes
-//      an issue.
+//      (isTheme, Color.fromHex, Gradient.fromStops, TopBarHeight.fromPixels, isMatchType), and a
+//      rejection becomes an issue.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -34,13 +35,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // Stage 1. `z.object` ignores unknown keys within the supported schema version range.
 // Stamps above this build's effective schema version ceiling are rejected before validation.
-const colorSelectionSchema = z.object({
-  // JSON has no undefined: an unset palette reference is written as null.
-  paletteId: z.string().nullable(),
-  custom: z.string(),
+//
+// A fill (palette entries and the bars' custom) is a '#rrggbb' string or { stops: [...] }; only
+// that shape is checked here, and the colors and the stop count are judged in stage 2. The union
+// reports one issue at the fill's own path, not one per element, and Zod reads every element of
+// `stops` here.
+// ponytail: a stops array is read whole here, unlike entries; the domain caps real gradients at 4
+// and a hostile file costs memory, not issues (the union collapses to one). Walk it like entries
+// if that bound ever matters.
+const fillSchema = z.union([z.string(), z.object({ stops: z.array(z.string()) })], {
+  error: 'expected a color string or a gradient object with a stops array of strings',
 });
 
-const paletteEntrySchema = z.object({ id: z.string(), name: z.string(), color: z.string() });
+// JSON has no undefined: an unset palette reference is written as null.
+const paletteIdSchema = z.string().nullable();
+const fillSelectionSchema = z.object({ paletteId: paletteIdSchema, custom: fillSchema });
+// The platform bar text is painted with CSS `color`, so its custom stays a plain string.
+const colorSelectionSchema = z.object({ paletteId: paletteIdSchema, custom: z.string() });
+
+const paletteEntrySchema = z.object({ id: z.string(), name: z.string(), color: fillSchema });
 
 // The root's scalar fields; projectRules is walked separately (see checkStructure).
 const rootSchema = z.object({ theme: z.string() });
@@ -56,11 +69,11 @@ const ruleShellSchema = z.object({
     palette: z.object({ enabled: z.boolean() }),
     topBar: z.object({
       enabled: z.boolean(),
-      color: colorSelectionSchema,
+      color: fillSelectionSchema,
       height: z.number(),
       stripes: z.boolean(),
     }),
-    platformBar: z.object({ enabled: z.boolean(), color: colorSelectionSchema, stripes: z.boolean() }),
+    platformBar: z.object({ enabled: z.boolean(), color: fillSelectionSchema, stripes: z.boolean() }),
     platformBarText: z.object({ enabled: z.boolean(), color: colorSelectionSchema, auto: z.boolean() }),
   }),
 });
@@ -69,6 +82,7 @@ const ruleShellSchema = z.object({
 // non-array: a real array would have every element read.
 const arrayDiagnosis = z.array(z.unknown());
 
+type FillFile = z.infer<typeof fillSchema>;
 type PaletteEntryFile = z.infer<typeof paletteEntrySchema>;
 type RuleFile = z.infer<typeof ruleShellSchema> & { settings: { palette: { entries: PaletteEntryFile[] } } };
 interface SettingsFile {
@@ -172,9 +186,10 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
 // rejections instead of throwing at the first one, so a file reports everything wrong with it in
 // one pass. A rejected value is replaced by a placeholder here purely to keep building: the
 // returned rules are used only when no issue was collected. Values are judged in a fixed order
-// (the root theme first, then per rule: matchType, each palette entry's duplicate id then color,
-// topBar color and height, platformBar color, platformBarText color); the judgment that yields
-// the 101st issue stops validation on the spot, and no partial rules are returned.
+// (the root theme first, then per rule: matchType, each palette entry's duplicate id, then its
+// color (each stop, then the stop count); topBar color (same) and height; platformBar color;
+// platformBarText color); the judgment that yields the 101st issue stops validation on the spot,
+// and no partial rules are returned.
 function toRules(file: SettingsFile): {
   theme: Theme;
   rules: ProjectRule[];
@@ -188,6 +203,16 @@ function toRules(file: SettingsFile): {
     const parsed = Color.fromHex(value);
     if (parsed) return parsed;
     reject(path, 'expected a color like #rrggbb');
+    return Color.BLACK;
+  };
+
+  // Each stop is judged before the count, and both are reported.
+  const fill = (value: FillFile, path: string): Fill => {
+    if (typeof value === 'string') return color(value, path);
+    const stops = value.stops.map((stop, i) => color(stop, `${path}.stops[${i}]`));
+    const gradient = Gradient.fromStops(stops);
+    if (gradient) return gradient;
+    reject(`${path}.stops`, `expected ${Gradient.MIN_STOPS} to ${Gradient.MAX_STOPS} stops`);
     return Color.BLACK;
   };
 
@@ -214,11 +239,18 @@ function toRules(file: SettingsFile): {
   // so there is no value rule to apply here. A paletteId naming no entry of the rule's own
   // palette is NOT an issue either: the domain treats a dangling reference as legal and falls
   // back to the custom color (see Palette.resolve). Palette-local id uniqueness is checked
-  // below as an import-file constraint, without changing domain ids or storage recovery.
-  const selection = (value: { paletteId: string | null; custom: string }, path: string): ColorSelection =>
+  // below as an import-file constraint, without changing domain ids or storage recovery. A text
+  // reference to a gradient entry is legal for the same reason (see Palette.resolveSolid), and it
+  // is what this extension's own export writes. `custom` is judged by the surface's own parser:
+  // the bars take `fill`, the text `color`.
+  const selection = <F, C extends Fill>(
+    value: { paletteId: string | null; custom: F },
+    path: string,
+    custom: (value: F, path: string) => C,
+  ): ColorSelection<C> =>
     new ColorSelection(
       value.paletteId === null ? undefined : PaletteEntryId.recreate(value.paletteId),
-      color(value.custom, `${path}.custom`),
+      custom(value.custom, `${path}.custom`),
     );
 
   let theme: Theme;
@@ -244,24 +276,24 @@ function toRules(file: SettingsFile): {
               return PaletteEntry.recreate(
                 PaletteEntryId.recreate(entry.id),
                 entry.name,
-                color(entry.color, `${entryAt}.color`),
+                fill(entry.color, `${entryAt}.color`),
               );
             }),
           ),
           new TopBarSettings(
             topBar.enabled,
-            selection(topBar.color, `${settingsAt}.topBar.color`),
+            selection(topBar.color, `${settingsAt}.topBar.color`, fill),
             height(topBar.height, `${settingsAt}.topBar.height`),
             topBar.stripes,
           ),
           new PlatformBarSettings(
             platformBar.enabled,
-            selection(platformBar.color, `${settingsAt}.platformBar.color`),
+            selection(platformBar.color, `${settingsAt}.platformBar.color`, fill),
             platformBar.stripes,
           ),
           new PlatformBarTextSettings(
             platformBarText.enabled,
-            selection(platformBarText.color, `${settingsAt}.platformBarText.color`),
+            selection(platformBarText.color, `${settingsAt}.platformBarText.color`, color),
             platformBarText.auto,
           ),
         ),

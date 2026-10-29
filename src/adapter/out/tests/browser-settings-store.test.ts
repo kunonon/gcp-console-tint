@@ -7,8 +7,8 @@ import { migrateStoredSettings } from '../browser-settings-store';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
 import { toStored } from '../settings-repository';
 
-// A release above CURRENT_SCHEMA_VERSION ('0.3.0'), so the write stamp is this version as is.
-const RELEASE = '0.3.7';
+// A release above CURRENT_SCHEMA_VERSION ('0.5.0'), so the write stamp is this version as is.
+const RELEASE = '0.5.7';
 
 describe('migrateStoredSettings', () => {
   beforeEach(() => {
@@ -77,6 +77,34 @@ describe('migrateStoredSettings', () => {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       theme: 'auto',
       projectRules: [],
+    });
+  });
+
+  // The stored shape of a fill: a gradient is written as { stops }, beside the solid strings.
+  it('writes gradient fills back as stops objects', async () => {
+    const rule = (custom: unknown, entryColor: unknown) => ({
+      id: '1',
+      matchType: 'exact',
+      pattern: 'my-app',
+      settings: {
+        palette: { enabled: true, entries: [{ id: 'sunset', name: 'Sunset', color: entryColor }] },
+        topBar: { enabled: true, color: { paletteId: null, custom }, height: 4, stripes: false },
+        platformBar: { enabled: true, color: { paletteId: 'sunset', custom: '#ff6d00' }, stripes: true },
+        platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: true },
+      },
+    });
+    const gradient = { stops: ['#ff6d00', '#1a73e8'] };
+    const sunset = { stops: ['#ff6d00', '#e91e63', '#3f51b5'] };
+    await fakeBrowser.storage.local.set({
+      tintSettings: { schemaVersion: '0.3.0', theme: 'dark', projectRules: [rule(gradient, sunset)] },
+    });
+
+    await migrateStoredSettings(RELEASE);
+
+    expect((await fakeBrowser.storage.local.get('tintSettings')).tintSettings).toEqual({
+      schemaVersion: RELEASE,
+      theme: 'dark',
+      projectRules: [rule(gradient, sunset)],
     });
   });
 

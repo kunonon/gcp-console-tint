@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { Color } from '../../../domain/color';
 import { ColorSelection } from '../../../domain/color-selection';
+import { fillEquals, Gradient } from '../../../domain/gradient';
 import { ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
@@ -315,7 +316,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
 
     const topBar = parsed.projectRules[0]!.settings.topBar;
     expect(topBar.color.paletteId?.toString()).toBe('gone');
-    expect(parsed.projectRules[0]!.settings.palette.resolve(topBar.color).equals(topBar.color.custom)).toBe(true);
+    expect(fillEquals(parsed.projectRules[0]!.settings.palette.resolve(topBar.color), topBar.color.custom)).toBe(true);
   });
 
   it('accepts a null paletteId as "no palette reference"', () => {
@@ -332,6 +333,116 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
     });
 
     expect(parse(text).projectRules[0]!.settings.topBar.height.toPixels()).toBe(pixels);
+  });
+});
+
+describe('parseSettingsFile: gradient fills', () => {
+  const FILL_MESSAGE = 'expected a color string or a gradient object with a stops array of strings';
+  const ENTRY = 'projectRules[0].settings.palette.entries[0].color';
+  const TOP_BAR = 'projectRules[0].settings.topBar.color.custom';
+  const PLATFORM_BAR = 'projectRules[0].settings.platformBar.color.custom';
+  const TEXT = 'projectRules[0].settings.platformBarText.color.custom';
+  const gradient = (...hexes: string[]) => Gradient.fromStops(hexes.map((hex) => Color.fromHex(hex)!))!;
+
+  it('imports gradients in a palette entry and both bars', () => {
+    const parsed = parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = { stops: ['#ff6d00', '#e91e63', '#3f51b5'] };
+        rule.settings.topBar.color = { paletteId: null, custom: { stops: ['#FF6D00', '#1a73e8'] } };
+        rule.settings.platformBar.color.custom = { stops: ['#000000', '#ffffff', '#000000', '#ffffff'] };
+      }),
+    );
+
+    const settings = parsed.projectRules[0]!.settings;
+    expect(fillEquals(settings.palette.entries[0]!.color, gradient('#ff6d00', '#e91e63', '#3f51b5'))).toBe(true);
+    expect(fillEquals(settings.topBar.color.custom, gradient('#ff6d00', '#1a73e8'))).toBe(true);
+    expect(fillEquals(settings.platformBar.color.custom, gradient('#000000', '#ffffff', '#000000', '#ffffff'))).toBe(
+      true,
+    );
+  });
+
+  // Stage 1: anything that is neither a string nor { stops: string[] } is one union issue at the
+  // fill's own path, never one per element.
+  it.each([
+    ['a number', 5],
+    ['null', null],
+    ['an object without stops', {}],
+    ['a non-array stops', { stops: 'x' }],
+    ['a non-string stop', { stops: [1] }],
+  ])('refuses %s as a fill at the entry and bar paths', (_label, value) => {
+    const file = JSON.parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = value;
+        rule.settings.topBar.color.custom = value;
+        rule.settings.platformBar.color.custom = value;
+      }),
+    );
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([
+      { path: ENTRY, message: FILL_MESSAGE },
+      { path: TOP_BAR, message: FILL_MESSAGE },
+      { path: PLATFORM_BAR, message: FILL_MESSAGE },
+    ]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  it('refuses a missing bar custom with the fill message', () => {
+    const file = JSON.parse(fileWithRule((rule) => delete rule.settings.topBar.color.custom));
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([{ path: TOP_BAR, message: FILL_MESSAGE }]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  it('refuses a gradient in the text color, which stays a plain string', () => {
+    const file = JSON.parse(
+      fileWithRule((rule) => (rule.settings.platformBarText.color.custom = { stops: ['#000000', '#ffffff'] })),
+    );
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([{ path: TEXT, message: 'Invalid input: expected string, received object' }]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  // Stage 2: every stop is judged by Color.fromHex, then the count by Gradient.fromStops.
+  it('reports each bad stop and then a bad count, in judgment order', () => {
+    const text = fileWithRule((rule) => {
+      rule.settings.palette.entries[0].color = { stops: ['#000000', '#111111', 'red'] };
+      rule.settings.topBar.color.custom = { stops: ['#12345'] };
+      rule.settings.platformBar.color.custom = { stops: ['#000000', '#111111', '#222222', '#333333', '#444444'] };
+    });
+
+    expect(issuesOf(thrownBy(() => parse(text)))).toEqual([
+      { path: `${ENTRY}.stops[2]`, message: 'expected a color like #rrggbb' },
+      { path: `${TOP_BAR}.stops[0]`, message: 'expected a color like #rrggbb' },
+      { path: `${TOP_BAR}.stops`, message: 'expected 2 to 4 stops' },
+      { path: `${PLATFORM_BAR}.stops`, message: 'expected 2 to 4 stops' },
+    ]);
+  });
+
+  it('refuses an empty stops array as a bad count', () => {
+    expect(
+      issuesOf(thrownBy(() => parse(fileWithRule((rule) => (rule.settings.topBar.color.custom = { stops: [] }))))),
+    ).toEqual([{ path: `${TOP_BAR}.stops`, message: 'expected 2 to 4 stops' }]);
+  });
+
+  // The extension's own export writes this, so refusing it would break export-import round trips;
+  // the text falls back to its custom color while the entry is a gradient (Palette.resolveSolid).
+  it('imports a text reference to a gradient entry', () => {
+    const parsed = parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = { stops: ['#000000', '#ffffff'] };
+        rule.settings.platformBarText.color = { paletteId: 'default', custom: '#123456' };
+      }),
+    );
+
+    const settings = parsed.projectRules[0]!.settings;
+    expect(settings.platformBarText.color.paletteId?.toString()).toBe('default');
+    expect(settings.palette.resolveSolid(settings.platformBarText.color).toHex()).toBe('#123456');
   });
 });
 
@@ -361,6 +472,13 @@ describe('parseSettingsFile: versions and migrations', () => {
     });
   });
 
+  // A solid file from the 0.4.1 release runs only the 0.5.0 stamp step and reads unchanged.
+  it('imports a 0.4.1-stamped solid file through the real registry', () => {
+    const settings = parseSettingsFile(stamped('0.4.1'), CURRENT_SCHEMA_VERSION);
+
+    expect(settings.projectRules[0]!.settings).toEqual(ProjectSettings.DEFAULT);
+  });
+
   // The real registry's 0.3.0 step adds theme 'auto' to files written before the theme existed.
   it('imports a 0.2.1 file without theme, which the 0.3.0 migration step completes with auto', () => {
     const { theme: _theme, ...file } = validFile();
@@ -371,8 +489,8 @@ describe('parseSettingsFile: versions and migrations', () => {
   });
 
   it('accepts a stamp equal to the current version, and one between the schema version and it', () => {
-    expect(parseSettingsFile(stamped('0.3.5'), '0.3.5').projectRules).toHaveLength(1);
-    expect(parseSettingsFile(stamped('0.3.2'), '0.3.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.5.5'), '0.5.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.5.2'), '0.5.5').projectRules).toHaveLength(1);
   });
 
   // A fake shape change: 0.2.0 renames topBar.heightPx to topBar.height. Files written before it
@@ -426,7 +544,12 @@ describe('parseSettingsFile: versions and migrations', () => {
 // The order oracle for the structure stage: the whole-file schema the import used to run in one
 // call, restated here on purpose rather than imported, so the element-by-element walk is checked
 // against Zod's own issue order and wording, not against itself.
+// The bars and the palette entries take a fill (a string or { stops }); the text keeps a string.
+const oracleFill = z.union([z.string(), z.object({ stops: z.array(z.string()) })], {
+  error: 'expected a color string or a gradient object with a stops array of strings',
+});
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
+const oracleFillSelection = z.object({ paletteId: z.string().nullable(), custom: oracleFill });
 const oracleSchema = z.object({
   theme: z.string(),
   projectRules: z.array(
@@ -437,10 +560,15 @@ const oracleSchema = z.object({
       settings: z.object({
         palette: z.object({
           enabled: z.boolean(),
-          entries: z.array(z.object({ id: z.string(), name: z.string(), color: z.string() })),
+          entries: z.array(z.object({ id: z.string(), name: z.string(), color: oracleFill })),
         }),
-        topBar: z.object({ enabled: z.boolean(), color: oracleSelection, height: z.number(), stripes: z.boolean() }),
-        platformBar: z.object({ enabled: z.boolean(), color: oracleSelection, stripes: z.boolean() }),
+        topBar: z.object({
+          enabled: z.boolean(),
+          color: oracleFillSelection,
+          height: z.number(),
+          stripes: z.boolean(),
+        }),
+        platformBar: z.object({ enabled: z.boolean(), color: oracleFillSelection, stripes: z.boolean() }),
         platformBarText: z.object({ enabled: z.boolean(), color: oracleSelection, auto: z.boolean() }),
       }),
     }),

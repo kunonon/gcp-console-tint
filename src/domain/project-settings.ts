@@ -1,6 +1,7 @@
 import { ValueObject } from './base/value-object';
 import { Color } from './color';
 import { ColorSelection } from './color-selection';
+import type { Fill } from './gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from './palette';
 import { TopBarHeight } from './top-bar-height';
 
@@ -98,7 +99,8 @@ export class PlatformBarSettings extends ValueObject<PlatformBarSettings> {
 export class PlatformBarTextSettings extends ValueObject<PlatformBarTextSettings> {
   constructor(
     readonly enabled: boolean,
-    readonly color: ColorSelection,
+    // Text is painted with CSS `color`, which cannot take a gradient, so only solid colors.
+    readonly color: ColorSelection<Color>,
     // Pick black/white automatically by WCAG contrast against the platform bar color.
     readonly auto: boolean,
   ) {
@@ -117,7 +119,7 @@ export class PlatformBarTextSettings extends ValueObject<PlatformBarTextSettings
     return new PlatformBarTextSettings(false, this.color, this.auto);
   }
 
-  changeColor(color: ColorSelection): PlatformBarTextSettings {
+  changeColor(color: ColorSelection<Color>): PlatformBarTextSettings {
     return new PlatformBarTextSettings(this.enabled, color, this.auto);
   }
 
@@ -138,10 +140,11 @@ export class ProjectSettings extends ValueObject<ProjectSettings> {
     // The palette's own default entries (a single "Primary" swatch). Its id is the stable
     // literal 'default' — not a generated one — because topBar/platformBar's default color
     // selection below references it by that id; Palette.resolve() would fail to resolve it
-    // otherwise.
+    // otherwise. The bars' selections are typed ColorSelection<Fill> explicitly, so the declared
+    // type is honest instead of relying on a ColorSelection<Color> being assignable to it.
     new Palette(true, [PaletteEntry.recreate(DEFAULT_ENTRY_ID, 'Primary', DEFAULT_COLOR)]),
-    new TopBarSettings(true, new ColorSelection(DEFAULT_ENTRY_ID, DEFAULT_COLOR), DEFAULT_TOP_BAR_HEIGHT, false),
-    new PlatformBarSettings(true, new ColorSelection(DEFAULT_ENTRY_ID, DEFAULT_COLOR), false),
+    new TopBarSettings(true, new ColorSelection<Fill>(DEFAULT_ENTRY_ID, DEFAULT_COLOR), DEFAULT_TOP_BAR_HEIGHT, false),
+    new PlatformBarSettings(true, new ColorSelection<Fill>(DEFAULT_ENTRY_ID, DEFAULT_COLOR), false),
     new PlatformBarTextSettings(true, new ColorSelection(undefined, DEFAULT_TEXT_COLOR), false),
   );
 
@@ -184,7 +187,7 @@ export class ProjectSettings extends ValueObject<ProjectSettings> {
   // references are cleared atomically alongside the entry removal, so storage never sees an
   // intermediate state with a dangling paletteId.
   removePaletteEntry(id: PaletteEntryId): ProjectSettings {
-    const withoutRef = (selection: ColorSelection) =>
+    const withoutRef = <C extends Fill>(selection: ColorSelection<C>) =>
       selection.paletteId?.equals(id) ? selection.clearPalette() : selection;
     return new ProjectSettings(
       this.palette.removeEntry(id),

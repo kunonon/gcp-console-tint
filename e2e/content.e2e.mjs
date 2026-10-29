@@ -541,6 +541,98 @@ for (const browserName of browserTargets()) {
       }
     });
 
+    test('paints gradient fills on both bars, alone and under stripes', async () => {
+      const sunrise = { stops: ['#ff6d00', '#1a73e8'] };
+      const gradientSettings = (stripes, platformBarText) =>
+        projectSettings({
+          palette: { enabled: true, entries: [{ id: 'sunrise', name: 'Sunrise', color: sunrise }] },
+          topBar: { enabled: true, color: { paletteId: null, custom: sunrise }, height: 7, stripes },
+          platformBar: { enabled: true, color: { paletteId: 'sunrise', custom: '#cc3300' }, stripes },
+          platformBarText,
+        });
+      await setStored(
+        h,
+        settings(
+          // Auto text over the gradient: black, which either stop alone would also pick, so this
+          // checks that auto text follows a gradient fill; unit tests pin the worst-stop choice.
+          rule(
+            'plain',
+            'plain',
+            'exact',
+            gradientSettings(false, { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true }),
+          ),
+          // A text color that references the gradient entry paints its own custom color instead.
+          rule(
+            'striped',
+            'striped',
+            'exact',
+            gradientSettings(true, { enabled: true, color: { paletteId: 'sunrise', custom: '#1122cc' }, auto: false }),
+          ),
+        ),
+      );
+      // The computed values, the same in Chrome and Firefox: hex stops come back as rgb() with no
+      // positions, and the stripe layer comes first, so it is drawn over the gradient.
+      const gradient = 'linear-gradient(to right, rgb(255, 109, 0), rgb(26, 115, 232))';
+      const striped = `repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0) 8px, rgba(0, 0, 0, 0.3) 8px, rgba(0, 0, 0, 0.3) 16px), ${gradient}`;
+      // Under stripes the platform bar has two image layers and one specified attachment, position
+      // and size, which an engine may list once or once per layer (Chrome lists all three per
+      // layer, Firefox only the size).
+      const everyLayer = (value, expected, label) =>
+        assert.ok(
+          value.split(',').every((layer) => layer.trim() === expected),
+          `${label} should be ${expected} on every layer, got ${value}`,
+        );
+
+      await h.openConsole('plain');
+      let snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.topBar.backgroundColor === 'rgb(255, 109, 0)' &&
+          value.platformBar.backgroundColor === 'rgb(255, 109, 0)' &&
+          value.topBar.backgroundImage === gradient &&
+          value.platformBar.backgroundImage === gradient &&
+          Object.values(value.platformBar.textColors).every((color) => color === 'rgb(0, 0, 0)'),
+        'gradient fills and auto text did not settle for plain',
+      );
+      // The color underneath is the first stop, so the crossfade has a target and the image is all
+      // that snaps.
+      assert.equal(snapshot.topBar.backgroundColor, 'rgb(255, 109, 0)');
+      assert.equal(snapshot.platformBar.backgroundColor, 'rgb(255, 109, 0)');
+      assert.equal(snapshot.topBar.backgroundImage, gradient);
+      assert.equal(snapshot.platformBar.backgroundImage, gradient);
+      assert.deepEqual(Object.values(snapshot.platformBar.textColors), Array(3).fill('rgb(0, 0, 0)'));
+      let css = await colorStyle(h);
+      // The rule's own text is engine-independent: the gradient and the fixed viewport box are
+      // declared without stripes too, so both bars show the same color at the same x.
+      assert.match(
+        css.platformTransition,
+        /#ocb-platform-bar \{ background-color: #ff6d00 !important; background-image: linear-gradient\(to right, #ff6d00, #1a73e8\) !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important;/,
+      );
+      assert.equal(css.overlayBackgroundAttachment, 'fixed');
+      assert.equal(css.platformBackgroundAttachment, 'fixed');
+      assert.equal(css.platformBackgroundPosition, '0px 0px');
+      assert.equal(css.platformBackgroundSize, 'auto');
+
+      await pushHistoryUrl(h, '/?project=striped');
+      snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=striped') &&
+          value.topBar.backgroundImage === striped &&
+          value.platformBar.backgroundImage === striped &&
+          Object.values(value.platformBar.textColors).every((color) => color === 'rgb(17, 34, 204)'),
+        'striped gradient fills and the referenced text color did not settle for striped',
+      );
+      assert.equal(snapshot.topBar.backgroundImage, striped);
+      assert.equal(snapshot.platformBar.backgroundImage, striped);
+      assert.equal(snapshot.platformBar.backgroundColor, 'rgb(255, 109, 0)');
+      assert.deepEqual(Object.values(snapshot.platformBar.textColors), Array(3).fill('rgb(17, 34, 204)'));
+      css = await colorStyle(h);
+      everyLayer(css.platformBackgroundAttachment, 'fixed', 'the platform bar attachment');
+      everyLayer(css.platformBackgroundPosition, '0px 0px', 'the platform bar position');
+      everyLayer(css.platformBackgroundSize, 'auto', 'the platform bar size');
+    });
+
     test('reacts to push, replace, back, and forward without reloading, and to shared storage changes', async () => {
       const alpha = projectSettings({ topBar: topBar('#cc0000'), platformBar: platformBar('#cc0000') });
       const beta = projectSettings({ topBar: topBar('#0000cc'), platformBar: platformBar('#0000cc') });
@@ -802,7 +894,8 @@ for (const browserName of browserTargets()) {
       assert.equal(await picker.getText(), '#cc3366', 'a dangling palette reference should use its custom color');
       await picker.click();
       await browser.$('button[aria-label="Brand"]').waitForDisplayed();
-      const visiblePaletteEntries = await browser.$$('[role="dialog"] button[aria-label]');
+      // The palette beads, not the gradient stop buttons beside the custom color (Add and Remove stop).
+      const visiblePaletteEntries = await browser.$$('[role="dialog"] button[aria-label]:not(fieldset button)');
       assert.deepEqual(
         await visiblePaletteEntries.map((entry) => entry.getAttribute('aria-label')),
         ['Brand'],

@@ -2,15 +2,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import contentScript from '../content';
 
+// A stored fill: a '#rrggbb' string or a gradient's { stops } object.
+type StoredFill = string | { stops: string[] };
+
 interface PaletteEntry {
   id: string;
   name: string;
-  color: string;
+  color: StoredFill;
 }
 
+// The platform bar text's selection: its custom stays a plain color string.
 interface ColorSelection {
   paletteId: string | null;
   custom: string;
+}
+
+// The bars' selection, whose custom may be a gradient.
+interface FillSelection {
+  paletteId: string | null;
+  custom: StoredFill;
 }
 
 interface PaletteSettings {
@@ -20,14 +30,14 @@ interface PaletteSettings {
 
 interface TopBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   height: number;
   stripes: boolean;
 }
 
 interface PlatformBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   stripes: boolean;
 }
 
@@ -50,8 +60,8 @@ interface ProjectSettings {
 // whatever is omitted, against the real ProjectSettings defaults.
 interface ProjectSettingsOverrides {
   palette?: Partial<PaletteSettings>;
-  topBar?: Partial<Omit<TopBarSettings, 'color'>> & { color?: Partial<ColorSelection> };
-  platformBar?: Partial<Omit<PlatformBarSettings, 'color'>> & { color?: Partial<ColorSelection> };
+  topBar?: Partial<Omit<TopBarSettings, 'color'>> & { color?: Partial<FillSelection> };
+  platformBar?: Partial<Omit<PlatformBarSettings, 'color'>> & { color?: Partial<FillSelection> };
   platformBarText?: Partial<Omit<PlatformBarTextSettings, 'color'>> & { color?: Partial<ColorSelection> };
 }
 
@@ -72,7 +82,7 @@ interface TintSettings {
 
 // The manifest version these tests run under: equal to CURRENT_SCHEMA_VERSION, so defaulted
 // fixtures are current-schema data that no migration step touches.
-const CURRENT_VERSION = '0.3.0';
+const CURRENT_VERSION = '0.5.0';
 
 // Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
 // The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
@@ -1163,5 +1173,77 @@ describe('content script', () => {
         expect(styleEl.textContent).not.toContain('transition');
       });
     });
+  });
+});
+
+describe('gradient fills', () => {
+  const SUNSET = { stops: ['#ff6d00', '#1a73e8'] };
+  const SUNSET_CSS = 'linear-gradient(to right, #ff6d00, #1a73e8)';
+  // '#ff6d00' to '#1a73e8' keeps black stripes: its worst black contrast beats its worst white one.
+  const BLACK_STRIPES = 'repeating-linear-gradient(-45deg, transparent 0 8px, rgba(0, 0, 0, 0.3) 8px 16px)';
+  // jsdom serialises the hex stops inside an inline gradient as rgb().
+  const SUNSET_INLINE = /linear-gradient\(to right, rgb\(255, 109, 0\), rgb\(26, 115, 232\)\)$/;
+
+  async function apply(settings: ProjectSettingsOverrides) {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule(settings));
+    setTestProjectLocation();
+    runContentScript();
+    await flush();
+    return getElements();
+  }
+
+  it('paints a gradient top bar over its first stop', async () => {
+    const { bar } = await apply({ topBar: { color: { paletteId: null, custom: SUNSET }, stripes: false } });
+
+    expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
+    expect(bar.style.backgroundImage).toMatch(SUNSET_INLINE);
+    expect(bar.style.backgroundImage).not.toContain('repeating-linear-gradient');
+  });
+
+  it('lays the stripes over a gradient top bar', async () => {
+    const { bar } = await apply({ topBar: { color: { paletteId: null, custom: SUNSET }, stripes: true } });
+
+    expect(bar.style.backgroundImage.startsWith('repeating-linear-gradient(')).toBe(true);
+    expect(bar.style.backgroundImage).toContain('rgba(0, 0, 0, 0.3)');
+    expect(bar.style.backgroundImage).toMatch(SUNSET_INLINE);
+  });
+
+  it('writes a gradient platform bar with the viewport-anchored image declarations, without stripes', async () => {
+    const { styleEl } = await apply({
+      palette: { entries: [{ id: 'default', name: 'Sunset', color: SUNSET }] },
+      platformBar: { color: { paletteId: 'default' }, stripes: false },
+    });
+
+    expect(styleEl.textContent).toContain(
+      `#ocb-platform-bar { background-color: #ff6d00 !important; background-image: ${SUNSET_CSS} !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important; transition: background-color 300ms ease !important; }`,
+    );
+  });
+
+  it('lists the stripes before the gradient on the platform bar', async () => {
+    const { styleEl } = await apply({ platformBar: { color: { paletteId: null, custom: SUNSET }, stripes: true } });
+
+    expect(styleEl.textContent).toContain(`background-image: ${BLACK_STRIPES}, ${SUNSET_CSS} !important;`);
+    expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
+  });
+
+  it.each([
+    { stops: ['#ff6d00', '#1a73e8'], text: '#000000' },
+    { stops: ['#ff6d00', '#000080'], text: '#ffffff' },
+  ])('picks Auto text $text for the worst stop of $stops', async ({ stops, text }) => {
+    const { styleEl } = await apply({
+      platformBar: { color: { paletteId: null, custom: { stops } } },
+      platformBarText: { auto: true },
+    });
+
+    expect(styleEl.textContent).toContain(`color: ${text} !important;`);
+  });
+
+  it('paints the text with its custom color while the entry it references is a gradient', async () => {
+    const { styleEl } = await apply({
+      palette: { entries: [{ id: 'default', name: 'Sunset', color: SUNSET }] },
+      platformBarText: { color: { paletteId: 'default', custom: '#abcdef' }, auto: false },
+    });
+
+    expect(styleEl.textContent).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
   });
 });

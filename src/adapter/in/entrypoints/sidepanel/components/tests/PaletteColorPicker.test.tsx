@@ -3,12 +3,15 @@ import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Color } from '../../../../../../domain/color';
+import { type Fill, Gradient } from '../../../../../../domain/gradient';
 import { PaletteEntry, PaletteEntryId } from '../../../../../../domain/palette';
 import PaletteColorPicker from '../PaletteColorPicker';
 
 afterEach(() => {
   cleanup();
 });
+
+const hex = (value: string) => Color.fromHex(value)!;
 
 const defaultEntryId = PaletteEntryId.recreate('default');
 const palette = [PaletteEntry.recreate(defaultEntryId, 'Primary', Color.fromHex('#ff6d00')!)];
@@ -29,8 +32,8 @@ describe('PaletteColorPicker', () => {
             paletteEnabled
             palette={palette}
             paletteId={defaultEntryId}
-            customColor="#123456"
-            effectiveColor="#ff6d00"
+            custom={hex('#123456')}
+            effective={hex('#ff6d00')}
             onSelectPaletteEntry={() => {}}
             onSelectCustomColor={() => {}}
           />
@@ -72,8 +75,8 @@ describe('PaletteColorPicker', () => {
           paletteEnabled
           palette={palette}
           paletteId={defaultEntryId}
-          customColor="#123456"
-          effectiveColor="#ff6d00"
+          custom={hex('#123456')}
+          effective={hex('#ff6d00')}
           onSelectPaletteEntry={() => {}}
           onSelectCustomColor={() => {}}
         />,
@@ -89,8 +92,8 @@ describe('PaletteColorPicker', () => {
           paletteEnabled
           palette={palette}
           paletteId={undefined}
-          customColor="#123456"
-          effectiveColor="#123456"
+          custom={hex('#123456')}
+          effective={hex('#123456')}
           onSelectPaletteEntry={() => {}}
           onSelectCustomColor={() => {}}
         />,
@@ -106,8 +109,8 @@ describe('PaletteColorPicker', () => {
           paletteEnabled
           palette={palette}
           paletteId={defaultEntryId}
-          customColor="#123456"
-          effectiveColor="#ff6d00"
+          custom={hex('#123456')}
+          effective={hex('#ff6d00')}
           onSelectPaletteEntry={() => {}}
           onSelectCustomColor={() => {}}
           supportsAuto
@@ -128,8 +131,8 @@ describe('PaletteColorPicker', () => {
         paletteEnabled
         palette={palette}
         paletteId={defaultEntryId}
-        customColor="#123456"
-        effectiveColor="#ff6d00"
+        custom={hex('#123456')}
+        effective={hex('#ff6d00')}
         onSelectPaletteEntry={() => {}}
         onSelectCustomColor={() => {}}
         supportsAuto
@@ -166,8 +169,8 @@ describe('PaletteColorPicker', () => {
         paletteEnabled
         palette={twoEntries}
         paletteId={defaultEntryId}
-        customColor="#123456"
-        effectiveColor="#ff6d00"
+        custom={hex('#123456')}
+        effective={hex('#ff6d00')}
         onSelectPaletteEntry={() => {}}
         onSelectCustomColor={() => {}}
       />,
@@ -197,8 +200,8 @@ describe('PaletteColorPicker', () => {
         paletteEnabled
         palette={twoEntries}
         paletteId={defaultEntryId}
-        customColor="#123456"
-        effectiveColor="#ff6d00"
+        custom={hex('#123456')}
+        effective={hex('#ff6d00')}
         onSelectPaletteEntry={() => {}}
         onSelectCustomColor={() => {}}
         supportsAuto
@@ -230,8 +233,8 @@ describe('PaletteColorPicker', () => {
         paletteEnabled={false}
         palette={palette}
         paletteId={undefined}
-        customColor="#123456"
-        effectiveColor="#123456"
+        custom={hex('#123456')}
+        effective={hex('#123456')}
         onSelectPaletteEntry={() => {}}
         onSelectCustomColor={() => {}}
       />,
@@ -245,6 +248,62 @@ describe('PaletteColorPicker', () => {
     expect(within(dialog).getByLabelText('Custom color')).toBeTruthy();
   });
 
+  describe('gradients', () => {
+    const sunsetId = PaletteEntryId.recreate('sunset');
+    const sunset = Gradient.fromStops([hex('#ff6d00'), hex('#1a73e8')])!;
+    const GRADIENT = /^linear-gradient\(to right, (#ff6d00|rgb\(255, 109, 0\)), (#1a73e8|rgb\(26, 115, 232\))\)$/;
+
+    it('fills the trigger\'s bead and a gradient palette bead with the gradient, as longhands, and labels a gradient custom "Gradient"', async () => {
+      const user = userEvent.setup();
+      render(
+        <PaletteColorPicker
+          ariaLabel="Test color"
+          paletteEnabled
+          palette={[...palette, PaletteEntry.recreate(sunsetId, 'Sunset', sunset)]}
+          paletteId={undefined}
+          custom={sunset}
+          effective={sunset}
+          onSelectPaletteEntry={() => {}}
+          onSelectCustomColor={() => {}}
+        />,
+      );
+
+      const trigger = screen.getByRole('button', { name: 'Test color' });
+      expect(trigger.textContent).toBe('Gradient');
+      const chip = trigger.querySelector('span[aria-hidden="true"]') as HTMLElement;
+      expect(['#ff6d00', 'rgb(255, 109, 0)']).toContain(chip.style.backgroundColor);
+      expect(chip.style.backgroundImage).toMatch(GRADIENT);
+
+      const dialog = await openDialog(user, 'Test color');
+      const bead = within(dialog).getByRole('button', { name: 'Sunset' });
+      expect(bead.style.backgroundImage).toMatch(GRADIENT);
+      expect(within(dialog).getByRole('button', { name: 'Primary' }).style.backgroundImage).toBe('');
+    });
+
+    it('offers no stops under solidOnly: the custom colour stays one colour', async () => {
+      const user = userEvent.setup();
+      render(
+        <PaletteColorPicker
+          ariaLabel="Test color"
+          paletteEnabled
+          palette={palette}
+          paletteId={undefined}
+          custom={hex('#123456')}
+          effective={hex('#123456')}
+          onSelectPaletteEntry={() => {}}
+          onSelectCustomColor={() => {}}
+          solidOnly
+        />,
+      );
+
+      const dialog = await openDialog(user, 'Test color');
+
+      expect(within(dialog).queryByRole('group', { name: 'Gradient stops' })).toBeNull();
+      expect(within(dialog).queryByRole('button', { name: 'Add stop' })).toBeNull();
+      expect(within(dialog).getByLabelText('Custom color')).toBeTruthy();
+    });
+  });
+
   describe('choices', () => {
     const secondEntryId = PaletteEntryId.recreate('second');
     const twoEntries = [...palette, PaletteEntry.recreate(secondEntryId, 'Secondary', Color.fromHex('#d50000')!)];
@@ -254,7 +313,7 @@ describe('PaletteColorPicker', () => {
     async function openPickerWith(props: Partial<ComponentProps<typeof PaletteColorPicker>> = {}) {
       const user = userEvent.setup();
       const onSelectPaletteEntry = vi.fn<(id: PaletteEntryId) => void>();
-      const onSelectCustomColor = vi.fn<(color: Color) => void>();
+      const onSelectCustomColor = vi.fn<(fill: Fill) => void>();
       const onSelectAuto = vi.fn();
       render(
         <PaletteColorPicker
@@ -262,8 +321,8 @@ describe('PaletteColorPicker', () => {
           paletteEnabled
           palette={twoEntries}
           paletteId={undefined}
-          customColor="#123456"
-          effectiveColor="#123456"
+          custom={hex('#123456')}
+          effective={hex('#123456')}
           onSelectPaletteEntry={onSelectPaletteEntry}
           onSelectCustomColor={onSelectCustomColor}
           supportsAuto
@@ -274,12 +333,13 @@ describe('PaletteColorPicker', () => {
         />,
       );
       const dialog = await openDialog(user, 'Test color');
-      const customInput = within(dialog).getByLabelText('Custom color') as HTMLInputElement;
+      // "Custom color", or "Custom color, stop N" for a gradient.
+      const customInput = within(dialog).getByLabelText(/^Custom color/) as HTMLInputElement;
       return { user, dialog, customInput, onSelectPaletteEntry, onSelectCustomColor, onSelectAuto };
     }
 
-    const customHexes = (onSelectCustomColor: { mock: { calls: [Color][] } }) =>
-      onSelectCustomColor.mock.calls.map(([color]) => color.toHex());
+    const customHexes = (onSelectCustomColor: { mock: { calls: [Fill][] } }) =>
+      onSelectCustomColor.mock.calls.map(([fill]) => (fill instanceof Color ? fill.toHex() : 'a gradient'));
 
     // Keyboard focus without a pointer press, as Tab gives it.
     function focus(element: HTMLElement) {
@@ -487,9 +547,11 @@ describe('PaletteColorPicker', () => {
         await openPickerWith({ paletteId: defaultEntryId });
       const inDialog = within(dialog);
       const auto = inDialog.getByRole('button', { name: 'Auto Match contrast' });
+      // A colour's one stop is not a control, and Remove stop is disabled.
       const stops = [
         auto,
         ...twoEntries.map((entry) => inDialog.getByRole('button', { name: entry.name })),
+        inDialog.getByRole('button', { name: 'Add stop' }),
         customInput,
         within(inDialog.getByRole('group', { name: /Saturation and brightness/ })).getByRole('slider'),
         within(inDialog.getByRole('group', { name: 'Hue' })).getByRole('slider'),
@@ -504,6 +566,94 @@ describe('PaletteColorPicker', () => {
       expect(onSelectPaletteEntry).not.toHaveBeenCalled();
       expect(onSelectCustomColor).not.toHaveBeenCalled();
       expect(onSelectAuto).not.toHaveBeenCalled();
+    });
+
+    describe('a gradient', () => {
+      const kept = hex('#123456');
+      const keptGradient = Gradient.fromStops([kept, hex('#abcdef')])!;
+
+      it('Tab walks the stops, Add stop and Remove stop between the palette and the hex input of the stop being edited', async () => {
+        const { user, dialog, onSelectPaletteEntry, onSelectCustomColor, onSelectAuto } = await openPickerWith({
+          paletteId: defaultEntryId,
+          custom: keptGradient,
+        });
+        const inDialog = within(dialog);
+        const auto = inDialog.getByRole('button', { name: 'Auto Match contrast' });
+        const stops = [
+          auto,
+          ...twoEntries.map((entry) => inDialog.getByRole('button', { name: entry.name })),
+          inDialog.getByRole('button', { name: 'Stop 1' }),
+          inDialog.getByRole('button', { name: 'Stop 2' }),
+          inDialog.getByRole('button', { name: 'Add stop' }),
+          inDialog.getByRole('button', { name: 'Remove stop' }),
+          inDialog.getByLabelText('Custom color, stop 1'),
+          within(inDialog.getByRole('group', { name: /Saturation and brightness/ })).getByRole('slider'),
+          within(inDialog.getByRole('group', { name: 'Hue' })).getByRole('slider'),
+          auto,
+        ];
+
+        for (const stop of stops) {
+          await user.tab();
+          expect(document.activeElement).toBe(stop);
+        }
+
+        expect(onSelectPaletteEntry).not.toHaveBeenCalled();
+        expect(onSelectCustomColor).not.toHaveBeenCalled();
+        expect(onSelectAuto).not.toHaveBeenCalled();
+      });
+
+      it('a press on a stop while a palette entry is in use re-selects the kept gradient unchanged, once', async () => {
+        const { user, dialog, onSelectPaletteEntry, onSelectCustomColor, onSelectAuto } = await openPickerWith({
+          paletteId: defaultEntryId,
+          custom: keptGradient,
+        });
+
+        await user.click(within(dialog).getByRole('button', { name: 'Stop 2' }));
+
+        expect(onSelectCustomColor).toHaveBeenCalledTimes(1);
+        expect(onSelectCustomColor.mock.calls[0]![0]).toBe(keptGradient);
+        expect(onSelectPaletteEntry).not.toHaveBeenCalled();
+        expect(onSelectAuto).not.toHaveBeenCalled();
+        expect(within(dialog).getByLabelText('Custom color, stop 2')).toBeTruthy();
+      });
+
+      it('Add stop while a palette entry is in use grows the kept custom colour, not the entry, in one call', async () => {
+        const { user, dialog, onSelectCustomColor } = await openPickerWith({ paletteId: defaultEntryId });
+
+        await user.click(within(dialog).getByRole('button', { name: 'Add stop' }));
+
+        expect(onSelectCustomColor).toHaveBeenCalledTimes(1);
+        expect(onSelectCustomColor.mock.calls[0]![0]).toEqual(Gradient.fromStops([kept, kept]));
+      });
+    });
+
+    describe('a reference the palette no longer honours', () => {
+      it.each([
+        [
+          'a gradient entry left out of the text picker',
+          { palette, paletteId: PaletteEntryId.recreate('sunset'), solidOnly: true, supportsAuto: true },
+        ],
+        ['an id no entry carries', { paletteId: PaletteEntryId.recreate('gone'), supportsAuto: false }],
+      ])('is dropped by a press on the custom control, which keeps the custom colour: %s', async (_case, props) => {
+        const { user, customInput, onSelectCustomColor, onSelectPaletteEntry } = await openPickerWith(props);
+        expect(customInput.parentElement!.classList.contains('ring-2')).toBe(true);
+
+        await user.click(customInput);
+
+        expect(customHexes(onSelectCustomColor)).toEqual(['#123456']);
+        expect(onSelectPaletteEntry).not.toHaveBeenCalled();
+      });
+
+      it('is kept while the palette is off: a press on the custom control selects nothing', async () => {
+        const { user, customInput, onSelectCustomColor } = await openPickerWith({
+          paletteEnabled: false,
+          paletteId: defaultEntryId,
+        });
+
+        await user.click(customInput);
+
+        expect(onSelectCustomColor).not.toHaveBeenCalled();
+      });
     });
 
     describe('the ring on the custom control', () => {

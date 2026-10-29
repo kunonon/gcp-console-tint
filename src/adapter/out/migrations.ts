@@ -18,6 +18,11 @@ export interface SchemaMigration {
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   // 0.3.0 adds the side panel theme; data from earlier releases starts on 'auto'.
   { to: '0.3.0', migrate: (data) => ({ ...data, theme: 'auto' }) },
+  // 0.5.0 lets palette entries and the bars' custom colors be gradients ({ stops: [...] }) in the
+  // slot that held the '#rrggbb' string; every earlier file is already valid in this shape, so the
+  // step only moves the stamp, which keeps a gradient-bearing file from being labelled older than
+  // the first release that can read it.
+  { to: '0.5.0', migrate: (data) => data },
 ];
 
 // The oldest schemaVersion the migration chain can read. Anything below (or missing, or
@@ -27,7 +32,7 @@ export const SCHEMA_MIN_VERSION = '0.1.0';
 
 // The version of the current schema shape. Must equal the last SCHEMA_MIGRATIONS entry's
 // `to` (asserted in tests). Bump it only in the release that introduces a new shape.
-export const CURRENT_SCHEMA_VERSION = '0.3.0';
+export const CURRENT_SCHEMA_VERSION = '0.5.0';
 
 // Applies every migration step newer than `fromVersion`, in order, so data recorded under
 // any past release folds forward step by step into the current shape. `steps` is

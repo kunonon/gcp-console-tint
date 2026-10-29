@@ -57,3 +57,19 @@ describe('contrastingTextColor', () => {
     expect(Color.WHITE.contrastingTextColor().equals(Color.BLACK)).toBe(true);
   });
 });
+
+describe('contrastRatio', () => {
+  it('spans 21 from black to white', () => {
+    expect(Color.BLACK.contrastRatio(Color.WHITE)).toBeCloseTo(21);
+  });
+
+  it('is symmetric', () => {
+    const orange = Color.fromHex('#ff6d00')!;
+    expect(orange.contrastRatio(Color.BLACK)).toBe(Color.BLACK.contrastRatio(orange));
+  });
+
+  it('is 1 against the same color', () => {
+    const orange = Color.fromHex('#ff6d00')!;
+    expect(orange.contrastRatio(orange)).toBe(1);
+  });
+});

@@ -112,15 +112,42 @@ body {
 }
 
 /* A picked colour is one object everywhere, in both themes: a round bead (`.color-chip`, 20px in
-   the triggers and the hex control, 28px for the palette options in the popovers). The bead's
-   rim is the fill pulled a quarter of the way to the text colour: a translucent --foreground
-   border over the edge of the fill, which extends under it, so the inside of the bead stays the
-   true colour. No box-shadow here: the selected bead's `ring-2` is a box-shadow.
+   the triggers and the hex control, 28px for the palette options in the popovers, 16px and 20px
+   for a gradient's stops). The bead's rim is the fill pulled a quarter of the way to the text
+   colour: a translucent --foreground border over the edge of the fill, which extends under it,
+   so the inside of the bead stays the true colour. No box-shadow here: the selected bead's
+   `ring-2` is a box-shadow.
    The fill is the data, so forced colours (a Windows contrast theme) must not repaint it: the
-   bead keeps its colours there, and with them the selection ring and the focus outline. */
+   bead keeps its colours there, and with them the selection ring and the focus outline.
+   A gradient bead's image is laid over the border box: from the default padding box it would
+   tile under the rim, which would then show the last stop on the left and the first on the
+   right. Solid beads look the same either way. */
 .color-chip {
   border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
   forced-color-adjust: none;
+  background-origin: border-box;
+}
+
+/* The gradient preview strip in the stop editor: the same rim and the same forced-colours
+   opt-out as the beads (a Windows contrast theme would otherwise drop the gradient image), and
+   the image laid over the border box so the rim shows the fill under it, not a wrapped tile. */
+.fill-strip {
+  border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+  forced-color-adjust: none;
+  background-origin: border-box;
+}
+
+/* Each stop bead sits on the strip over its own colour, so its rim alone dissolves into the
+   gradient. A halo of the popover surface (--overlay) cuts it out of the strip on any stop colour
+   in both themes, and the stop being edited wears a wider one on top of its larger size. Not the
+   accent ring: that stays the panel's one "in use" mark (see FillEditor). `:where` keeps the halo
+   at the bead's own specificity, so the later `.color-chip` rules (transitions only) are not
+   flagged as descending. */
+:where(.fill-strip) .color-chip {
+  box-shadow: 0 0 0 1px var(--overlay);
+}
+.fill-strip button[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--overlay);
 }
 
 /* The accent ring is this panel's selection mark on beads, so keyboard focus on a bead that can

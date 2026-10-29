@@ -40,6 +40,19 @@ describe('colour picker rules of style.css', () => {
     expect(/\.color-chip \{[^}]*forced-color-adjust: none;/.test(style)).toBe(true);
   });
 
+  it("lays a gradient bead's and the stop strip's image over the border box, and keeps the strip's fill under forced colours", () => {
+    expect(/\.color-chip \{[^}]*background-origin: border-box;/.test(style)).toBe(true);
+    const strip = /\.fill-strip \{([^}]*)\}/.exec(style)?.[1];
+    expect(strip, `${STYLE} must keep the rule of the gradient stops strip`).toBeDefined();
+    expect(strip).toContain('forced-color-adjust: none;');
+    expect(strip).toContain('background-origin: border-box;');
+  });
+
+  it('cuts the stop beads out of the strip with a halo of the popover surface, wider on the stop being edited', () => {
+    expect(style).toContain(':where(.fill-strip) .color-chip { box-shadow: 0 0 0 1px var(--overlay); }');
+    expect(style).toContain('.fill-strip button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--overlay); }');
+  });
+
   it('marks the choice in use under forced colours, ahead of the focus rule so that focus shows on it', () => {
     const selected =
       '@media (forced-colors: active) { button.outlined-control[aria-pressed="true"], .hex-control.ring-2 { ' +

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Color } from '../color';
 import { ColorSelection } from '../color-selection';
+import { type Fill, Gradient } from '../gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from '../palette';
 import { ProjectRule, ProjectRuleId } from '../project-rule';
 import { ProjectSettings } from '../project-settings';
@@ -66,6 +67,29 @@ describe('ColorSelection.equals', () => {
     const b = new ColorSelection(undefined, color('#111111'));
     expect(a.equals(b)).toBe(false);
     expect(b.equals(a)).toBe(false);
+  });
+});
+
+describe('ColorSelection.equals with gradients', () => {
+  const gradient = (...values: string[]): Gradient => Gradient.fromStops(values.map(color))!;
+
+  it('is false between a solid and a gradient custom', () => {
+    const solid = new ColorSelection<Fill>(undefined, color('#111111'));
+    const graded = new ColorSelection<Fill>(undefined, gradient('#111111', '#111111'));
+    expect(solid.equals(graded)).toBe(false);
+    expect(graded.equals(solid)).toBe(false);
+  });
+
+  it('is true for separately constructed, equal gradients', () => {
+    const a = new ColorSelection(undefined, gradient('#111111', '#222222'));
+    const b = new ColorSelection(undefined, gradient('#111111', '#222222'));
+    expect(a.equals(b)).toBe(true);
+  });
+
+  it('is false for gradients with different stops', () => {
+    const a = new ColorSelection(undefined, gradient('#111111', '#222222'));
+    const b = new ColorSelection(undefined, gradient('#111111', '#333333'));
+    expect(a.equals(b)).toBe(false);
   });
 });
 
