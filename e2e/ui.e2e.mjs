@@ -306,6 +306,33 @@ async function reorderPath(browser, from, target) {
 
 const centerOf = (box) => ({ x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 });
 
+// Moves the mouse onto the middle of `element` without pressing it, as a WebDriver pointer action,
+// so the page sees a real hover there.
+async function pointTo(browser, element) {
+  await element.scrollIntoView({ block: 'center' });
+  const { x, y } = centerOf(
+    await browser.execute((target) => {
+      const { left, right, top, bottom } = target.getBoundingClientRect();
+      return { left, right, top, bottom };
+    }, element),
+  );
+  await browser.performActions([
+    {
+      type: 'pointer',
+      id: 'e2e-mouse',
+      parameters: { pointerType: 'mouse' },
+      actions: [{ type: 'pointerMove', duration: 0, x: Math.round(x), y: Math.round(y) }],
+    },
+  ]);
+}
+
+// The computed opacity of each rule row's selection checkbox, in row order.
+async function ruleSelectOpacities(browser) {
+  return browser.execute(() =>
+    [...document.querySelectorAll('[data-rule-row] .rule-select')].map((element) => getComputedStyle(element).opacity),
+  );
+}
+
 // 'rgb(r, g, b)' as a computed style gives it, to the '#rrggbb' storage holds.
 function rgbToHex(rgb) {
   const channels = rgb.match(/\d+/g)?.slice(0, 3) ?? [];
@@ -677,7 +704,7 @@ for (const browserName of browserTargets()) {
       await panel(h);
       const first = await rowAt(browser, 0);
       const third = await rowAt(browser, 2);
-      await dragThrough(browser, await reorderPath(browser, await first.$('span[aria-hidden="true"]'), third));
+      await dragThrough(browser, await reorderPath(browser, await first.$('[data-reorder-grip]'), third));
       const reordered = await waitStored(h, (value) => value.projectRules?.[0]?.matchType === 'prefix');
       assert.deepEqual(
         reordered.projectRules.map((item) => item.pattern),
@@ -702,6 +729,153 @@ for (const browserName of browserTargets()) {
         interval: 100,
         timeoutMsg: 'reordered priority did not select the new first matching rule',
       });
+    });
+
+    test('selects rules from checkboxes that show on hover, drags the selection as one block, and deletes it in one confirmation', async () => {
+      await h.seedSettings(settings(rule('a', 'alpha'), rule('b', 'beta'), rule('c', 'gamma'), rule('d', 'delta')));
+      const browser = await panel(h);
+      await rowAt(browser, 3);
+
+      // Nothing selected: a row's checkbox is transparent until the pointer is over that row (it
+      // stays in the layout and the Tab order either way).
+      await pointTo(browser, await rowAt(browser, 1));
+      let opacities;
+      await browser.waitUntil(
+        async () => {
+          opacities = await ruleSelectOpacities(browser);
+          return opacities[1] === '1' && opacities[3] === '0';
+        },
+        { timeout: 5000, interval: 50, timeoutMsg: 'the hovered row did not reveal only its own checkbox' },
+      );
+      assert.equal(opacities.length, 4);
+      // Once shown, it moves with the pointer instead of fading: on the next row it is fully shown
+      // at the first read, and gone from the row it left.
+      await pointTo(browser, await rowAt(browser, 3));
+      opacities = await ruleSelectOpacities(browser);
+      assert.equal(opacities[3], '1', 'the checkbox faded in on the next row instead of moving there');
+      assert.equal(opacities[1], '0', 'the checkbox faded out of the row it left instead of moving away');
+      // The checkboxes' column counts as the list, gaps included: in the gap above the last row,
+      // left of the rows, the pointer has not left the list, so the checkbox stays where it is.
+      const gap = await browser.execute(() => {
+        const rows = document.querySelectorAll('[data-rule-row]');
+        const box = rows[3].querySelector('.rule-select').getBoundingClientRect();
+        return {
+          x: Math.round(box.left + box.width / 2),
+          y: Math.round((rows[2].getBoundingClientRect().bottom + rows[3].getBoundingClientRect().top) / 2),
+        };
+      });
+      await browser.performActions([
+        {
+          type: 'pointer',
+          id: 'e2e-mouse',
+          parameters: { pointerType: 'mouse' },
+          actions: [{ type: 'pointerMove', duration: 0, x: gap.x, y: gap.y }],
+        },
+      ]);
+      assert.deepEqual(
+        await browser.execute(() =>
+          [...document.querySelectorAll('[data-rule-row]')].map((row) => row.hasAttribute('data-select-hint')),
+        ),
+        [false, false, false, true],
+        'the pointer in the gap of the checkboxes column left the list',
+      );
+
+      for (const index of [0, 2]) {
+        const row = await rowAt(browser, index);
+        await pointTo(browser, row);
+        await browser.waitUntil(async () => (await ruleSelectOpacities(browser))[index] === '1', {
+          timeout: 5000,
+          interval: 50,
+          timeoutMsg: `row ${index}'s checkbox did not show under the pointer`,
+        });
+        await (await row.$('.rule-select label')).click();
+        // The first selection brings every row's checkbox inside the card, and the rows' content
+        // slides right to make room: the next row is measured once that is over.
+        await motionIdle(browser);
+      }
+      await browser.$('//div[@data-select-row]/div[normalize-space(.)="2 selected"]').waitForDisplayed();
+      // A selection keeps every row's checkbox shown, hovered or not, inside the card: in line
+      // with the header's select-all checkbox, and the grip moved right to make room.
+      await browser.waitUntil(async () => (await ruleSelectOpacities(browser)).every((opacity) => opacity === '1'), {
+        timeout: 5000,
+        interval: 50,
+        timeoutMsg: 'a selection did not show every row checkbox',
+      });
+      const placement = await browser.execute(() => {
+        const card = document.querySelector('[data-rule-row]').closest('.card').getBoundingClientRect();
+        const all = document.querySelector('input[aria-label="Select all rules"]').closest('.checkbox__content');
+        const header = all.querySelector('.checkbox__control').getBoundingClientRect();
+        return [...document.querySelectorAll('[data-rule-row]')].map((row) => {
+          const control = row.querySelector('.rule-select .checkbox__control').getBoundingClientRect();
+          return {
+            inside: control.left >= card.left,
+            inLine: Math.abs(control.left - header.left) < 0.5,
+            beforeGrip: control.right < row.querySelector('[data-reorder-grip]').getBoundingClientRect().left,
+          };
+        });
+      });
+      assert.ok(
+        placement.every(({ inside, inLine, beforeGrip }) => inside && inLine && beforeGrip),
+        `every row's checkbox should sit inside the card, in line with select-all and before the grip: ${JSON.stringify(placement)}`,
+      );
+
+      // Grabbing a selected row drags the whole selection: alpha and gamma land together after delta.
+      const first = await rowAt(browser, 0);
+      const last = await rowAt(browser, 3);
+      await dragThrough(browser, await reorderPath(browser, await first.$('[data-reorder-grip]'), last));
+      const moved = await waitStored(h, (value) => value.projectRules?.[0]?.pattern === 'beta');
+      assert.deepEqual(
+        moved.projectRules.map((item) => item.pattern),
+        ['beta', 'delta', 'alpha', 'gamma'],
+      );
+
+      // The confirmation lists every selected rule on its own row; Cancel keeps them.
+      await click(browser, 'button[aria-label="Delete selected"]');
+      let confirmation = await dialog(browser);
+      assert.deepEqual(
+        await browser.execute(() =>
+          [...document.querySelectorAll('[role="dialog"] ul[aria-label="Rules to delete"] li')].map(
+            (item) => item.textContent,
+          ),
+        ),
+        ['alphaexact', 'gammaexact'],
+      );
+      await confirmation.$('button=Cancel').click();
+      await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
+      assert.equal((await stored(h)).projectRules.length, 4);
+
+      await click(browser, 'button[aria-label="Delete selected"]');
+      confirmation = await dialog(browser);
+      await confirmation.$('button=Delete 2 rules').click();
+      const remaining = await waitStored(h, (value) => value.projectRules?.length === 2);
+      assert.deepEqual(
+        remaining.projectRules.map((item) => item.pattern),
+        ['beta', 'delta'],
+      );
+      await motionIdle(browser);
+      assert.deepEqual(
+        await browser.execute(() => ({
+          rows: document.querySelectorAll('[data-rule-row]').length,
+          selecting: document.querySelectorAll('[data-selecting]').length,
+        })),
+        { rows: 2, selecting: 0 },
+        'the deleted selection should have left the list, with nothing selected',
+      );
+
+      // Duplicate selected copies each selected rule right after its original, in one change.
+      for (const index of [0, 1]) {
+        const row = await rowAt(browser, index);
+        await pointTo(browser, row);
+        await (await row.$('.rule-select label')).click();
+        await motionIdle(browser);
+      }
+      await click(browser, 'button[aria-label="Duplicate selected"]');
+      const duplicated = await waitStored(h, (value) => value.projectRules?.length === 4);
+      assert.deepEqual(
+        duplicated.projectRules.map((item) => item.pattern),
+        ['beta', 'beta', 'delta', 'delta'],
+      );
+      assert.equal(new Set(duplicated.projectRules.map((item) => item.id)).size, 4);
     });
 
     test('edits a rule-scoped palette, surface colors, auto text, stripes, and bounded height', async () => {
