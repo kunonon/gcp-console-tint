@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Input, Switch, Tabs, Tooltip } from '@heroui/react';
+import { Alert, Button, Card, Checkbox, Input, Switch, Tabs, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
 import type { Color } from '../../../../domain/color';
 import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
@@ -7,6 +7,7 @@ import { ProjectSettings } from '../../../../domain/project-settings';
 import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useRowReorder } from '../../hooks/useRowReorder';
+import { useSelectHint } from '../../hooks/useSelectHint';
 import { useTheme } from '../../hooks/useTheme';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
@@ -142,6 +143,13 @@ function ArrowLeftIcon() {
   );
 }
 
+// Moves focus once React has committed the update in hand, for a control that update removes:
+// left alone, focus would fall back to <body>. Requested in the event handler, the frame runs
+// before react-aria's own focus restore, which then finds focus already placed and leaves it.
+function focusAfterCommit(selector: string) {
+  requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus());
+}
+
 // Wraps an icon-only Button in a HeroUI Tooltip that shows `label` on hover. Tooltip.Trigger
 // always renders a focusable wrapper element (via react-aria's useFocusable) around its
 // child, since it also needs to support non-interactive children; our children are always
@@ -172,10 +180,21 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // notice raised since it mounted from one that was already showing.
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeIdRef = useRef(0);
+  // The rule list's selection, as rule id strings. Only rules still in the list count (see
+  // `selectedRules` below), so a deleted rule's id left in here is harmless and never resurfaces:
+  // ids are never reused.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   // Rows are dragged by their grip only; the hook moves them on screen and hands the drop here.
+  // Grabbing a selected row drags the whole selection.
   const reorder = useRowReorder({
     keys: settings.projectRules.map((rule) => rule.id.toString()),
-    onMove: (from, to) => save(settings.moveRule(from, to)),
+    selected,
+    onMove: (from, to) => save(settings.moveRules(from, to)),
+  });
+  // With nothing selected, the row under the pointer shows its checkbox, which then moves from row
+  // to row with the pointer.
+  const selectHint = useSelectHint({
+    sliding: !settings.projectRules.some((rule) => selected.has(rule.id.toString())),
   });
 
   // Defensive: if the rule currently open in detail view disappears (there is no UI path to
@@ -253,6 +272,39 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   // this handler is only ever invoked from that popover's confirm action.
   const handleDeleteRule = (id: ProjectRuleId) => {
     save(settings.removeRule(id));
+  };
+
+  const selectedRules = settings.projectRules.filter((rule) => selected.has(rule.id.toString()));
+
+  const handleSelectRule = (id: ProjectRuleId, isSelected: boolean) => {
+    const next = new Set(selected);
+    if (isSelected) next.add(id.toString());
+    else next.delete(id.toString());
+    setSelected(next);
+  };
+
+  // The header's checkbox: react-aria turns a press on a partial selection (or on none) into
+  // `true`, so it selects every rule from there and clears the selection only from all.
+  const handleSelectAll = (isSelected: boolean) => {
+    setSelected(new Set(isSelected ? settings.projectRules.map((rule) => rule.id.toString()) : []));
+  };
+
+  // One save for the whole selection; the selection then moves to the copies, so they can be
+  // dragged or deleted next.
+  const handleDuplicateSelected = () => {
+    const next = settings.duplicateRules(selectedRules.map((rule) => rule.id));
+    const before = new Set(settings.projectRules.map((rule) => rule.id.toString()));
+    save(next);
+    setSelected(new Set(next.projectRules.map((rule) => rule.id.toString()).filter((id) => !before.has(id))));
+  };
+
+  // Confirm-gated like the per-row Delete: one save for the whole selection, which then empties.
+  // The emptied selection takes the bulk Delete button away, so the popover has no trigger to
+  // return focus to: it goes to Add rule, which stays in the same header.
+  const handleDeleteSelected = () => {
+    save(settings.removeRules(selectedRules.map((rule) => rule.id)));
+    setSelected(new Set());
+    focusAfterCommit('button[aria-label="Add rule"]');
   };
 
   const handleAddColor = () => {
@@ -389,7 +441,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                         />
                         <DeleteConfirmPopover
                           question="Remove this color?"
-                          target={entry.name || '(unnamed)'}
+                          items={[
+                            { id: entry.id.toString(), text: entry.name || '(unnamed)', swatch: entry.color.toHex() },
+                          ]}
+                          itemsLabel="Color to remove"
+                          monospace={false}
                           confirmLabel="Remove"
                           tooltipLabel="Remove color"
                           onConfirm={() => handleRemoveColor(entry.id)}
@@ -658,9 +714,70 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
         <div className="tab-panels">
           <Tabs.Panel id="rules" className="tab-panel-start mt-0 p-0">
             <Card>
-              <Card.Content className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">Projects</div>
+              {/* `data-selecting` makes room for every checkbox inside the card, header and rows
+                  alike, and keeps them shown while anything is selected (style.css,
+                  `.rule-select`). */}
+              <Card.Content data-selecting={selectedRules.length > 0 ? '' : undefined} className="flex flex-col gap-2">
+                {/* With rules selected, the title gives way to the count, and the bulk Duplicate and
+                    Delete stand right after it, acting on what it counts, in the rows' order; Add rule
+                    stays on the right. The select-all checkbox is there whenever there are rules,
+                    placed and shown like a row's (same hit area): it fades in as the first rule is
+                    selected, while the title slides right to make room for it, in line with the
+                    rows' checkboxes. */}
+                <div data-select-row className="relative flex items-center justify-between gap-2">
+                  {settings.projectRules.length > 0 && (
+                    <Checkbox
+                      aria-label="Select all rules"
+                      isSelected={selectedRules.length > 0 && selectedRules.length === settings.projectRules.length}
+                      isIndeterminate={selectedRules.length > 0 && selectedRules.length < settings.projectRules.length}
+                      onChange={handleSelectAll}
+                      className="rule-select absolute inset-y-0 justify-center"
+                    >
+                      <Checkbox.Content className="-mx-1 -my-2.5 px-1 py-2.5">
+                        <Checkbox.Control>
+                          <Checkbox.Indicator />
+                        </Checkbox.Control>
+                      </Checkbox.Content>
+                    </Checkbox>
+                  )}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="text-sm font-medium">
+                      {selectedRules.length === 0 ? 'Projects' : `${selectedRules.length} selected`}
+                    </div>
+                    {selectedRules.length > 0 && (
+                      <IconButtonTooltip label="Duplicate selected">
+                        <Button
+                          isIconOnly
+                          variant="outline"
+                          aria-label="Duplicate selected"
+                          className="shrink-0"
+                          onPress={handleDuplicateSelected}
+                        >
+                          <DuplicateIcon />
+                        </Button>
+                      </IconButtonTooltip>
+                    )}
+                    {selectedRules.length > 0 && (
+                      <DeleteConfirmPopover
+                        question={
+                          selectedRules.length === 1 ? 'Delete this rule?' : `Delete ${selectedRules.length} rules?`
+                        }
+                        items={selectedRules.map((rule) => ({
+                          id: rule.id.toString(),
+                          text: rule.pattern,
+                          detail: rule.matchType,
+                        }))}
+                        itemsLabel={selectedRules.length === 1 ? 'Rule to delete' : 'Rules to delete'}
+                        confirmLabel={selectedRules.length === 1 ? 'Delete' : `Delete ${selectedRules.length} rules`}
+                        tooltipLabel="Delete selected"
+                        onConfirm={handleDeleteSelected}
+                      >
+                        <Button isIconOnly variant="outline" aria-label="Delete selected" className="shrink-0">
+                          <TrashIcon />
+                        </Button>
+                      </DeleteConfirmPopover>
+                    )}
+                  </div>
                   <AddRuleModal onAdd={handleAddRule}>
                     <Button isIconOnly variant="outline" aria-label="Add rule" className="shrink-0">
                       <PlusIcon />
@@ -673,25 +790,58 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     single rows. */}
                 <Presence>
                   {settings.projectRules.length > 0 && (
-                    <div key="rules" ref={reorder.listRef} className="flex flex-col gap-2 border-t border-border pt-2">
+                    <div
+                      key="rules"
+                      ref={reorder.listRef}
+                      data-select-list
+                      className="relative flex flex-col gap-2 border-t border-border pt-2"
+                      {...selectHint.listProps}
+                    >
                       <Presence>
                         {settings.projectRules.map((rule, index) => (
                           <div
                             key={rule.id.toString()}
                             ref={reorder.rowRef(rule.id.toString())}
                             data-rule-row
-                            className="flex min-h-8 items-center gap-2"
+                            data-select-row
+                            className="relative flex min-h-8 items-center gap-2"
+                            {...selectHint.rowProps}
                           >
-                            {/* Pointer only: a keyboard and screen reader way to reorder is not built
-                                yet. The hit area is 24x36 while the layout keeps the icon's 16px:
-                                the padding is taken back by an equal negative margin. */}
+                            {/* Pointer only: the checkbox after it is the row's first keyboard
+                                control, but a keyboard and screen reader way to reorder is not
+                                built yet. The hit area is 24x36 while the layout keeps the icon's
+                                16px: the padding is taken back by an equal negative margin. */}
                             <span
                               aria-hidden="true"
+                              data-reorder-grip
                               className="-mx-1 -my-2.5 flex shrink-0 cursor-grab touch-none px-1 py-2.5 text-muted hover:text-foreground"
                               {...reorder.gripProps(index)}
                             >
                               <GripIcon />
                             </span>
+                            {/* Selection is by this checkbox only, not by the row's text. The name
+                                is fixed and never changes with selection, as in the import modal:
+                                rows can share a pattern (or have an empty one), so the row number
+                                and match type keep every name unique and non-empty. No visible
+                                label, so the pattern stays the row's only text. It sits out of
+                                the flow: with nothing selected, left of the grip and half over the
+                                card's edge, shown only on hover or focus; with a selection, inside
+                                the row, which makes room for it (style.css, `.rule-select`). The
+                                pressable part is Checkbox.Content, HeroUI's <label> inside the
+                                root: its hit area is 24x36 while the control stays 16px, and it
+                                meets the grip's, 8px away, without overlapping it. */}
+                            <Checkbox
+                              aria-label={`Rule row ${index + 1}, ${rule.matchType}, ${rule.pattern === '' ? '(empty pattern)' : rule.pattern}`}
+                              isSelected={selected.has(rule.id.toString())}
+                              onChange={(isSelected) => handleSelectRule(rule.id, isSelected)}
+                              className="rule-select absolute inset-y-0 justify-center"
+                            >
+                              <Checkbox.Content className="-mx-1 -my-2.5 px-1 py-2.5">
+                                <Checkbox.Control>
+                                  <Checkbox.Indicator />
+                                </Checkbox.Control>
+                              </Checkbox.Content>
+                            </Checkbox>
                             <span className="min-w-0 flex-1 truncate font-mono text-sm">{rule.pattern}</span>
                             <span className="shrink-0 text-xs text-muted">{rule.matchType}</span>
                             <IconButtonTooltip label="Edit">
@@ -720,7 +870,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                             </IconButtonTooltip>
                             <DeleteConfirmPopover
                               question="Delete this rule?"
-                              target={rule.pattern}
+                              items={[{ id: rule.id.toString(), text: rule.pattern, detail: rule.matchType }]}
+                              itemsLabel="Rule to delete"
                               confirmLabel="Delete"
                               tooltipLabel="Delete"
                               onConfirm={() => handleDeleteRule(rule.id)}

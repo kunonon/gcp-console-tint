@@ -101,7 +101,9 @@ describe('TintSettings theme', () => {
     ['addRule', (settings) => settings.addRule(rule('3', 'added'))],
     ['removeRule', (settings) => settings.removeRule(ProjectRuleId.recreate('1'))],
     ['duplicateRule', (settings) => settings.duplicateRule(ProjectRuleId.recreate('1'))],
-    ['moveRule', (settings) => settings.moveRule(0, 1)],
+    ['duplicateRules', (settings) => settings.duplicateRules([ProjectRuleId.recreate('1')])],
+    ['removeRules', (settings) => settings.removeRules([ProjectRuleId.recreate('1')])],
+    ['moveRules', (settings) => settings.moveRules([0], 1)],
     ['updateRule', (settings) => settings.updateRule(ProjectRuleId.recreate('1'), (r) => r.changePattern('x'))],
     ['mergeRules', (settings) => settings.mergeRules([rule('3', 'merged')])],
   ])('%s keeps the theme', (_label, change) => {
@@ -111,6 +113,100 @@ describe('TintSettings theme', () => {
 
     expect(changed).not.toBe(original);
     expect(changed.theme).toBe('dark');
+  });
+});
+
+describe('TintSettings.moveRules', () => {
+  const rule = (id: string): ProjectRule => ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', id, DEFAULTS);
+  const ids = (settings: TintSettings) => settings.projectRules.map((r) => r.id.toString());
+  const original = new TintSettings(['a', 'b', 'c', 'd', 'e'].map(rule), 'dark');
+
+  it.each([
+    { name: 'moves a single rule down', from: [0], to: 2, expected: ['b', 'c', 'a', 'd', 'e'] },
+    { name: 'moves a single rule up', from: [3], to: 1, expected: ['a', 'd', 'b', 'c', 'e'] },
+    {
+      name: 'gathers non-contiguous rules into one block',
+      from: [0, 2, 4],
+      to: 1,
+      expected: ['b', 'a', 'c', 'e', 'd'],
+    },
+    {
+      name: 'keeps list order whatever order the indices come in',
+      from: [4, 1],
+      to: 0,
+      expected: ['b', 'e', 'a', 'c', 'd'],
+    },
+    { name: 'moves a block to the start', from: [2, 3], to: 0, expected: ['c', 'd', 'a', 'b', 'e'] },
+    { name: 'moves a block to the end', from: [0, 1], to: 3, expected: ['c', 'd', 'e', 'a', 'b'] },
+    { name: 'ignores indices outside the list', from: [-1, 1, 5, 9], to: 4, expected: ['a', 'c', 'd', 'e', 'b'] },
+  ])('$name', ({ from, to, expected }) => {
+    const moved = original.moveRules(from, to);
+
+    expect(ids(moved)).toEqual(expected);
+    expect(moved.theme).toBe('dark');
+    expect(ids(original)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it.each([
+    { name: 'no indices', from: [] },
+    { name: 'only indices outside the list', from: [-1, 5] },
+  ])('returns the same instance with $name', ({ from }) => {
+    expect(original.moveRules(from, 0)).toBe(original);
+  });
+});
+
+describe('TintSettings.duplicateRules', () => {
+  const rule = (id: string): ProjectRule => ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', id, DEFAULTS);
+  const patterns = (settings: TintSettings) => settings.projectRules.map((r) => r.pattern);
+  const original = new TintSettings(['a', 'b', 'c', 'd'].map(rule), 'dark');
+
+  it('puts a copy of every listed rule right after its original, in one change', () => {
+    const duplicated = original.duplicateRules([ProjectRuleId.recreate('c'), ProjectRuleId.recreate('a')]);
+
+    expect(patterns(duplicated)).toEqual(['a', 'a', 'b', 'c', 'c', 'd']);
+    expect(patterns(original)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('gives each copy a new id and keeps the originals as they are', () => {
+    const duplicated = original.duplicateRules([ProjectRuleId.recreate('b')]);
+    const [, b, copy] = duplicated.projectRules;
+
+    expect(b).toBe(original.projectRules[1]);
+    expect(copy?.id.equals(ProjectRuleId.recreate('b'))).toBe(false);
+    expect(copy?.matchType).toBe('exact');
+    expect(new Set(duplicated.projectRules.map((r) => r.id.toString())).size).toBe(5);
+  });
+
+  it('ignores ids that match no rule, and returns the same instance when none match', () => {
+    expect(patterns(original.duplicateRules([ProjectRuleId.recreate('x'), ProjectRuleId.recreate('d')]))).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'd',
+    ]);
+    expect(original.duplicateRules([ProjectRuleId.recreate('x')])).toBe(original);
+    expect(original.duplicateRules([])).toBe(original);
+  });
+});
+
+describe('TintSettings.removeRules', () => {
+  const rule = (id: string): ProjectRule => ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', id, DEFAULTS);
+  const ids = (settings: TintSettings) => settings.projectRules.map((r) => r.id.toString());
+  const original = new TintSettings(['a', 'b', 'c', 'd'].map(rule), 'dark');
+
+  it('removes every listed rule in one change, keeping the others in order', () => {
+    const removed = original.removeRules([ProjectRuleId.recreate('c'), ProjectRuleId.recreate('a')]);
+
+    expect(ids(removed)).toEqual(['b', 'd']);
+    expect(ids(original)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('ignores ids that match no rule', () => {
+    const removed = original.removeRules([ProjectRuleId.recreate('x'), ProjectRuleId.recreate('b')]);
+
+    expect(ids(removed)).toEqual(['a', 'c', 'd']);
+    expect(original.removeRules([ProjectRuleId.recreate('x')]).equals(original)).toBe(true);
   });
 });
 
