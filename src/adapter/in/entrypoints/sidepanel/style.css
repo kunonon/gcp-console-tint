@@ -766,7 +766,10 @@ html.theme-transitions {
 /* Rule selection (App.tsx). The header's select-all checkbox and every row's checkbox
    (`.rule-select`, in a `data-select-row`) are placed and shown the same way.
    With nothing selected a checkbox stays out of sight until it is wanted: a row's under the
-   pointer, any of them with keyboard focus in its row. It shows outside the row, left of it, as
+   pointer, any of them with keyboard focus in its row. The pointer's is one checkbox that fades in
+   on the first row it reaches and then moves with it from row to row (useSelectHint marks the row
+   `data-select-hint`, and `data-select-hint-moving` switches the opacities at once for a move),
+   until the pointer leaves the list. It shows outside the row, left of it, as
    far from the grip's box as the grip is from the pattern, half over the card's edge: no column
    is kept for it, so the rows keep even edges and nothing in them moves as it shows.
    Once anything is selected (`data-selecting` on the card's content) every checkbox fades in and
@@ -779,7 +782,7 @@ html.theme-transitions {
    checkbox just cleared by the mouse would stay shown while the pointer is away.
    Hidden, a checkbox only turns transparent, never invisible or undisplayed, so it stays in the
    Tab order and in the accessibility tree, and it still answers the pointer: lying outside the
-   row's box, it is what makes a pointer coming in from the card's edge hover the row and so reveal
+   row's box, it is what makes a pointer coming in from the card's edge reach the row and so reveal
    it. Without hover (touch) there is no way to reveal a row's, so those always show. The fade is
    an opacity change, which the reduced-motion blocks leave alone; the slides are movement, so
    reduced motion makes them at once (the last block of this file). */
@@ -793,9 +796,12 @@ html.theme-transitions {
     opacity var(--motion-fade-in) var(--ease-smooth),
     left var(--motion-enter) var(--ease-out-fluid);
 }
-[data-rule-row]:hover .rule-select,
+[data-rule-row][data-select-hint] .rule-select,
 [data-select-row]:has([data-focus-visible="true"]) .rule-select {
   opacity: 1;
+}
+[data-rule-row][data-select-hint-moving] .rule-select {
+  transition: none;
 }
 [data-reordering] [data-rule-row] .rule-select,
 [data-settling] [data-rule-row] .rule-select {

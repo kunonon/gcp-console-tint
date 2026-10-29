@@ -748,6 +748,12 @@ for (const browserName of browserTargets()) {
         { timeout: 5000, interval: 50, timeoutMsg: 'the hovered row did not reveal only its own checkbox' },
       );
       assert.equal(opacities.length, 4);
+      // Once shown, it moves with the pointer instead of fading: on the next row it is fully shown
+      // at the first read, and gone from the row it left.
+      await pointTo(browser, await rowAt(browser, 3));
+      opacities = await ruleSelectOpacities(browser);
+      assert.equal(opacities[3], '1', 'the checkbox faded in on the next row instead of moving there');
+      assert.equal(opacities[1], '0', 'the checkbox faded out of the row it left instead of moving away');
 
       for (const index of [0, 2]) {
         const row = await rowAt(browser, index);

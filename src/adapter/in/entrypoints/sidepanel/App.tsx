@@ -7,6 +7,7 @@ import { ProjectSettings } from '../../../../domain/project-settings';
 import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
 import { useRowReorder } from '../../hooks/useRowReorder';
+import { useSelectHint } from '../../hooks/useSelectHint';
 import { useTheme } from '../../hooks/useTheme';
 import { useTintSettings } from '../../hooks/useTintSettings';
 import AddRuleModal from './components/AddRuleModal';
@@ -189,6 +190,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     keys: settings.projectRules.map((rule) => rule.id.toString()),
     selected,
     onMove: (from, to) => save(settings.moveRules(from, to)),
+  });
+  // With nothing selected, the row under the pointer shows its checkbox, which then moves from row
+  // to row with the pointer.
+  const selectHint = useSelectHint({
+    sliding: !settings.projectRules.some((rule) => selected.has(rule.id.toString())),
   });
 
   // Defensive: if the rule currently open in detail view disappears (there is no UI path to
@@ -752,7 +758,12 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     single rows. */}
                 <Presence>
                   {settings.projectRules.length > 0 && (
-                    <div key="rules" ref={reorder.listRef} className="flex flex-col gap-2 border-t border-border pt-2">
+                    <div
+                      key="rules"
+                      ref={reorder.listRef}
+                      className="flex flex-col gap-2 border-t border-border pt-2"
+                      {...selectHint.listProps}
+                    >
                       <Presence>
                         {settings.projectRules.map((rule, index) => (
                           <div
@@ -761,6 +772,7 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                             data-rule-row
                             data-select-row
                             className="relative flex min-h-8 items-center gap-2"
+                            {...selectHint.rowProps}
                           >
                             {/* Pointer only: the checkbox after it is the row's first keyboard
                                 control, but a keyboard and screen reader way to reorder is not

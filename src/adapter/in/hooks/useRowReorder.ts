@@ -56,7 +56,7 @@ const THRESHOLD = 3;
 const EDGE = 40;
 const MAX_SCROLL = 12;
 // style.css's `--ease-out-fluid` (HeroUI's token), for the gathering and landing animations.
-const EASE_OUT_FLUID = 'cubic-bezier(0.32, 0.72, 0, 1)';
+export const EASE_OUT_FLUID = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
 type Drag = {
   pointerId: number;
@@ -97,7 +97,7 @@ const docTop = (element: HTMLElement) => element.getBoundingClientRect().top + w
 
 // A custom property keeps its written token, and the build minifies 200ms to `.2s`. 0 (reduced
 // motion) or none (jsdom) comes out as no duration.
-const reorderDuration = (row: HTMLElement) => {
+export const reorderDuration = (row: HTMLElement) => {
   const token = getComputedStyle(row).getPropertyValue('--motion-reorder').trim();
   const duration = Number.parseFloat(token) * (token.endsWith('ms') ? 1 : 1000);
   return duration > 0 ? duration : 0;
