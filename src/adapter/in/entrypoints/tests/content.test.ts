@@ -87,14 +87,22 @@ const CURRENT_VERSION = '0.5.0';
 // Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
 // The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
 // when importing content.ts directly in tests), so we provide a minimal fake here: it simply
-// forwards to the target's native addEventListener, which is all our code relies on.
+// forwards to the target's native addEventListener, which is all our code relies on. The listeners
+// are removed after each test, as WXT's context does when a content script is invalidated, so an
+// earlier test's script does not react to a later test's location changes.
+const ctxListeners: (() => void)[] = [];
 function createFakeCtx() {
   return {
     addEventListener(target: EventTarget, type: string, listener: EventListenerOrEventListenerObject) {
       target.addEventListener(type, listener as EventListener);
+      ctxListeners.push(() => target.removeEventListener(type, listener as EventListener));
     },
   };
 }
+
+afterEach(() => {
+  for (const remove of ctxListeners.splice(0)) remove();
+});
 
 function runContentScript() {
   const ctx = createFakeCtx();
@@ -109,17 +117,25 @@ function getElements() {
   return { bar, styleEl };
 }
 
-// The fill's registered custom properties (fill-css.ts): seven gradient knots and the stripe pair.
-const STOPS = Array.from({ length: 7 }, (_, k) => `--gcp-console-tint-stop-${k}`);
+// The fill's registered custom properties (fill-css.ts): seven target knots (to), the knots the
+// fade starts from (from), the painted knots mixing the two (stop), and the stripe pair.
+const knotNames = (kind: string) => Array.from({ length: 7 }, (_, k) => `--gcp-console-tint-${kind}-${k}`);
+const TO = knotNames('to');
+const FROM = knotNames('from');
+const STOPS = knotNames('stop');
 const STRIPE_LIGHT = '--gcp-console-tint-stripe-light';
 const STRIPE_DARK = '--gcp-console-tint-stripe-dark';
-// The fixed image both bars paint: stripes over the 7-knot gradient, every color a property.
-const FILL_IMAGE = `repeating-linear-gradient(-45deg, var(${STRIPE_LIGHT}) 0 8px, var(${STRIPE_DARK}) 8px 16px), linear-gradient(to right, ${STOPS.map((name) => `var(${name})`).join(', ')})`;
+const FADE = '--gcp-console-tint-fade';
+// stop-k's mix from from-k to to-k by the fade, on the shorter hue arc unless knotMixes says otherwise.
+const stopMix = (k: number) =>
+  `color-mix(in oklch shorter hue, var(${FROM[k]}), var(${TO[k]}) calc(var(${FADE}, 1) * 100%))`;
+// The fixed image both bars paint: stripes over the 7-knot sRGB gradient, every color a property.
+const FILL_IMAGE = `repeating-linear-gradient(-45deg, var(${STRIPE_LIGHT}) 0 8px, var(${STRIPE_DARK}) 8px 16px), linear-gradient(in srgb to right, ${STOPS.map((name) => `var(${name})`).join(', ')})`;
 // background-color steps to the first knot after the knots' fade, so the color underneath stays
-// the previous one while they fade.
+// the previous one while they fade. The knots fade through FADE, so only the stripes transition.
 const COLOR_TRANSITIONS = [
   'background-color 0s linear 300ms',
-  ...[...STOPS, STRIPE_LIGHT, STRIPE_DARK].map((name) => `${name} 300ms ease`),
+  ...[STRIPE_LIGHT, STRIPE_DARK].map((name) => `${name} 300ms ease`),
 ].join(', ');
 
 // The top bar's inline stripe pair.
@@ -1196,17 +1212,129 @@ describe('content script', () => {
         expect(bar.style.transition).toBe('');
         expect(styleEl.textContent).not.toContain('transition');
         // The properties still carry the colors; only the fade is gone.
-        expect(bar.style.getPropertyValue(STOPS[0] ?? '')).toBe('#111111');
+        expect(bar.style.getPropertyValue(TO[0] ?? '')).toBe('#111111');
+      });
+
+      it('paints a switch at once even where animate() exists: from is the target, and nothing animates', async () => {
+        vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+        const animate = vi.fn();
+        HTMLElement.prototype.animate = animate;
+        try {
+          await switchFromOrangeToBlue();
+          const { bar } = getElements();
+          expect(animate).not.toHaveBeenCalled();
+          expect(FROM.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(7).fill('#1a73e8'));
+        } finally {
+          delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+        }
+      });
+    });
+
+    describe('where the browser can animate', () => {
+      afterEach(() => {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+        vi.restoreAllMocks();
+      });
+
+      // jsdom has no animate() and computes no color-mix(), so both are stubbed: the painted knots
+      // read back as an oklch() color, as a browser serializes a mixed knot. `painted.value` is what
+      // every knot reads back as.
+      function stubBrowser() {
+        const animate = vi.fn();
+        HTMLElement.prototype.animate = animate;
+        const painted = { value: 'oklch(0.7 0.2 45)' };
+        const realGetComputedStyle = window.getComputedStyle.bind(window);
+        vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
+          const style = realGetComputedStyle(element);
+          const getPropertyValue = style.getPropertyValue.bind(style);
+          style.getPropertyValue = (name: string) => (STOPS.includes(name) ? painted.value : getPropertyValue(name));
+          return style;
+        });
+        return { animate, painted };
+      }
+
+      it('fades from the knots as painted to the next fill through the fade property', async () => {
+        const { animate } = stubBrowser();
+
+        await switchFromOrangeToBlue();
+
+        const { bar, styleEl } = getElements();
+        expect(FROM.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(7).fill('oklch(0.7 0.2 45)'));
+        expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(7).fill('#1a73e8'));
+        expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(STOPS.map((_, k) => stopMix(k)));
+        expect(styleEl.textContent).toContain(`${FROM[0]}: oklch(0.7 0.2 45) !important;`);
+        // The platform bar's first tint fades too (the mock paints every knot the same, so the start
+        // is not transparent here); the hidden top bar appears at once. The switch then fades both,
+        // the top bar first.
+        const platformBar = document.querySelector('#ocb-platform-bar');
+        expect(animate.mock.contexts).toEqual([platformBar, bar, platformBar]);
+        expect(animate.mock.calls).toEqual(Array(3).fill([{ [FADE]: [0, 1] }, { duration: 300, easing: 'ease' }]));
+        // Never declared, or the declaration would beat the animation.
+        expect(styleEl.textContent).not.toContain(`${FADE}:`);
+        expect(bar.style.getPropertyValue(FADE)).toBe('');
+      });
+
+      // Mid-fade the knots read back as wherever the fade has got to; restarting from there would
+      // slow the fade down and end it late.
+      it('keeps a running fade when the same fill is applied again', async () => {
+        const { animate, painted } = stubBrowser();
+        await switchFromOrangeToBlue();
+        painted.value = 'oklch(0.6 0.2 300)';
+
+        triggerLocationChange('/?project=blue');
+
+        const { bar, styleEl } = getElements();
+        expect(animate).toHaveBeenCalledTimes(3);
+        expect(FROM.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(7).fill('oklch(0.7 0.2 45)'));
+        expect(styleEl.textContent).toContain(`${FROM[0]}: oklch(0.7 0.2 45) !important;`);
+      });
+
+      it('fades again into the same fill after a page no rule matches', async () => {
+        const { animate } = stubBrowser();
+        await switchFromOrangeToBlue();
+
+        triggerLocationChange('/?project=elsewhere');
+        triggerLocationChange('/?project=blue');
+
+        // The top bar was hidden, so it appears at once; the platform bar fades in again.
+        const platformBar = document.querySelector('#ocb-platform-bar');
+        expect(animate.mock.contexts.slice(3)).toEqual([platformBar]);
       });
     });
   });
 });
 
+// An orange project, then a switch to a blue one on both bars, over a mock console platform bar.
+async function switchFromOrangeToBlue() {
+  document.body.innerHTML = '<div id="ocb-platform-bar"></div>';
+  const bars = (color: string) => ({
+    topBar: { color: { paletteId: null, custom: color } },
+    platformBar: { color: { paletteId: null, custom: color } },
+  });
+  await fakeBrowser.storage.local.set(
+    tintSettings({
+      projectRules: [
+        { id: 'o', matchType: 'exact', pattern: 'orange', settings: bars('#ff6d00') },
+        { id: 'b', matchType: 'exact', pattern: 'blue', settings: bars('#1a73e8') },
+      ],
+    }),
+  );
+  setLocation('/?project=orange');
+  runContentScript();
+  await flush();
+  triggerLocationChange('/?project=blue');
+}
+
 describe('gradient fills', () => {
   const SUNSET = { stops: ['#ff6d00', '#1a73e8'] };
   // SUNSET sampled at the seven knots (fill-css.test.ts pins the sampling itself).
   const SUNSET_KNOTS = ['#ff6d00', '#d96e27', '#b36f4d', '#8d7074', '#66719b', '#4072c1', '#1a73e8'];
-  const SUNSET_DECLARATIONS = STOPS.map((name, k) => `${name}: ${SUNSET_KNOTS[k]} !important;`).join(' ');
+  // Painted at once (jsdom has no animate()), so each knot mixes from its own target.
+  const SUNSET_DECLARATIONS = [
+    ...TO.map((name, k) => `${name}: ${SUNSET_KNOTS[k]} !important;`),
+    ...FROM.map((name, k) => `${name}: ${SUNSET_KNOTS[k]} !important;`),
+    ...STOPS.map((name, k) => `${name}: ${stopMix(k)} !important;`),
+  ].join(' ');
 
   async function apply(settings: ProjectSettingsOverrides) {
     await fakeBrowser.storage.local.set(tintSettingsWithRule(settings));
@@ -1220,7 +1348,7 @@ describe('gradient fills', () => {
     const { bar } = await apply({ topBar: { color: { paletteId: null, custom: SUNSET }, stripes: false } });
 
     expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
-    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
     expect(stripePair(bar)).toEqual(['transparent', 'transparent']);
     expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
   });
@@ -1230,7 +1358,7 @@ describe('gradient fills', () => {
 
     // '#ff6d00' to '#1a73e8' keeps black stripes: its worst black contrast beats its worst white one.
     expect(stripePair(bar)).toEqual(['transparent', 'rgba(0, 0, 0, 0.3)']);
-    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
   });
 
   it('writes a gradient platform bar with the viewport-anchored image declarations, without stripes', async () => {
@@ -1253,7 +1381,7 @@ describe('gradient fills', () => {
     expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
   });
 
-  // Same grid on both sides is what lets the transition blend knot by knot.
+  // Same grid on both sides is what lets the fade mix knot by knot.
   it('moves the knots to the next rule on a project switch, from a gradient to a solid', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
@@ -1277,11 +1405,11 @@ describe('gradient fills', () => {
     runContentScript();
     await flush();
     const { bar } = getElements();
-    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
 
     triggerLocationChange('/?project=navy');
 
-    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(7).fill('#000080'));
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(7).fill('#000080'));
     expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
   });
 
@@ -1318,12 +1446,15 @@ describe('fill property registrations', () => {
     const styles = Array.from(document.documentElement.children).filter((el) => el.tagName === 'STYLE');
     const registrations = styles.filter((el) => el.textContent?.includes('@property'));
     expect(registrations).toHaveLength(1);
-    expect(registrations[0]?.textContent?.match(/@property /g)).toHaveLength(9);
-    for (const name of [...STOPS, STRIPE_LIGHT, STRIPE_DARK]) {
+    expect(registrations[0]?.textContent?.match(/@property /g)).toHaveLength(24);
+    for (const name of [...TO, ...FROM, ...STOPS, STRIPE_LIGHT, STRIPE_DARK]) {
       expect(registrations[0]?.textContent).toContain(
         `@property ${name} { syntax: '<color>'; inherits: false; initial-value: transparent; }`,
       );
     }
+    expect(registrations[0]?.textContent).toContain(
+      `@property ${FADE} { syntax: '<number>'; inherits: false; initial-value: 1; }`,
+    );
     // The rule element (the first <style>) is the one emptied, not the registrations.
     expect(getElements().styleEl.textContent).toBe('');
   });
