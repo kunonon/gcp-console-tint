@@ -80,7 +80,8 @@ describe('migrateStoredSettings', () => {
     });
   });
 
-  // The stored shape of a fill: a gradient is written as { stops }, beside the solid strings.
+  // The stored shape of a fill: a gradient is written as { stops } of { color, position }, beside
+  // the solid strings.
   it('writes gradient fills back as stops objects', async () => {
     const rule = (custom: unknown, entryColor: unknown) => ({
       id: '1',
@@ -93,8 +94,19 @@ describe('migrateStoredSettings', () => {
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: true },
       },
     });
-    const gradient = { stops: ['#ff6d00', '#1a73e8'] };
-    const sunset = { stops: ['#ff6d00', '#e91e63', '#3f51b5'] };
+    const gradient = {
+      stops: [
+        { color: '#ff6d00', position: 0 },
+        { color: '#1a73e8', position: 100 },
+      ],
+    };
+    const sunset = {
+      stops: [
+        { color: '#ff6d00', position: 0 },
+        { color: '#e91e63', position: 30 },
+        { color: '#3f51b5', position: 100 },
+      ],
+    };
     await fakeBrowser.storage.local.set({
       tintSettings: { schemaVersion: '0.3.0', theme: 'dark', projectRules: [rule(gradient, sunset)] },
     });

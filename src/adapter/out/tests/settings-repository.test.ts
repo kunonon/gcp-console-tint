@@ -29,7 +29,15 @@ const DEFAULTS = ProjectSettings.DEFAULT;
 
 // Every test color here is a real '#rrggbb' value: Color has no other way in.
 const color = (value: string): Color => Color.fromHex(value)!;
-const gradient = (...values: string[]): Gradient => Gradient.fromStops(values.map(color))!;
+// Stops at the given positions, or spread evenly over the bar when the colors come alone.
+const at = (...stops: [string, number][]): Gradient =>
+  Gradient.fromStops(stops.map(([hex, position]) => ({ color: color(hex), position })))!;
+const gradient = (...values: string[]): Gradient =>
+  at(...values.map((hex, i): [string, number] => [hex, Math.round((i * 100) / (values.length - 1))]));
+// A gradient in its stored shape.
+const storedStops = (...stops: [unknown, unknown][]) => ({
+  stops: stops.map(([color, position]) => ({ color, position })),
+});
 // A solid fill's hex; a gradient (or nothing) reads as undefined, so a solid assertion fails on it.
 const hexOf = (fill: Fill | undefined): string | undefined => (fill instanceof Color ? fill.toHex() : undefined);
 
@@ -672,7 +680,7 @@ describe('gradient fills', () => {
 
   it('round-trips gradients in a palette entry and both bars', () => {
     const sunsetId = PaletteEntryId.recreate('sunset');
-    const sunset = gradient('#ff6d00', '#e91e63', '#3f51b5');
+    const sunset = at(['#ff6d00', 0], ['#e91e63', 30], ['#3f51b5', 100]);
     const settings = projectSettings({
       palette: DEFAULTS.palette.addEntry(PaletteEntry.recreate(sunsetId, 'Sunset', sunset)),
       topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, gradient('#ff6d00', '#1a73e8'))),
@@ -686,30 +694,45 @@ describe('gradient fills', () => {
 
     expect(storedSettings.palette!.entries).toEqual([
       { id: 'default', name: 'Primary', color: DEFAULT_COLOR },
-      { id: 'sunset', name: 'Sunset', color: { stops: ['#ff6d00', '#e91e63', '#3f51b5'] } },
+      { id: 'sunset', name: 'Sunset', color: storedStops(['#ff6d00', 0], ['#e91e63', 30], ['#3f51b5', 100]) },
     ]);
-    expect(storedSettings.topBar!.color).toEqual({ paletteId: null, custom: { stops: ['#ff6d00', '#1a73e8'] } });
+    expect(storedSettings.topBar!.color).toEqual({
+      paletteId: null,
+      custom: storedStops(['#ff6d00', 0], ['#1a73e8', 100]),
+    });
     expect(storedSettings.platformBar!.color).toEqual({
       paletteId: 'sunset',
-      custom: { stops: ['#000000', '#ffffff'] },
+      custom: storedStops(['#000000', 0], ['#ffffff', 100]),
     });
     expect(storedSettings.platformBarText!.color).toEqual({ paletteId: null, custom: DEFAULT_TEXT_COLOR });
     expect(toStored(toDomain(stored), CURRENT_SCHEMA_VERSION)).toEqual(stored);
   });
 
   it('normalizes uppercase stops to lowercase', () => {
-    const custom = load({ topBar: { color: { custom: { stops: ['#ABCDEF', '#123456'] } } } }).topBar.color.custom;
+    const custom = load({ topBar: { color: { custom: storedStops(['#ABCDEF', 0], ['#123456', 100]) } } }).topBar.color
+      .custom;
     expect(custom).toEqual(gradient('#abcdef', '#123456'));
   });
 
   // Whole or nothing: a partly repaired gradient would look silently different.
   it.each([
-    ['a single stop', { stops: ['#123456'] }],
-    ['five stops', { stops: ['#111111', '#222222', '#333333', '#444444', '#555555'] }],
-    ['a bad stop', { stops: ['#123456', 'banana'] }],
-    ['a bad stop among three', { stops: ['#111111', 'banana', '#333333'] }],
+    ['a single stop', storedStops(['#123456', 0])],
+    [
+      'nine stops',
+      { stops: Array.from({ length: 9 }, (_, i) => ({ color: '#111111', position: i === 8 ? 100 : i * 10 })) },
+    ],
+    ['a bad color', storedStops(['#123456', 0], ['banana', 100])],
+    ['a bad color among three', storedStops(['#111111', 0], ['banana', 50], ['#333333', 100])],
+    ['a string position', storedStops(['#111111', 0], ['#222222', '50'], ['#333333', 100])],
+    ['a fractional position', storedStops(['#111111', 0], ['#222222', 49.5], ['#333333', 100])],
+    ['two stops at one position', storedStops(['#111111', 0], ['#222222', 50], ['#333333', 50], ['#444444', 100])],
+    ['a first stop off the left end', storedStops(['#111111', 5], ['#222222', 100])],
+    ['a last stop off the right end', storedStops(['#111111', 0], ['#222222', 95])],
+    ['a stop without a position', { stops: [{ color: '#111111', position: 0 }, { color: '#222222' }] }],
+    // The unreleased shape of development builds.
+    ['the bare-colors shape', { stops: ['#123456', '#abcdef'] }],
     ['a non-array stops', { stops: '#123456' }],
-    ['a non-string stop', { stops: ['#123456', 1] }],
+    ['a non-object stop', { stops: [{ color: '#123456', position: 0 }, 1] }],
     ['an object without stops', {}],
   ])('recovers %s to the fallback color', (_label, value) => {
     const settings = load({
@@ -723,14 +746,17 @@ describe('gradient fills', () => {
   });
 
   it('recovers a gradient in the text color to its default color', () => {
-    const text = load({ platformBarText: { color: { paletteId: null, custom: { stops: ['#000000', '#111111'] } } } })
-      .platformBarText.color.custom;
+    const text = load({
+      platformBarText: { color: { paletteId: null, custom: storedStops(['#000000', 0], ['#111111', 100]) } },
+    }).platformBarText.color.custom;
     expect(text.toHex()).toBe(DEFAULT_TEXT_COLOR);
   });
 
   it('keeps a text reference to a gradient entry', () => {
     const settings = load({
-      palette: { entries: [{ id: 'sunset', name: 'Sunset', color: { stops: ['#000000', '#ffffff'] } }] },
+      palette: {
+        entries: [{ id: 'sunset', name: 'Sunset', color: storedStops(['#000000', 0], ['#ffffff', 100]) }],
+      },
       platformBarText: { color: { paletteId: 'sunset', custom: '#123456' } },
     });
     expect(settings.platformBarText.color.paletteId?.toString()).toBe('sunset');

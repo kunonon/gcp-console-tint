@@ -15,9 +15,10 @@ import { parseSettingsFile } from '../settings-file';
 // order and wording. It is only ever run on plain arrays, never on the recording Proxies below
 // (it would read every element and spoil their counts).
 // The bars and the palette entries take a fill (a string or { stops }); the text keeps a string.
-const oracleFill = z.union([z.string(), z.object({ stops: z.array(z.string()) })], {
-  error: 'expected a color string or a gradient object with a stops array of strings',
-});
+const oracleFill = z.union(
+  [z.string(), z.object({ stops: z.array(z.object({ color: z.string(), position: z.number() })) })],
+  { error: 'expected a color string or a gradient object with a stops array of { color, position }' },
+);
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
 const oracleFillSelection = z.object({ paletteId: z.string().nullable(), custom: oracleFill });
 const oracleSchema = z.object({
@@ -198,7 +199,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
   });
 
   // The fill union collapses a bad stops array into one issue at the fill's own path.
-  it('reports 150 non-string stops in one entry as a single issue at its color', () => {
+  it('reports 150 non-object stops in one entry as a single issue at its color', () => {
     const rule = validRule('only');
     rule.settings.palette.entries[0].color = { stops: Array.from({ length: 150 }, () => 1) };
     const data = { theme: 'auto', projectRules: [rule] };
@@ -209,7 +210,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
     expect(failure.issues).toEqual([
       {
         path: 'projectRules[0].settings.palette.entries[0].color',
-        message: 'expected a color string or a gradient object with a stops array of strings',
+        message: 'expected a color string or a gradient object with a stops array of { color, position }',
       },
     ]);
     expect('validationStopped' in failure).toBe(false);
@@ -391,9 +392,11 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     expect(failure.validationStopped).toBe(true);
   });
 
-  it('150 bad stops in one gradient stop at stops[100], before the stop count is judged', () => {
+  it('150 bad stop colors in one gradient stop at stops[100], before the stops count is judged', () => {
     const rule = validRule('only');
-    rule.settings.palette.entries[0].color = { stops: Array.from({ length: 150 }, () => 'bad') };
+    rule.settings.palette.entries[0].color = {
+      stops: Array.from({ length: 150 }, (_, j) => ({ color: 'bad', position: j })),
+    };
     clearSpies();
 
     const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
@@ -401,19 +404,24 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     expect(calls()).toEqual([1, 101, 0]);
     expect(failure.issues).toEqual(
       Array.from({ length: 100 }, (_, j) => ({
-        path: `projectRules[0].settings.palette.entries[0].color.stops[${j}]`,
+        path: `projectRules[0].settings.palette.entries[0].color.stops[${j}].color`,
         message: 'expected a color like #rrggbb',
       })),
     );
     expect(failure.validationStopped).toBe(true);
   });
 
-  it('101 gradient entries with a bad first stop stop at entries[100].color.stops[0]', () => {
+  it('101 gradient entries with a bad first stop color stop at entries[100].color.stops[0].color', () => {
     const rule = validRule('only');
     rule.settings.palette.entries = Array.from({ length: 101 }, (_, j) => ({
       id: `e${j}`,
       name: 'n',
-      color: { stops: ['bad', '#000000'] },
+      color: {
+        stops: [
+          { color: 'bad', position: 0 },
+          { color: '#000000', position: 100 },
+        ],
+      },
     }));
     clearSpies();
 
@@ -423,7 +431,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     expect(calls()).toEqual([1, 100 * 2 + 1, 0]);
     expect(failure.issues).toEqual(
       Array.from({ length: 100 }, (_, j) => ({
-        path: `projectRules[0].settings.palette.entries[${j}].color.stops[0]`,
+        path: `projectRules[0].settings.palette.entries[${j}].color.stops[0].color`,
         message: 'expected a color like #rrggbb',
       })),
     );

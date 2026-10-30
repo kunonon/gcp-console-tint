@@ -18,7 +18,9 @@ describe('stripeColors', () => {
     { stops: ['#ff6d00', '#1a73e8'], light: 'transparent', dark: 'rgba(0, 0, 0, 0.3)' },
     { stops: ['#ff6d00', '#000080'], light: 'rgba(255, 255, 255, 0.3)', dark: 'transparent' },
   ])('picks the stripe pair for the gradient $stops', ({ stops, light, dark }) => {
-    const gradient = Gradient.fromStops(stops.map((hex) => Color.fromHex(hex)!))!;
+    const gradient = Gradient.fromStops(
+      stops.map((hex, i) => ({ color: Color.fromHex(hex)!, position: i === 0 ? 0 : 100 })),
+    )!;
     expect(stripeColors(gradient)).toEqual({ light, dark });
   });
 });

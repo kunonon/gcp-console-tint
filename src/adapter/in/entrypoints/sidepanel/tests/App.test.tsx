@@ -15,7 +15,7 @@ import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 
 // A fill as stored: '#rrggbb' or a gradient's stops.
-type StoredFill = string | { stops: string[] };
+type StoredFill = string | { stops: { color: string; position: number }[] };
 
 interface PaletteEntry {
   id: string;
@@ -1398,25 +1398,39 @@ describe('App', () => {
       expect(hexOrRgb('#000000')).toContain(autoBead(dialog).style.backgroundColor);
     });
 
-    const GRADIENT = /^linear-gradient\(to right, (#ff6d00|rgb\(255, 109, 0\)), (#1a73e8|rgb\(26, 115, 232\))\)$/;
+    const GRADIENT_STOPS = '(#ff6d00|rgb\\(255, 109, 0\\)) 0%, (#1a73e8|rgb\\(26, 115, 232\\)) 100%';
+    const GRADIENT = new RegExp(`^linear-gradient\\(to right, ${GRADIENT_STOPS}\\)$`);
+    const SUNSET = {
+      stops: [
+        { color: '#ff6d00', position: 0 },
+        { color: '#1a73e8', position: 100 },
+      ],
+    };
+    const typeOption = (dialog: HTMLElement, group: string, name: 'Solid' | 'Gradient') =>
+      within(within(dialog).getByRole('radiogroup', { name: group })).getByRole('radio', { name });
 
-    it('Top bar: Add stop, a stop edit and Remove stop each change the custom fill in one save, and the trigger shows "Gradient" meanwhile', async () => {
+    it('Top bar: Gradient, a stop edit and Solid each change the custom fill in one save, and the trigger shows "Gradient" meanwhile', async () => {
       const { user, save } = await renderRuleDetail();
 
       let dialog = await openPicker(user, 'Top bar color');
-      await user.click(within(dialog).getByRole('button', { name: 'Add stop' }));
+      await user.click(typeOption(dialog, 'Custom color type', 'Gradient'));
       await waitFor(async () => {
         // The kept custom colour grows, not the entry in use, which the bar then leaves.
         expect((await storedSettings()).topBar.color).toEqual({
           paletteId: null,
-          custom: { stops: ['#ff6d00', '#ff6d00'] },
+          custom: {
+            stops: [
+              { color: '#ff6d00', position: 0 },
+              { color: '#ff6d00', position: 100 },
+            ],
+          },
         });
       });
       expect(save).toHaveBeenCalledTimes(1);
 
       fireEvent.change(within(dialog).getByLabelText('Custom color, stop 2'), { target: { value: '#1a73e8' } });
       await waitFor(async () => {
-        expect((await storedSettings()).topBar.color.custom).toEqual({ stops: ['#ff6d00', '#1a73e8'] });
+        expect((await storedSettings()).topBar.color.custom).toEqual(SUNSET);
       });
       expect(save).toHaveBeenCalledTimes(2);
 
@@ -1424,14 +1438,14 @@ describe('App', () => {
       expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toBe('Gradient');
       expect(getTriggerSwatch('Top bar color').style.backgroundImage).toMatch(GRADIENT);
 
-      // Reopened, the editor starts on stop 1: removing it leaves stop 2's colour.
+      // Reopened, the editor starts on stop 1: Solid takes its colour.
       dialog = await openPicker(user, 'Top bar color');
-      await user.click(within(dialog).getByRole('button', { name: 'Remove stop' }));
+      await user.click(typeOption(dialog, 'Custom color type', 'Solid'));
       await waitFor(async () => {
-        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#1a73e8' });
+        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#ff6d00' });
       });
       expect(save).toHaveBeenCalledTimes(3);
-      expect(getCustomColorInput(dialog).value).toBe('#1a73e8');
+      expect(getCustomColorInput(dialog).value).toBe('#ff6d00');
     });
 
     it('a palette entry made a gradient paints both bars that use it, its delete swatch shows it, and the text picker leaves it out', async () => {
@@ -1442,11 +1456,11 @@ describe('App', () => {
       await closePicker(user);
 
       dialog = await openPaletteRowEditor(user, 'Primary');
-      await user.click(within(dialog).getByRole('button', { name: 'Add stop' }));
+      await user.click(typeOption(dialog, 'Color type', 'Gradient'));
       fireEvent.change(within(dialog).getByLabelText('Hex, stop 2'), { target: { value: '#1a73e8' } });
       await closePicker(user);
       await waitFor(async () => {
-        expect((await storedSettings()).palette.entries[0]!.color).toEqual({ stops: ['#ff6d00', '#1a73e8'] });
+        expect((await storedSettings()).palette.entries[0]!.color).toEqual(SUNSET);
       });
 
       expect(screen.getByRole('button', { name: 'Primary color' }).textContent).toBe('Gradient');
@@ -1462,7 +1476,7 @@ describe('App', () => {
 
       const remove = await openDeleteConfirm(user, screen.getByRole('button', { name: 'Remove color' }));
       expect((remove.querySelector('.confirm-swatch') as HTMLElement).style.background).toMatch(
-        /linear-gradient\(to right, (#ff6d00|rgb\(255, 109, 0\)), (#1a73e8|rgb\(26, 115, 232\))\)/,
+        new RegExp(`linear-gradient\\(to right, ${GRADIENT_STOPS}\\)`),
       );
       await closePicker(user);
 
@@ -1470,6 +1484,7 @@ describe('App', () => {
       // on it drops the reference.
       dialog = await openPicker(user, 'Platform Bar text color');
       expect(within(dialog).queryByRole('button', { name: 'Primary' })).toBeNull();
+      expect(within(dialog).queryByRole('radiogroup')).toBeNull();
       expect(within(dialog).queryByRole('group', { name: 'Gradient stops' })).toBeNull();
       const customInput = getCustomColorInput(dialog);
       expect(customInput.parentElement?.className).toContain('ring-2');

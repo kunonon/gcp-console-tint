@@ -1,9 +1,9 @@
 import { Popover } from '@heroui/react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { type Fill, Gradient } from '../../../../../domain/gradient';
 import type { PaletteEntry, PaletteEntryId } from '../../../../../domain/palette';
 import { fillBackground } from '../../../fill-css';
-import FillEditor from './FillEditor';
+import FillEditor, { type KeptGradient } from './FillEditor';
 
 interface PaletteColorPickerProps {
   ariaLabel: string;
@@ -16,7 +16,8 @@ interface PaletteColorPickerProps {
   effective: Fill;
   onSelectPaletteEntry: (id: PaletteEntryId) => void;
   onSelectCustomColor: (fill: Fill) => void;
-  /** The custom choice stays one colour: no stops row (the Platform Bar text). */
+  /** The custom choice stays one colour: no Solid | Gradient switch and no stops rows (the
+   * Platform Bar text). */
   solidOnly?: boolean;
   supportsAuto?: boolean;
   autoSelected?: boolean;
@@ -53,6 +54,10 @@ export default function PaletteColorPicker({
 }: PaletteColorPickerProps) {
   // Controlled so Enter in the hex input can close it (focus then returns to the trigger).
   const [open, setOpen] = useState(false);
+  // The gradient the custom fill had before a switch to Solid, for a switch back. Held here, not in
+  // FillEditor, so that it survives the popover closing (which unmounts the editor) and dies with
+  // this surface's picker; never saved.
+  const lastGradient = useRef<KeptGradient | null>(null);
 
   const referencedEntry = paletteEnabled && paletteId ? palette.find((e) => e.id.equals(paletteId)) : undefined;
   const isCustomActive = !autoSelected && !referencedEntry;
@@ -151,12 +156,16 @@ export default function PaletteColorPicker({
               })}
             </div>
           )}
-          {/* Every edit of the custom fill (a stop's colour, a stop added or removed) is one
-              selection of the edited fill, which also leaves an entry or Auto, as a hex does. */}
+          {/* Every edit of the custom fill (a stop's colour, a stop added, removed or moved, or its
+              type switched) is one selection of the edited fill, which also leaves an entry or
+              Auto, as a hex does. The switch sets the type of the kept custom fill, not of what the surface
+              paints now, hence "Custom color type". */}
           <FillEditor
             hexLabel="Custom color"
+            typeLabel="Custom color type"
             value={custom}
             solidOnly={solidOnly}
+            lastGradient={lastGradient}
             active={hasAlternatives && isCustomActive}
             onChange={onSelectCustomColor}
             onActivate={selectKeptCustom}

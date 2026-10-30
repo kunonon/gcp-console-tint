@@ -1,11 +1,16 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Color } from '../../../../../../domain/color';
 import { type Fill, Gradient } from '../../../../../../domain/gradient';
 import ColorSwatchField from '../ColorSwatchField';
 
 const red = Color.fromHex('#ff0000')!;
+const redToBlue = Gradient.fromStops([
+  { color: red, position: 0 },
+  { color: Color.fromHex('#0000ff')!, position: 100 },
+])!;
 
 afterEach(() => {
   cleanup();
@@ -43,14 +48,13 @@ describe('ColorSwatchField', () => {
   });
 
   it('fills the bead of a gradient with the gradient, as longhands, and labels it "Gradient"', () => {
-    const gradient = Gradient.fromStops([red, Color.fromHex('#0000ff')!])!;
-    render(<ColorSwatchField ariaLabel="Test color" value={gradient} onChange={() => {}} hexHidableOnNarrow />);
+    render(<ColorSwatchField ariaLabel="Test color" value={redToBlue} onChange={() => {}} hexHidableOnNarrow />);
 
     const trigger = screen.getByRole('button', { name: 'Test color' });
     const bead = trigger.querySelector('span[aria-hidden="true"]') as HTMLElement;
     expect(['#ff0000', 'rgb(255, 0, 0)']).toContain(bead.style.backgroundColor);
     expect(bead.style.backgroundImage).toMatch(
-      /^linear-gradient\(to right, (#ff0000|rgb\(255, 0, 0\)), (#0000ff|rgb\(0, 0, 255\))\)$/,
+      /^linear-gradient\(to right, (#ff0000|rgb\(255, 0, 0\)) 0%, (#0000ff|rgb\(0, 0, 255\)) 100%\)$/,
     );
     const label = within(trigger).getByText('Gradient');
     expect(label.className).toContain('@min-[220px]:inline');
@@ -118,23 +122,127 @@ describe('ColorSwatchField', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('Tab walks the open editor in the order it is laid out and comes round again: Add stop, Hex, the face, the hue, Add stop', async () => {
+  it('Tab walks the open editor in the order it is laid out and comes round again, and Shift+Tab walks it back: Solid, Hex, the face, the hue', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn<(fill: Fill) => void>();
     render(<ColorSwatchField ariaLabel="Test color" value={red} onChange={onChange} />);
     await user.click(screen.getByRole('button', { name: 'Test color' }));
     const dialog = within(screen.getByRole('dialog'));
-    const add = dialog.getByRole('button', { name: 'Add stop' });
+    const solid = within(dialog.getByRole('radiogroup', { name: 'Color type' })).getByRole('radio', { name: 'Solid' });
     const hex = dialog.getByLabelText('Hex');
     const face = within(dialog.getByRole('group', { name: /Saturation and brightness/ })).getByRole('slider');
     const hue = within(dialog.getByRole('group', { name: 'Hue' })).getByRole('slider');
 
-    // A colour's one stop is not a control, and Remove stop is disabled.
-    for (const stop of [add, hex, face, hue, add]) {
+    // The Solid | Gradient switch is one Tab stop.
+    for (const stop of [solid, hex, face, hue, solid]) {
       await user.tab();
       expect(document.activeElement).toBe(stop);
     }
+    for (const stop of [hue, face, hex, solid]) {
+      await user.tab({ shift: true });
+      expect(document.activeElement).toBe(stop);
+    }
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('Escape with a valid stop position typed saves the position shown as the popover closes', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn<(fill: Fill) => void>();
+    const threeStops = Gradient.fromStops([
+      { color: red, position: 0 },
+      { color: red, position: 30 },
+      { color: Color.fromHex('#0000ff')!, position: 100 },
+    ])!;
+    render(<ColorSwatchField ariaLabel="Test color" value={threeStops} onChange={onChange} />);
+
+    await user.click(screen.getByRole('button', { name: 'Test color' }));
+    const dialog = within(screen.getByRole('dialog'));
+    await user.click(dialog.getByLabelText('Stop 2'));
+    const position = dialog.getByLabelText('Stop 2 position');
+    await user.clear(position);
+    await user.type(position, '5{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect((onChange.mock.calls[0]![0] as Gradient).stops.map((stop) => stop.position)).toEqual([0, 5, 100]);
+  });
+
+  it('brings a gradient switched to Solid back after the popover closed and opened again', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn<(fill: Fill) => void>();
+    function Row() {
+      const [value, setValue] = useState<Fill>(redToBlue);
+      return (
+        <ColorSwatchField
+          ariaLabel="Test color"
+          value={value}
+          onChange={(fill) => {
+            onChange(fill);
+            setValue(fill);
+          }}
+        />
+      );
+    }
+    render(<Row />);
+
+    // Stop 2 picked: the reopened editor picks Stop 1, and the way back still lands on Stop 2.
+    await user.click(screen.getByRole('button', { name: 'Test color' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop 2' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('radio', { name: 'Solid' }));
+    expect(onChange.mock.calls.at(-1)![0]).toEqual(Color.fromHex('#0000ff'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Test color' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('radio', { name: 'Gradient' }));
+
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect((onChange.mock.calls[1]![0] as Gradient).equals(redToBlue)).toBe(true);
+  });
+
+  it('keeps what a switch to Solid left to its own row: another row’s Gradient starts from its colour twice', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn<(fill: Fill) => void>();
+    function Row({ label, initial }: { label: string; initial: Fill }) {
+      const [value, setValue] = useState<Fill>(initial);
+      return (
+        <ColorSwatchField
+          ariaLabel={label}
+          value={value}
+          onChange={(fill) => {
+            onChange(fill);
+            setValue(fill);
+          }}
+        />
+      );
+    }
+    const green = Color.fromHex('#00ff00')!;
+    render(
+      <>
+        <Row label="First color" initial={redToBlue} />
+        <Row label="Second color" initial={green} />
+      </>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'First color' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('radio', { name: 'Solid' }));
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    await user.click(screen.getByRole('button', { name: 'Second color' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('radio', { name: 'Gradient' }));
+
+    expect(onChange.mock.calls.at(-1)![0]).toEqual(
+      Gradient.fromStops([
+        { color: green, position: 0 },
+        { color: green, position: 100 },
+      ]),
+    );
   });
 
   it('hands a complete hex typed in the editor to onChange as a domain Color', async () => {

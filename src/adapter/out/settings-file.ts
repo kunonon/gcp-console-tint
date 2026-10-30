@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Color } from '../../domain/color';
 import { ColorSelection } from '../../domain/color-selection';
-import { type Fill, Gradient } from '../../domain/gradient';
+import { type Fill, Gradient, type GradientStopsProblem } from '../../domain/gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from '../../domain/palette';
 import { isMatchType, MATCH_TYPES, type MatchType, ProjectRule, ProjectRuleId } from '../../domain/project-rule';
 import {
@@ -13,6 +13,7 @@ import {
 import { isTheme, THEMES, type Theme, TintSettings } from '../../domain/tint-settings';
 import { TopBarHeight } from '../../domain/top-bar-height';
 import { SettingsImportError, type SettingsImportIssue } from '../../port/settings-store';
+import { assertNever } from '../../utils/assert';
 import { runMigrations, SCHEMA_MIGRATIONS, SCHEMA_MIN_VERSION, type SchemaMigration } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
 
@@ -26,7 +27,7 @@ import { compareVersions, VersionComparisonResult } from './version';
 //   1. STRUCTURE (checkStructure, with the Zod schemas below) — required keys and JSON types only. No enums, ranges
 //      or formats live here; that would put the domain's rules in the adapter.
 //   2. VALUES (toRules) — every value is handed to the domain factory that owns it
-//      (isTheme, Color.fromHex, Gradient.fromStops, TopBarHeight.fromPixels, isMatchType), and a
+//      (isTheme, Color.fromHex, Gradient.stopsProblem, TopBarHeight.fromPixels, isMatchType), and a
 //      rejection becomes an issue.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,16 +37,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // Stage 1. `z.object` ignores unknown keys within the supported schema version range.
 // Stamps above this build's effective schema version ceiling are rejected before validation.
 //
-// A fill (palette entries and the bars' custom) is a '#rrggbb' string or { stops: [...] }; only
-// that shape is checked here, and the colors and the stop count are judged in stage 2. The union
-// reports one issue at the fill's own path, not one per element, and Zod reads every element of
-// `stops` here.
-// ponytail: a stops array is read whole here, unlike entries; the domain caps real gradients at 4
+// A fill (palette entries and the bars' custom) is a '#rrggbb' string or
+// { stops: [{ color, position }, ...] }; only that shape is checked here, and the colors, the stop
+// count and the positions are judged in stage 2. The union reports one issue at the fill's own
+// path, not one per element, and Zod reads every element of `stops` here.
+// ponytail: a stops array is read whole here, unlike entries; the domain caps real gradients at 8
 // and a hostile file costs memory, not issues (the union collapses to one). Walk it like entries
 // if that bound ever matters.
-const fillSchema = z.union([z.string(), z.object({ stops: z.array(z.string()) })], {
-  error: 'expected a color string or a gradient object with a stops array of strings',
-});
+const fillSchema = z.union(
+  [z.string(), z.object({ stops: z.array(z.object({ color: z.string(), position: z.number() })) })],
+  { error: 'expected a color string or a gradient object with a stops array of { color, position }' },
+);
 
 // JSON has no undefined: an unset palette reference is written as null.
 const paletteIdSchema = z.string().nullable();
@@ -182,14 +184,34 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
   return { theme, projectRules: rules };
 }
 
+// The import's wording for why a gradient's stops were refused, at the path the problem points
+// to. The rules themselves are the domain's (Gradient.stopsProblem); only the words live here.
+function stopsIssue(path: string, problem: GradientStopsProblem): [path: string, message: string] {
+  const at = (index: number) => `${path}.stops[${index}].position`;
+  switch (problem.kind) {
+    case 'count':
+      return [`${path}.stops`, `expected ${Gradient.MIN_STOPS} to ${Gradient.MAX_STOPS} stops`];
+    case 'position':
+      return [at(problem.index), `expected a whole number from ${Gradient.MIN_POSITION} to ${Gradient.MAX_POSITION}`];
+    case 'first':
+      return [at(problem.index), `expected ${Gradient.MIN_POSITION}: the first stop sits at the left end`];
+    case 'last':
+      return [at(problem.index), `expected ${Gradient.MAX_POSITION}: the last stop sits at the right end`];
+    case 'order':
+      return [at(problem.index), `expected more than the previous stop's position (${problem.previous})`];
+    default:
+      return assertNever(problem);
+  }
+}
+
 // Stage 2. Builds the domain objects, asking the domain to judge every value and collecting the
 // rejections instead of throwing at the first one, so a file reports everything wrong with it in
 // one pass. A rejected value is replaced by a placeholder here purely to keep building: the
 // returned rules are used only when no issue was collected. Values are judged in a fixed order
 // (the root theme first, then per rule: matchType, each palette entry's duplicate id, then its
-// color (each stop, then the stop count); topBar color (same) and height; platformBar color;
-// platformBarText color); the judgment that yields the 101st issue stops validation on the spot,
-// and no partial rules are returned.
+// color (each stop's color, then the stops' count and positions); topBar color (same) and height;
+// platformBar color; platformBarText color); the judgment that yields the 101st issue stops
+// validation on the spot, and no partial rules are returned.
 function toRules(file: SettingsFile): {
   theme: Theme;
   rules: ProjectRule[];
@@ -206,14 +228,17 @@ function toRules(file: SettingsFile): {
     return Color.BLACK;
   };
 
-  // Each stop is judged before the count, and both are reported.
+  // Every stop's color is judged before the stops' shape, and both are reported: each bad color,
+  // then the first shape problem Gradient.stopsProblem finds (count, then each position in turn).
   const fill = (value: FillFile, path: string): Fill => {
     if (typeof value === 'string') return color(value, path);
-    const stops = value.stops.map((stop, i) => color(stop, `${path}.stops[${i}]`));
-    const gradient = Gradient.fromStops(stops);
-    if (gradient) return gradient;
-    reject(`${path}.stops`, `expected ${Gradient.MIN_STOPS} to ${Gradient.MAX_STOPS} stops`);
-    return Color.BLACK;
+    const stops = value.stops.map((stop, i) => ({
+      color: color(stop.color, `${path}.stops[${i}].color`),
+      position: stop.position,
+    }));
+    const problem = Gradient.stopsProblem(stops);
+    if (problem) reject(...stopsIssue(path, problem));
+    return Gradient.fromStops(stops) ?? Color.BLACK;
   };
 
   const themeValue = (value: string, path: string): Theme => {

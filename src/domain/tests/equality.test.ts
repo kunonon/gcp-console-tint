@@ -71,7 +71,11 @@ describe('ColorSelection.equals', () => {
 });
 
 describe('ColorSelection.equals with gradients', () => {
-  const gradient = (...values: string[]): Gradient => Gradient.fromStops(values.map(color))!;
+  // The colors spread evenly over the bar, ends at 0 and 100.
+  const gradient = (...values: string[]): Gradient =>
+    Gradient.fromStops(
+      values.map((hex, i) => ({ color: color(hex), position: Math.round((i * 100) / (values.length - 1)) })),
+    )!;
 
   it('is false between a solid and a gradient custom', () => {
     const solid = new ColorSelection<Fill>(undefined, color('#111111'));

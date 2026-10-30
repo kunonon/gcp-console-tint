@@ -646,11 +646,13 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
           // The fill's target knots and its fade (content.ts), which say a bar has settled where
           // its painted oklch() knots serialize with engine-specific digits.
           const knots = (style) =>
-            style ? Array.from({ length: 7 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-to-${k}`)) : null;
+            style ? Array.from({ length: 101 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-to-${k}`)) : null;
           const fade = (style) => style?.getPropertyValue('--gcp-console-tint-fade') ?? null;
           // The knots as painted, oklch() or oklab() colors.
           const painted = (style) =>
-            style ? Array.from({ length: 7 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-stop-${k}`)) : null;
+            style
+              ? Array.from({ length: 101 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-stop-${k}`))
+              : null;
           return {
             origin: location.origin,
             href: location.href,

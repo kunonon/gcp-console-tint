@@ -20,7 +20,11 @@ function setManifestVersion(version: string): void {
 
 // The second rule's top bar carries a gradient, so the file round-trips a { stops } fill too.
 function sampleSettings(): TintSettings {
-  const gradient = Gradient.fromStops([Color.fromHex('#ff6d00')!, Color.fromHex('#1a73e8')!])!;
+  const gradient = Gradient.fromStops([
+    { color: Color.fromHex('#ff6d00')!, position: 0 },
+    { color: Color.fromHex('#e91e63')!, position: 30 },
+    { color: Color.fromHex('#1a73e8')!, position: 100 },
+  ])!;
   const graded = ProjectSettings.DEFAULT.changeTopBar(
     ProjectSettings.DEFAULT.topBar.changeColor(new ColorSelection(undefined, gradient)),
   );

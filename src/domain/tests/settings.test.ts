@@ -18,7 +18,11 @@ const DEFAULTS = ProjectSettings.DEFAULT;
 
 // Every test color here is a real '#rrggbb' value: Color has no other way in.
 const color = (value: string): Color => Color.fromHex(value)!;
-const gradient = (...values: string[]): Gradient => Gradient.fromStops(values.map(color))!;
+// The colors spread evenly over the bar, ends at 0 and 100.
+const gradient = (...values: string[]): Gradient =>
+  Gradient.fromStops(
+    values.map((hex, i) => ({ color: color(hex), position: Math.round((i * 100) / (values.length - 1)) })),
+  )!;
 // A solid fill's hex; a gradient (or nothing) reads as undefined, so a solid assertion fails on it.
 const hexOf = (fill: Fill | undefined): string | undefined => (fill instanceof Color ? fill.toHex() : undefined);
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Color } from '../../domain/color';
 import { ColorSelection } from '../../domain/color-selection';
-import { type Fill, Gradient } from '../../domain/gradient';
+import { type Fill, Gradient, type GradientStop } from '../../domain/gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from '../../domain/palette';
 import { MATCH_TYPES, ProjectRule, ProjectRuleId } from '../../domain/project-rule';
 import {
@@ -40,17 +40,20 @@ function colorField(fallback: Color) {
     .transform((value) => (typeof value === 'string' ? Color.fromHex(value) : undefined) ?? fallback);
 }
 
-// A stored fill: a '#rrggbb' string, or { stops: [...] } whose every element is such a string and
-// whose count Gradient.fromStops accepts. Whole or nothing: one bad stop makes the whole value
-// unreadable, since a partly repaired gradient would look silently different.
+// A stored fill: a '#rrggbb' string, or { stops: [{ color, position }, ...] } whose every color is
+// such a string and whose stops Gradient.fromStops accepts (count, whole-percent positions, ends at
+// 0 and 100, strictly increasing). Whole or nothing: one bad stop makes the whole value unreadable,
+// since a partly repaired gradient would look silently different. The unreleased { stops: ['#..'] }
+// of development builds is not read either, and falls back like any other junk.
 function parseStoredFill(value: unknown): Fill | undefined {
   if (typeof value === 'string') return Color.fromHex(value);
   if (!isRecord(value) || !Array.isArray(value.stops)) return undefined;
-  const stops: Color[] = [];
+  const stops: GradientStop[] = [];
   for (const stop of value.stops) {
-    const parsed = typeof stop === 'string' ? Color.fromHex(stop) : undefined;
-    if (!parsed) return undefined;
-    stops.push(parsed);
+    if (!isRecord(stop) || typeof stop.color !== 'string' || typeof stop.position !== 'number') return undefined;
+    const color = Color.fromHex(stop.color);
+    if (!color) return undefined;
+    stops.push({ color, position: stop.position });
   }
   return Gradient.fromStops(stops);
 }
@@ -273,10 +276,13 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
   };
 }
 
-// A gradient is written as { stops: ['#rrggbb', ...] }: string-vs-object already tells the two
-// kinds apart, so the object needs no type key.
+// A gradient is written as { stops: [{ color: '#rrggbb', position }, ...] }, the ends' 0 and 100
+// included so the file explains itself and the import can check them: string-vs-object already
+// tells the two kinds apart, so the object needs no type key.
 function storedFill(fill: Fill) {
-  return fill instanceof Gradient ? { stops: fill.stops.map((stop) => stop.toHex()) } : fill.toHex();
+  return fill instanceof Gradient
+    ? { stops: fill.stops.map((stop) => ({ color: stop.color.toHex(), position: stop.position })) }
+    : fill.toHex();
 }
 
 // One function for all three surfaces: the text's Color becomes a string like any solid fill.

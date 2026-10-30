@@ -18,10 +18,10 @@ export interface SchemaMigration {
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   // 0.3.0 adds the side panel theme; data from earlier releases starts on 'auto'.
   { to: '0.3.0', migrate: (data) => ({ ...data, theme: 'auto' }) },
-  // 0.5.0 lets palette entries and the bars' custom colors be gradients ({ stops: [...] }) in the
-  // slot that held the '#rrggbb' string; every earlier file is already valid in this shape, so the
-  // step only moves the stamp, which keeps a gradient-bearing file from being labelled older than
-  // the first release that can read it.
+  // 0.5.0 lets palette entries and the bars' custom colors be gradients
+  // ({ stops: [{ color, position }, ...] }) in the slot that held the '#rrggbb' string; every
+  // earlier file is already valid in this shape, so the step only moves the stamp, which keeps a
+  // gradient-bearing file from being labelled older than the first release that can read it.
   { to: '0.5.0', migrate: (data) => data },
 ];
 

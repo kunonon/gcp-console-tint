@@ -1,8 +1,8 @@
-import type { Color } from '../../domain/color';
 import { type Fill, Gradient } from '../../domain/gradient';
 import { stripeColors, stripeLayer } from './stripes';
 
-// '#rrggbb' or 'linear-gradient(to right, #a, #b, ...)': a CSS `background` value for the delete swatch.
+// '#rrggbb' or 'linear-gradient(to right, #a 0%, #b 40%, ...)': a CSS `background` value for the delete
+// swatch.
 export function fillCss(fill: Fill): string {
   return fill instanceof Gradient ? gradientCss(fill) : fill.toHex();
 }
@@ -11,13 +11,20 @@ export function fillCss(fill: Fill): string {
 // gradient's first stop) and the gradient as the image. An empty image means none, so a solid is
 // its color alone.
 export function fillBackground(fill: Fill): { color: string; image: string } {
-  if (fill instanceof Gradient) return { color: fill.stops[0].toHex(), image: gradientCss(fill) };
+  if (fill instanceof Gradient) return { color: fill.stops[0].color.toHex(), image: gradientCss(fill) };
   return { color: fill.toHex(), image: '' };
 }
 
-// Evenly spaced stops need no positions: CSS spreads unpositioned stops evenly.
 function gradientCss(gradient: Gradient): string {
-  return `linear-gradient(to right, ${gradient.stops.map((stop) => stop.toHex()).join(', ')})`;
+  return `linear-gradient(to right, ${gradient.stops.map((stop) => `${stop.color.toHex()} ${stop.position}%`).join(', ')})`;
+}
+
+// The stop editor's strip paints the gradient in its beads' coordinate box, so a bead sits over its
+// own color: a stop at p% sits at `inset`px + (100% - 2 * `inset`px) * p / 100 (see FillEditor), and
+// the end colors extend to the strip's edges.
+export function fillStripImage(gradient: Gradient, inset: number): string {
+  const at = (position: number) => `calc(${inset}px + (100% - ${2 * inset}px) * ${position / 100})`;
+  return `linear-gradient(to right, ${gradient.stops.map((stop) => `${stop.color.toHex()} ${at(stop.position)}`).join(', ')})`;
 }
 
 // The bars' crossfade. background-image is discrete, so a gradient or stripes written into it as
@@ -26,13 +33,13 @@ function gradientCss(gradient: Gradient): string {
 // only changes and animates the properties. The prefix keeps clear of the console's own properties.
 const PROPERTY_PREFIX = '--gcp-console-tint-';
 
-// Every fill is drawn as one gradient of 7 evenly spaced knots at k/6. Two fills on the same grid
-// blend knot by knot, so any fill crossfades into any other (solid and gradient, 2 and 4 stops).
-// The grid is exact for every stop count the domain allows: 2, 3 and 4 evenly spaced stops sit at
-// multiples of 1, 1/2 and 1/3, all multiples of 1/6, and a straight segment between knots is the
-// same line CSS draws between the original stops, short of rounding the in-between knots to whole
-// channel values. A solid is 7 equal knots.
-const KNOT_INTERVALS = 6;
+// Every fill is drawn as one gradient of 101 knots, one at each whole percent of the bar. Two fills
+// on the same grid blend knot by knot, so any fill crossfades into any other (solid and gradient,
+// any stop count, stops anywhere). The grid's precision and the stops' are tied together: stops
+// sit at whole percents (Gradient.MIN_POSITION..MAX_POSITION), so every stop lands on a knot, and a
+// straight segment between knots is the same line CSS draws between the original stops, short of
+// rounding each knot to whole channel values. A solid is 101 equal knots.
+const KNOT_INTERVALS = Gradient.MAX_POSITION - Gradient.MIN_POSITION;
 
 // stop-k is the knot as painted: a color-mix() from from-k to to-k by FADE_PROPERTY. A switch moves
 // to-k to the new fill, sets from-k to what is on screen, and animates FADE_PROPERTY from 0 to 1, so
@@ -81,8 +88,9 @@ export const FILL_IMAGE = `${stripeLayer(`var(${STRIPE_LIGHT})`, `var(${STRIPE_D
 // Chrome's cutoff costs nothing: so close to grey, Oklab and OKLCH look the same.
 const POWERLESS_CHROMA = 0.03;
 // A shorter arc past this is "almost 180°", where a slight color change flips the arc's direction:
-// such a knot follows the rest of the bar. Further from 180° a knot that turns against the bar keeps
-// its own shorter arc, since forcing it round the long way paints a rainbow (up to 248°).
+// such a knot turning against the rest of the bar sends the whole bar to Oklab (see knotMixes).
+// Further from 180° a knot that turns against the bar keeps its own shorter arc, since forcing it
+// round the long way paints a rainbow (up to 248°).
 const NEAR_TIE_DEGREES = 160;
 
 // background-color is the first stop, what the bar settles on under the always-opaque image. The
@@ -104,18 +112,17 @@ export function fillProperties(
   const { light, dark } = stripes ? stripeColors(fill) : { light: 'transparent', dark: 'transparent' };
   const values = [...to, ...fromKnots, ...stops, light, dark];
   return {
-    color: (fill instanceof Gradient ? fill.stops[0] : fill).toHex(),
+    color: (fill instanceof Gradient ? fill.stops[0].color : fill).toHex(),
     properties: FILL_PROPERTIES.map((name, i) => [name, values[i] ?? 'transparent']),
   };
 }
 
-// How each knot mixes from the painted knot to the next: 'oklab' when either end is (nearly) grey,
-// otherwise the OKLCH hue arc, 'shorter' | 'longer'. Each knot takes its shorter arc, except that one
-// whose shorter arc is a near tie (within 20° of 180°) and turns against the bar's net direction goes
-// the long way with it, so a gradient whose knots all sit near 180° from their targets turns one way
-// instead of splitting into two hues with grey where they meet. A painted end with no chroma to read
-// (the transparent first tint) stays on the target's arc: its hue is powerless, so the target's is
-// used.
+// How each knot mixes from the painted knot to the next, one space for the whole bar: the OKLCH
+// shorter hue arc when every knot takes it, otherwise Oklab. Per knot, 'oklab' when either end is
+// (nearly) grey, otherwise the shorter arc, except that one whose shorter arc is a near tie (within
+// 20° of 180°) and turns against the bar's net direction would go the long way with it. A painted end
+// with no chroma to read (the transparent first tint) stays on the target's arc: its hue is
+// powerless, so the target's is used.
 export function knotMixes(from: readonly string[], to: readonly string[]): ('oklab' | 'shorter' | 'longer')[] {
   const ends = to.map((target, k) => [chromaHue(from[k] ?? ''), chromaHue(target)] as const);
   const grey = (end: { chroma: number } | undefined) => end !== undefined && end.chroma < POWERLESS_CHROMA;
@@ -125,13 +132,19 @@ export function knotMixes(from: readonly string[], to: readonly string[]): ('okl
       : ((((q.hue - p.hue) % 360) + 540) % 360) - 180,
   );
   const direction = deltas.reduce<number>((sum, delta) => sum + (delta ?? 0), 0) >= 0 ? 1 : -1;
-  return ends.map(([p, q], k) => {
+  const mixes = ends.map(([p, q], k) => {
     if (q === undefined || grey(p) || grey(q)) return 'oklab';
     const delta = deltas[k];
     return delta !== undefined && Math.abs(delta) > NEAR_TIE_DEGREES && Math.sign(delta) !== direction
       ? 'longer'
       : 'shorter';
   });
+  // One space for the whole bar: a knot mixed in another space than its neighbour paints a seam at
+  // 101 knots (a 1% band, where the sixths of the old 7-knot grid hid it). Every knot on its shorter
+  // arc keeps the arc; a near tie turned the long way or a grey knot anywhere sends the bar to Oklab,
+  // whose straight line is continuous along the bar. So 'longer' never leaves here: the vote follows
+  // the sum's sign, and not every knot can turn against it.
+  return mixes.every((mix) => mix === 'shorter') ? mixes : mixes.map(() => 'oklab');
 }
 
 // OKLCH chroma and hue of '#rrggbb' or of a painted 'oklch(L C H)' / 'oklab(L a b)' (either with
@@ -168,22 +181,11 @@ export function chromaHue(color: string): { chroma: number; hue: number } | unde
   return { chroma: Math.hypot(a, b), hue: hue < 0 ? hue + 360 : hue };
 }
 
-// The fill's color at each knot, linearly interpolated in sRGB between its neighbouring stops (how
-// CSS interpolates opaque hex stops), rounded to '#rrggbb'. Positions are counted in sixths of a
-// segment with integers, so a knot on a stop reads that stop exactly.
+// The fill's color at knot k, k% along the bar, as '#rrggbb': Gradient.colorAt, which interpolates
+// in sRGB between the neighbouring stops (how CSS interpolates opaque hex stops), so a knot on a
+// stop reads that stop exactly.
 export function fillKnots(fill: Fill): string[] {
-  const stops: readonly [Color, ...Color[]] = fill instanceof Gradient ? fill.stops : [fill];
-  return STOP_PROPERTIES.map((_, k) => {
-    const sixths = k * (stops.length - 1);
-    const from = stops[Math.floor(sixths / KNOT_INTERVALS)] ?? stops[0];
-    const to = stops[Math.ceil(sixths / KNOT_INTERVALS)] ?? from;
-    return mix(from, to, (sixths % KNOT_INTERVALS) / KNOT_INTERVALS);
-  });
-}
-
-function mix(from: Color, to: Color, t: number): string {
-  const channels = (color: Color) => [1, 3, 5].map((i) => Number.parseInt(color.toHex().slice(i, i + 2), 16));
-  const target = channels(to);
-  const mixed = channels(from).map((value, i) => Math.round(value + ((target[i] ?? value) - value) * t));
-  return `#${mixed.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+  return STOP_PROPERTIES.map((_, k) =>
+    (fill instanceof Gradient ? fill.colorAt(Gradient.MIN_POSITION + k) : fill).toHex(),
+  );
 }
