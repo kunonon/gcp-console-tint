@@ -109,6 +109,24 @@ function getElements() {
   return { bar, styleEl };
 }
 
+// The fill's registered custom properties (fill-css.ts): seven gradient knots and the stripe pair.
+const STOPS = Array.from({ length: 7 }, (_, k) => `--gcp-console-tint-stop-${k}`);
+const STRIPE_LIGHT = '--gcp-console-tint-stripe-light';
+const STRIPE_DARK = '--gcp-console-tint-stripe-dark';
+// The fixed image both bars paint: stripes over the 7-knot gradient, every color a property.
+const FILL_IMAGE = `repeating-linear-gradient(-45deg, var(${STRIPE_LIGHT}) 0 8px, var(${STRIPE_DARK}) 8px 16px), linear-gradient(to right, ${STOPS.map((name) => `var(${name})`).join(', ')})`;
+// background-color steps to the first knot after the knots' fade, so the color underneath stays
+// the previous one while they fade.
+const COLOR_TRANSITIONS = [
+  'background-color 0s linear 300ms',
+  ...[...STOPS, STRIPE_LIGHT, STRIPE_DARK].map((name) => `${name} 300ms ease`),
+].join(', ');
+
+// The top bar's inline stripe pair.
+function stripePair(bar: HTMLElement) {
+  return [bar.style.getPropertyValue(STRIPE_LIGHT), bar.style.getPropertyValue(STRIPE_DARK)];
+}
+
 // Flushes the microtask queue so the async `browser.storage.local.get(...).then(...)`
 // inside main() has a chance to resolve and apply before assertions run.
 async function flush() {
@@ -255,7 +273,7 @@ describe('content script', () => {
     expect(styleEl.textContent).toContain('background-size: auto !important;');
   });
 
-  it('keeps viewport background properties after a live height change and removes disabled stripes', async () => {
+  it('keeps viewport background properties after a live height change and makes disabled stripes transparent', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({ topBar: { height: 1, stripes: true }, platformBar: { stripes: true } }),
     );
@@ -283,11 +301,16 @@ describe('content script', () => {
     );
     await flush();
 
-    expect(bar.style.backgroundImage).toBe('');
-    expect(styleEl.textContent).not.toContain('background-image');
-    expect(styleEl.textContent).not.toContain('background-attachment');
-    expect(styleEl.textContent).not.toContain('background-position');
-    expect(styleEl.textContent).not.toContain('background-size');
+    // Stripes stay a layer with transparent colors, so turning them off fades rather than snaps.
+    expect(stripePair(bar)).toEqual(['transparent', 'transparent']);
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
+    expect(styleEl.textContent).toContain(
+      `${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: transparent !important;`,
+    );
+    expect(styleEl.textContent).toContain(`background-image: ${FILL_IMAGE} !important;`);
+    expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
+    expect(styleEl.textContent).toContain('background-position: 0 0 !important;');
+    expect(styleEl.textContent).toContain('background-size: auto !important;');
   });
 
   it('applies the Top bar stripe gradient when topBarStripes is enabled', async () => {
@@ -300,11 +323,11 @@ describe('content script', () => {
     await flush();
 
     const { bar } = getElements();
-    expect(bar.style.backgroundImage).toContain('repeating-linear-gradient');
-    expect(bar.style.backgroundImage).toContain('rgba(0, 0, 0, 0.3)');
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
+    expect(stripePair(bar)).toEqual(['transparent', 'rgba(0, 0, 0, 0.3)']);
   });
 
-  it('omits the Top bar background image when topBarStripes is disabled', async () => {
+  it('makes the Top bar stripes transparent when topBarStripes is disabled', async () => {
     await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { stripes: false } }));
     setTestProjectLocation();
 
@@ -312,7 +335,7 @@ describe('content script', () => {
     await flush();
 
     const { bar } = getElements();
-    expect(bar.style.backgroundImage).toBe('');
+    expect(stripePair(bar)).toEqual(['transparent', 'transparent']);
   });
 
   it('applies the Platform Bar stripe gradient to the CSS rule when platformBarStripes is enabled', async () => {
@@ -326,8 +349,10 @@ describe('content script', () => {
 
     const { styleEl } = getElements();
     expect(styleEl.textContent).toContain('#ocb-platform-bar');
-    expect(styleEl.textContent).toContain('background-image: repeating-linear-gradient');
-    expect(styleEl.textContent).toContain('rgba(255, 255, 255, 0.3)');
+    expect(styleEl.textContent).toContain(`background-image: ${FILL_IMAGE} !important;`);
+    expect(styleEl.textContent).toContain(
+      `${STRIPE_LIGHT}: rgba(255, 255, 255, 0.3) !important; ${STRIPE_DARK}: transparent !important;`,
+    );
   });
 
   it.each([
@@ -346,15 +371,15 @@ describe('content script', () => {
     await flush();
 
     const { bar, styleEl } = getElements();
-    const brightFirst = 'repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.3) 0 8px, transparent 8px 16px)';
-    const darkSecond = 'repeating-linear-gradient(-45deg, transparent 0 8px, rgba(0, 0, 0, 0.3) 8px 16px)';
-    const topBarGradient = topBarColor === '#7744ee' ? brightFirst : darkSecond;
-    const platformBarGradient = platformBarColor === '#7744ee' ? brightFirst : darkSecond;
-    expect(bar.style.backgroundImage).toBe(topBarGradient);
-    expect(styleEl.textContent).toContain(`background-image: ${platformBarGradient} !important;`);
+    const brightFirst = ['rgba(255, 255, 255, 0.3)', 'transparent'];
+    const darkSecond = ['transparent', 'rgba(0, 0, 0, 0.3)'];
+    const topBarPair = topBarColor === '#7744ee' ? brightFirst : darkSecond;
+    const [light, dark] = platformBarColor === '#7744ee' ? brightFirst : darkSecond;
+    expect(stripePair(bar)).toEqual(topBarPair);
+    expect(styleEl.textContent).toContain(`${STRIPE_LIGHT}: ${light} !important; ${STRIPE_DARK}: ${dark} !important;`);
   });
 
-  it('omits the background-image declaration when platformBarStripes is disabled', async () => {
+  it('makes the Platform Bar stripes transparent when platformBarStripes is disabled', async () => {
     await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBar: { stripes: false } }));
     setTestProjectLocation();
 
@@ -362,10 +387,10 @@ describe('content script', () => {
     await flush();
 
     const { styleEl } = getElements();
-    expect(styleEl.textContent).not.toContain('background-image');
-    expect(styleEl.textContent).not.toContain('background-attachment');
-    expect(styleEl.textContent).not.toContain('background-position');
-    expect(styleEl.textContent).not.toContain('background-size');
+    expect(styleEl.textContent).toContain(
+      `${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: transparent !important;`,
+    );
+    expect(styleEl.textContent).toContain(`background-image: ${FILL_IMAGE} !important;`);
   });
 
   it('follows the resolved palette color for stripe tinting on both Top bar and Platform Bar', async () => {
@@ -383,8 +408,8 @@ describe('content script', () => {
 
     const { bar, styleEl } = getElements();
     // Bright palette color -> black-tinted stripes on both.
-    expect(bar.style.backgroundImage).toContain('rgba(0, 0, 0, 0.3)');
-    expect(styleEl.textContent).toContain('rgba(0, 0, 0, 0.3)');
+    expect(stripePair(bar)).toEqual(['transparent', 'rgba(0, 0, 0, 0.3)']);
+    expect(styleEl.textContent).toContain(`${STRIPE_DARK}: rgba(0, 0, 0, 0.3) !important;`);
   });
 
   it('applies settings already stored before load, including palette reference resolution', async () => {
@@ -1124,7 +1149,7 @@ describe('content script', () => {
       expect(styleEl.textContent).toContain('transition:');
     });
 
-    it('applies background-color/height transitions to the bar element when motion is not reduced', async () => {
+    it('applies the color and height transitions to the bar element when motion is not reduced', async () => {
       await fakeBrowser.storage.local.set(
         tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
       );
@@ -1134,8 +1159,7 @@ describe('content script', () => {
       await flush();
 
       const { bar } = getElements();
-      expect(bar.style.transition).toContain('background-color');
-      expect(bar.style.transition).toContain('height');
+      expect(bar.style.transition).toBe(`${COLOR_TRANSITIONS}, height 200ms ease`);
     });
 
     it('adds transition declarations to the generated Platform Bar and text CSS rules', async () => {
@@ -1148,7 +1172,7 @@ describe('content script', () => {
       await flush();
 
       const { styleEl } = getElements();
-      expect(styleEl.textContent).toContain('transition: background-color 300ms ease !important');
+      expect(styleEl.textContent).toContain(`transition: ${COLOR_TRANSITIONS} !important;`);
       expect(styleEl.textContent).toContain('transition: color 300ms ease !important');
     });
 
@@ -1171,6 +1195,8 @@ describe('content script', () => {
         const { bar, styleEl } = getElements();
         expect(bar.style.transition).toBe('');
         expect(styleEl.textContent).not.toContain('transition');
+        // The properties still carry the colors; only the fade is gone.
+        expect(bar.style.getPropertyValue(STOPS[0] ?? '')).toBe('#111111');
       });
     });
   });
@@ -1178,11 +1204,9 @@ describe('content script', () => {
 
 describe('gradient fills', () => {
   const SUNSET = { stops: ['#ff6d00', '#1a73e8'] };
-  const SUNSET_CSS = 'linear-gradient(to right, #ff6d00, #1a73e8)';
-  // '#ff6d00' to '#1a73e8' keeps black stripes: its worst black contrast beats its worst white one.
-  const BLACK_STRIPES = 'repeating-linear-gradient(-45deg, transparent 0 8px, rgba(0, 0, 0, 0.3) 8px 16px)';
-  // jsdom serialises the hex stops inside an inline gradient as rgb().
-  const SUNSET_INLINE = /linear-gradient\(to right, rgb\(255, 109, 0\), rgb\(26, 115, 232\)\)$/;
+  // SUNSET sampled at the seven knots (fill-css.test.ts pins the sampling itself).
+  const SUNSET_KNOTS = ['#ff6d00', '#d96e27', '#b36f4d', '#8d7074', '#66719b', '#4072c1', '#1a73e8'];
+  const SUNSET_DECLARATIONS = STOPS.map((name, k) => `${name}: ${SUNSET_KNOTS[k]} !important;`).join(' ');
 
   async function apply(settings: ProjectSettingsOverrides) {
     await fakeBrowser.storage.local.set(tintSettingsWithRule(settings));
@@ -1196,16 +1220,17 @@ describe('gradient fills', () => {
     const { bar } = await apply({ topBar: { color: { paletteId: null, custom: SUNSET }, stripes: false } });
 
     expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
-    expect(bar.style.backgroundImage).toMatch(SUNSET_INLINE);
-    expect(bar.style.backgroundImage).not.toContain('repeating-linear-gradient');
+    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+    expect(stripePair(bar)).toEqual(['transparent', 'transparent']);
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
   });
 
   it('lays the stripes over a gradient top bar', async () => {
     const { bar } = await apply({ topBar: { color: { paletteId: null, custom: SUNSET }, stripes: true } });
 
-    expect(bar.style.backgroundImage.startsWith('repeating-linear-gradient(')).toBe(true);
-    expect(bar.style.backgroundImage).toContain('rgba(0, 0, 0, 0.3)');
-    expect(bar.style.backgroundImage).toMatch(SUNSET_INLINE);
+    // '#ff6d00' to '#1a73e8' keeps black stripes: its worst black contrast beats its worst white one.
+    expect(stripePair(bar)).toEqual(['transparent', 'rgba(0, 0, 0, 0.3)']);
+    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
   });
 
   it('writes a gradient platform bar with the viewport-anchored image declarations, without stripes', async () => {
@@ -1215,15 +1240,49 @@ describe('gradient fills', () => {
     });
 
     expect(styleEl.textContent).toContain(
-      `#ocb-platform-bar { background-color: #ff6d00 !important; background-image: ${SUNSET_CSS} !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important; transition: background-color 300ms ease !important; }`,
+      `#ocb-platform-bar { background-color: #ff6d00 !important; ${SUNSET_DECLARATIONS} ${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: transparent !important; background-image: ${FILL_IMAGE} !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important; transition: ${COLOR_TRANSITIONS} !important; }`,
     );
   });
 
-  it('lists the stripes before the gradient on the platform bar', async () => {
+  it('tints the platform bar stripes over a gradient', async () => {
     const { styleEl } = await apply({ platformBar: { color: { paletteId: null, custom: SUNSET }, stripes: true } });
 
-    expect(styleEl.textContent).toContain(`background-image: ${BLACK_STRIPES}, ${SUNSET_CSS} !important;`);
+    expect(styleEl.textContent).toContain(
+      `${SUNSET_DECLARATIONS} ${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: rgba(0, 0, 0, 0.3) !important;`,
+    );
     expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
+  });
+
+  // Same grid on both sides is what lets the transition blend knot by knot.
+  it('moves the knots to the next rule on a project switch, from a gradient to a solid', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        projectRules: [
+          {
+            id: 'g',
+            matchType: 'exact',
+            pattern: 'sunset',
+            settings: { topBar: { color: { paletteId: null, custom: SUNSET } } },
+          },
+          {
+            id: 's',
+            matchType: 'exact',
+            pattern: 'navy',
+            settings: { topBar: { color: { paletteId: null, custom: '#000080' } } },
+          },
+        ],
+      }),
+    );
+    setLocation('/?project=sunset');
+    runContentScript();
+    await flush();
+    const { bar } = getElements();
+    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+
+    triggerLocationChange('/?project=navy');
+
+    expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(7).fill('#000080'));
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
   });
 
   it.each([
@@ -1245,5 +1304,27 @@ describe('gradient fills', () => {
     });
 
     expect(styleEl.textContent).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
+  });
+});
+
+describe('fill property registrations', () => {
+  it('registers the fill properties once, in a style element of their own that survives an unmatched project', async () => {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({}));
+    setTestProjectLocation();
+    runContentScript();
+    await flush();
+    triggerLocationChange('/?project=unknown-project');
+
+    const styles = Array.from(document.documentElement.children).filter((el) => el.tagName === 'STYLE');
+    const registrations = styles.filter((el) => el.textContent?.includes('@property'));
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]?.textContent?.match(/@property /g)).toHaveLength(9);
+    for (const name of [...STOPS, STRIPE_LIGHT, STRIPE_DARK]) {
+      expect(registrations[0]?.textContent).toContain(
+        `@property ${name} { syntax: '<color>'; inherits: false; initial-value: transparent; }`,
+      );
+    }
+    // The rule element (the first <style>) is the one emptied, not the registrations.
+    expect(getElements().styleEl.textContent).toBe('');
   });
 });

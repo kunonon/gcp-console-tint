@@ -78,7 +78,7 @@ export default function FillEditor({
   // A gradient shortened from outside (another rule, a palette edit) keeps the last stop in view.
   const current = Math.min(selected, stops.length - 1);
   const editing = stops[current] ?? stops[0];
-  const { color, image } = fillBackground(value, false);
+  const { color, image } = fillBackground(value);
 
   // Add and Remove say where focus goes next; the effect below moves it once the new stops are
   // on screen (the parent saves synchronously, so they are in the same commit). Nothing else sets

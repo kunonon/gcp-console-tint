@@ -32,7 +32,7 @@ const SELECTED = 'ring-2 ring-focus ring-offset-2 ring-offset-overlay';
 // A bead's fill as longhands, never the `background` shorthand: it would reset the
 // background-origin .color-chip sets in style.css.
 const chipStyle = (fill: Fill) => {
-  const { color, image } = fillBackground(fill, false);
+  const { color, image } = fillBackground(fill);
   return { backgroundColor: color, backgroundImage: image };
 };
 

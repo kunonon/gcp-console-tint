@@ -17,6 +17,36 @@ function textColor(color) {
   return { enabled: true, color: { paletteId: null, custom: color }, auto: false };
 }
 
+// The bars paint one fixed image whose colors are registered custom properties: seven gradient knots
+// and a stripe pair, transitioned so a gradient or stripes crossfade between projects.
+const STOPS = Array.from({ length: 7 }, (_, k) => `--gcp-console-tint-stop-${k}`);
+const FILL_PROPERTIES = [...STOPS, '--gcp-console-tint-stripe-light', '--gcp-console-tint-stripe-dark'];
+const COLOR_TRANSITION_NAMES = ['background-color', ...FILL_PROPERTIES];
+// background-color steps to the first knot after the knots' 300ms fade, so the previous color stays
+// underneath while they fade in.
+const COLOR_TRANSITIONS = [
+  'background-color 0s linear 300ms',
+  ...FILL_PROPERTIES.map((name) => `${name} 300ms ease`),
+].join(', ');
+const FILL_IMAGE = `repeating-linear-gradient(-45deg, var(--gcp-console-tint-stripe-light) 0 8px, var(--gcp-console-tint-stripe-dark) 8px 16px), linear-gradient(to right, ${STOPS.map((name) => `var(${name})`).join(', ')})`;
+const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+
+// The computed background-image, the same in Chrome and Firefox: the var() references resolve to
+// rgb()/rgba() colors, the stripe stops gain explicit positions, and the stripe layer comes first,
+// so it is drawn over the gradient. Stripes that are off are a transparent layer.
+function paintedImage(knots, light = TRANSPARENT, dark = TRANSPARENT) {
+  return `repeating-linear-gradient(-45deg, ${light} 0px, ${light} 8px, ${dark} 8px, ${dark} 16px), linear-gradient(to right, ${knots.join(', ')})`;
+}
+
+// The image always has two layers under one specified attachment, position and size, which an
+// engine may list once or once per layer (Chrome lists all three per layer, Firefox only the size).
+function everyLayer(value, expected, label) {
+  assert.ok(
+    value.split(',').every((layer) => layer.trim() === expected),
+    `${label} should be ${expected} on every layer, got ${value}`,
+  );
+}
+
 async function setStored(h, value, extra = {}) {
   const { browser } = h;
   await browser.switchToWindow(h.panelHandle);
@@ -72,7 +102,7 @@ async function pushHistoryUrl(h, path) {
 async function colorStyle(h) {
   const { browser } = h;
   await browser.switchToWindow(h.mockHandle);
-  return browser.execute(() => {
+  return browser.execute((names) => {
     const overlay = [...document.documentElement.children].find(
       (element) =>
         element.tagName === 'DIV' && element.style.position === 'fixed' && element.style.zIndex === '2147483647',
@@ -88,6 +118,7 @@ async function colorStyle(h) {
       overlayTransitionProperty: overlayStyle?.transitionProperty ?? null,
       overlayTransitionDuration: overlayStyle?.transitionDuration ?? null,
       overlayTransitionTimingFunction: overlayStyle?.transitionTimingFunction ?? null,
+      overlayTransitionDelay: overlayStyle?.transitionDelay ?? null,
       overlayPosition: overlay?.style.position ?? null,
       overlayTop: overlay?.style.top ?? null,
       overlayLeft: overlay?.style.left ?? null,
@@ -101,14 +132,17 @@ async function colorStyle(h) {
       platformTransitionProperty: platformStyle?.transitionProperty ?? null,
       platformTransitionDuration: platformStyle?.transitionDuration ?? null,
       platformTransitionTimingFunction: platformStyle?.transitionTimingFunction ?? null,
+      platformTransitionDelay: platformStyle?.transitionDelay ?? null,
       textTransitionProperty: textStyle?.transitionProperty ?? null,
       textTransitionDuration: textStyle?.transitionDuration ?? null,
       textTransitionTimingFunction: textStyle?.transitionTimingFunction ?? null,
       platformBackgroundAttachment: platformStyle?.backgroundAttachment ?? null,
       platformBackgroundPosition: platformStyle?.backgroundPosition ?? null,
       platformBackgroundSize: platformStyle?.backgroundSize ?? null,
+      overlayFill: overlayStyle ? names.map((name) => overlayStyle.getPropertyValue(name)) : null,
+      platformFill: platformStyle ? names.map((name) => platformStyle.getPropertyValue(name)) : null,
     };
-  });
+  }, FILL_PROPERTIES);
 }
 
 for (const browserName of browserTargets()) {
@@ -401,22 +435,29 @@ for (const browserName of browserTargets()) {
         ),
       );
 
+      // Striped solids: seven equal knots under the stripe pair the contrast rule picks, black
+      // stripes on #00aa00 (black text contrast 6.7 beats white 3.1) and white ones on #cc3300
+      // (white 5.2 beats black 4.0).
+      const alphaTop = paintedImage(Array(7).fill('rgb(0, 170, 0)'), TRANSPARENT, 'rgba(0, 0, 0, 0.3)');
+      const alphaPlatform = paintedImage(Array(7).fill('rgb(204, 51, 0)'), 'rgba(255, 255, 255, 0.3)', TRANSPARENT);
       await h.openConsole('alpha');
       let snapshot = await snapshotWhen(
         h,
         (value) =>
           value.topBar.backgroundColor === 'rgb(0, 170, 0)' &&
           value.platformBar.backgroundColor === 'rgb(204, 51, 0)' &&
+          value.topBar.backgroundImage === alphaTop &&
+          value.platformBar.backgroundImage === alphaPlatform &&
           Object.values(value.platformBar.textColors).every((color) => color === 'rgb(17, 34, 204)'),
-        'palette and text colors did not settle for alpha',
+        'palette, stripe and text colors did not settle for alpha',
       );
       const css = await colorStyle(h);
       assert.equal(
         await h.browser.execute(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches),
         h.reducedMotion,
       );
-      assert.match(snapshot.topBar.backgroundImage, /gradient/);
-      assert.match(snapshot.platformBar.backgroundImage, /gradient/);
+      assert.equal(snapshot.topBar.backgroundImage, alphaTop);
+      assert.equal(snapshot.platformBar.backgroundImage, alphaPlatform);
       assert.equal(css.overlayBackgroundAttachment, 'fixed');
       assert.equal(css.overlayBackgroundPosition, '0px 0px');
       assert.equal(css.overlayBackgroundSize, 'auto');
@@ -427,13 +468,37 @@ for (const browserName of browserTargets()) {
       assert.equal(css.overlayZIndex, '2147483647');
       assert.equal(css.overlayPointerEvents, 'none');
       if (!h.reducedMotion) {
+        const colorCount = COLOR_TRANSITION_NAMES.length;
+        // background-color is a step delayed by the knots' fade; everything else starts at once.
+        const fadeCount = colorCount - 1;
         assert.deepEqual(
-          [css.overlayTransitionProperty, css.overlayTransitionDuration, css.overlayTransitionTimingFunction],
-          ['background-color, height', '0.3s, 0.2s', 'ease, ease'],
+          [
+            css.overlayTransitionProperty,
+            css.overlayTransitionDuration,
+            css.overlayTransitionTimingFunction,
+            css.overlayTransitionDelay,
+          ],
+          [
+            [...COLOR_TRANSITION_NAMES, 'height'].join(', '),
+            ['0s', ...Array(fadeCount).fill('0.3s'), '0.2s'].join(', '),
+            ['linear', ...Array(fadeCount + 1).fill('ease')].join(', '),
+            ['0.3s', ...Array(fadeCount + 1).fill('0s')].join(', '),
+          ],
         );
+        // The platform bar transitions every knot and the stripe pair, not only background-color.
         assert.deepEqual(
-          [css.platformTransitionProperty, css.platformTransitionDuration, css.platformTransitionTimingFunction],
-          ['background-color', '0.3s', 'ease'],
+          [
+            css.platformTransitionProperty,
+            css.platformTransitionDuration,
+            css.platformTransitionTimingFunction,
+            css.platformTransitionDelay,
+          ],
+          [
+            COLOR_TRANSITION_NAMES.join(', '),
+            ['0s', ...Array(fadeCount).fill('0.3s')].join(', '),
+            ['linear', ...Array(fadeCount).fill('ease')].join(', '),
+            ['0.3s', ...Array(fadeCount).fill('0s')].join(', '),
+          ],
         );
         assert.deepEqual(
           [css.textTransitionProperty, css.textTransitionDuration, css.textTransitionTimingFunction],
@@ -441,16 +506,16 @@ for (const browserName of browserTargets()) {
         );
         assert.match(
           css.platformTransition,
-          /#ocb-platform-bar\s*\{[^}]*transition: background-color 300ms ease !important;/,
+          new RegExp(`#ocb-platform-bar\\s*\\{[^}]*${RegExp.escape(`transition: ${COLOR_TRANSITIONS} !important;`)}`),
         );
         assert.match(
           css.platformTransition,
           /\.cfc-platform-bar-left \*, \.cfc-platform-bar-right \*, \.pcc-platform-bar-button \*\s*\{[^}]*transition: color 300ms ease !important;/,
         );
       }
-      assert.equal(css.platformBackgroundAttachment, 'fixed');
-      assert.equal(css.platformBackgroundPosition, '0px 0px');
-      assert.equal(css.platformBackgroundSize, 'auto');
+      everyLayer(css.platformBackgroundAttachment, 'fixed', 'the platform bar attachment');
+      everyLayer(css.platformBackgroundPosition, '0px 0px', 'the platform bar position');
+      everyLayer(css.platformBackgroundSize, 'auto', 'the platform bar size');
 
       await h.browser.execute(() => {
         const left = document.querySelector('.cfc-platform-bar-left');
@@ -481,15 +546,16 @@ for (const browserName of browserTargets()) {
           value.href.includes('project=beta') &&
           value.topBar.backgroundColor === 'rgb(0, 0, 204)' &&
           value.platformBar.backgroundColor === 'rgb(0, 0, 204)' &&
-          value.topBar.backgroundImage === 'none' &&
-          value.platformBar.backgroundImage === 'none' &&
+          value.topBar.backgroundImage === paintedImage(Array(7).fill('rgb(0, 0, 204)')) &&
+          value.platformBar.backgroundImage === paintedImage(Array(7).fill('rgb(0, 0, 204)')) &&
           Object.values(value.platformBar.textColors).every((color) => color === 'rgb(34, 136, 68)'),
         'rule-scoped palette did not settle for beta',
       );
       assert.equal(snapshot.topBar.backgroundColor, 'rgb(0, 0, 204)', 'same palette id resolves within the beta rule');
       assert.equal(snapshot.platformBar.backgroundColor, 'rgb(0, 0, 204)');
-      assert.equal(snapshot.topBar.backgroundImage, 'none');
-      assert.equal(snapshot.platformBar.backgroundImage, 'none');
+      // A solid without stripes is seven equal knots under a transparent stripe layer.
+      assert.equal(snapshot.topBar.backgroundImage, paintedImage(Array(7).fill('rgb(0, 0, 204)')));
+      assert.equal(snapshot.platformBar.backgroundImage, paintedImage(Array(7).fill('rgb(0, 0, 204)')));
       assert.deepEqual(Object.values(snapshot.platformBar.textColors), Array(3).fill('rgb(34, 136, 68)'));
 
       await h.openConsole('disabled');
@@ -568,20 +634,27 @@ for (const browserName of browserTargets()) {
             'exact',
             gradientSettings(true, { enabled: true, color: { paletteId: 'sunrise', custom: '#1122cc' }, auto: false }),
           ),
+          // A solid to switch to from the gradient: every knot has to move to the one color.
+          rule(
+            'solid',
+            'solid',
+            'exact',
+            projectSettings({ topBar: topBar('#0000cc'), platformBar: platformBar('#0000cc') }),
+          ),
         ),
       );
-      // The computed values, the same in Chrome and Firefox: hex stops come back as rgb() with no
-      // positions, and the stripe layer comes first, so it is drawn over the gradient.
-      const gradient = 'linear-gradient(to right, rgb(255, 109, 0), rgb(26, 115, 232))';
-      const striped = `repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0) 8px, rgba(0, 0, 0, 0.3) 8px, rgba(0, 0, 0, 0.3) 16px), ${gradient}`;
-      // Under stripes the platform bar has two image layers and one specified attachment, position
-      // and size, which an engine may list once or once per layer (Chrome lists all three per
-      // layer, Firefox only the size).
-      const everyLayer = (value, expected, label) =>
-        assert.ok(
-          value.split(',').every((layer) => layer.trim() === expected),
-          `${label} should be ${expected} on every layer, got ${value}`,
-        );
+      // Sunrise sampled at the seven knots k/6, linear in sRGB between the two stops.
+      const knots = [
+        'rgb(255, 109, 0)',
+        'rgb(217, 110, 39)',
+        'rgb(179, 111, 77)',
+        'rgb(141, 112, 116)',
+        'rgb(102, 113, 155)',
+        'rgb(64, 114, 193)',
+        'rgb(26, 115, 232)',
+      ];
+      const gradient = paintedImage(knots);
+      const striped = paintedImage(knots, TRANSPARENT, 'rgba(0, 0, 0, 0.3)');
 
       await h.openConsole('plain');
       let snapshot = await snapshotWhen(
@@ -594,24 +667,28 @@ for (const browserName of browserTargets()) {
           Object.values(value.platformBar.textColors).every((color) => color === 'rgb(0, 0, 0)'),
         'gradient fills and auto text did not settle for plain',
       );
-      // The color underneath is the first stop, so the crossfade has a target and the image is all
-      // that snaps.
+      // The color underneath is the first stop, as before gradients.
       assert.equal(snapshot.topBar.backgroundColor, 'rgb(255, 109, 0)');
       assert.equal(snapshot.platformBar.backgroundColor, 'rgb(255, 109, 0)');
       assert.equal(snapshot.topBar.backgroundImage, gradient);
       assert.equal(snapshot.platformBar.backgroundImage, gradient);
       assert.deepEqual(Object.values(snapshot.platformBar.textColors), Array(3).fill('rgb(0, 0, 0)'));
       let css = await colorStyle(h);
-      // The rule's own text is engine-independent: the gradient and the fixed viewport box are
-      // declared without stripes too, so both bars show the same color at the same x.
-      assert.match(
-        css.platformTransition,
-        /#ocb-platform-bar \{ background-color: #ff6d00 !important; background-image: linear-gradient\(to right, #ff6d00, #1a73e8\) !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important;/,
+      // The rule's own text is engine-independent: the knots, the transparent stripe pair, the image
+      // template and the fixed viewport box, so both bars show the same color at the same x.
+      const knotHexes = ['#ff6d00', '#d96e27', '#b36f4d', '#8d7074', '#66719b', '#4072c1', '#1a73e8'];
+      assert.ok(
+        css.platformTransition.includes(
+          `#ocb-platform-bar { background-color: #ff6d00 !important; ${STOPS.map((name, k) => `${name}: ${knotHexes[k]} !important;`).join(' ')} --gcp-console-tint-stripe-light: transparent !important; --gcp-console-tint-stripe-dark: transparent !important; background-image: ${FILL_IMAGE} !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important;`,
+        ),
+        `unexpected platform bar rule: ${css.platformTransition}`,
       );
+      assert.deepEqual(css.overlayFill, [...knots, TRANSPARENT, TRANSPARENT]);
+      assert.deepEqual(css.platformFill, [...knots, TRANSPARENT, TRANSPARENT]);
       assert.equal(css.overlayBackgroundAttachment, 'fixed');
-      assert.equal(css.platformBackgroundAttachment, 'fixed');
-      assert.equal(css.platformBackgroundPosition, '0px 0px');
-      assert.equal(css.platformBackgroundSize, 'auto');
+      everyLayer(css.platformBackgroundAttachment, 'fixed', 'the platform bar attachment');
+      everyLayer(css.platformBackgroundPosition, '0px 0px', 'the platform bar position');
+      everyLayer(css.platformBackgroundSize, 'auto', 'the platform bar size');
 
       await pushHistoryUrl(h, '/?project=striped');
       snapshot = await snapshotWhen(
@@ -631,6 +708,25 @@ for (const browserName of browserTargets()) {
       everyLayer(css.platformBackgroundAttachment, 'fixed', 'the platform bar attachment');
       everyLayer(css.platformBackgroundPosition, '0px 0px', 'the platform bar position');
       everyLayer(css.platformBackgroundSize, 'auto', 'the platform bar size');
+      // Stripes turned on by the switch are the registered stripe colors, which is what fades them.
+      assert.deepEqual(css.platformFill.slice(7), [TRANSPARENT, 'rgba(0, 0, 0, 0.3)']);
+
+      // From the gradient to a solid, the knots are what change; the image itself stays the same
+      // template, so the switch is a transition of the properties rather than a new image.
+      await pushHistoryUrl(h, '/?project=solid');
+      snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=solid') &&
+          value.platformBar.backgroundColor === 'rgb(0, 0, 204)' &&
+          value.topBar.backgroundImage === paintedImage(Array(7).fill('rgb(0, 0, 204)')) &&
+          value.platformBar.backgroundImage === paintedImage(Array(7).fill('rgb(0, 0, 204)')),
+        'the knots did not move from the gradient to the solid for solid',
+      );
+      css = await colorStyle(h);
+      assert.deepEqual(css.overlayFill, [...Array(7).fill('rgb(0, 0, 204)'), TRANSPARENT, TRANSPARENT]);
+      assert.deepEqual(css.platformFill, [...Array(7).fill('rgb(0, 0, 204)'), TRANSPARENT, TRANSPARENT]);
+      assert.equal(snapshot.platformBar.backgroundColor, 'rgb(0, 0, 204)');
     });
 
     test('reacts to push, replace, back, and forward without reloading, and to shared storage changes', async () => {

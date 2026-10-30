@@ -17,7 +17,7 @@ interface ColorSwatchFieldProps {
 export default function ColorSwatchField({ ariaLabel, value, onChange, hexHidableOnNarrow }: ColorSwatchFieldProps) {
   // Controlled so Enter in the hex input can close it (focus then returns to the trigger).
   const [open, setOpen] = useState(false);
-  const { color, image } = fillBackground(value, false);
+  const { color, image } = fillBackground(value);
   const label = value instanceof Gradient ? 'Gradient' : value.toHex();
 
   return (
