@@ -8,7 +8,7 @@ export interface DeleteConfirmItem {
   text: string;
   /** Small muted text at the row's end, e.g. the rule's match type. */
   detail?: string;
-  /** A CSS color for a dot before the text (palette entries). */
+  /** A CSS background (a color or a gradient) for a dot before the text (palette entries). */
   swatch?: string;
 }
 

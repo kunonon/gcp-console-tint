@@ -14,7 +14,13 @@ import { parseSettingsFile } from '../settings-file';
 // purpose rather than imported, so the element-by-element walk is checked against Zod's own issue
 // order and wording. It is only ever run on plain arrays, never on the recording Proxies below
 // (it would read every element and spoil their counts).
+// The bars and the palette entries take a fill (a string or { stops }); the text keeps a string.
+const oracleFill = z.union(
+  [z.string(), z.object({ stops: z.array(z.object({ color: z.string(), position: z.number() })) })],
+  { error: 'expected a color string or a gradient object with a stops array of { color, position }' },
+);
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
+const oracleFillSelection = z.object({ paletteId: z.string().nullable(), custom: oracleFill });
 const oracleSchema = z.object({
   theme: z.string(),
   projectRules: z.array(
@@ -25,10 +31,15 @@ const oracleSchema = z.object({
       settings: z.object({
         palette: z.object({
           enabled: z.boolean(),
-          entries: z.array(z.object({ id: z.string(), name: z.string(), color: z.string() })),
+          entries: z.array(z.object({ id: z.string(), name: z.string(), color: oracleFill })),
         }),
-        topBar: z.object({ enabled: z.boolean(), color: oracleSelection, height: z.number(), stripes: z.boolean() }),
-        platformBar: z.object({ enabled: z.boolean(), color: oracleSelection, stripes: z.boolean() }),
+        topBar: z.object({
+          enabled: z.boolean(),
+          color: oracleFillSelection,
+          height: z.number(),
+          stripes: z.boolean(),
+        }),
+        platformBar: z.object({ enabled: z.boolean(), color: oracleFillSelection, stripes: z.boolean() }),
         platformBarText: z.object({ enabled: z.boolean(), color: oracleSelection, auto: z.boolean() }),
       }),
     }),
@@ -185,6 +196,24 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
       Array.from({ length: 100 }, (_, j) => `projectRules[0].settings.palette.entries[${j}].id`),
     );
     expect(failure.validationStopped).toBe(true);
+  });
+
+  // The fill union collapses a bad stops array into one issue at the fill's own path.
+  it('reports 150 non-object stops in one entry as a single issue at its color', () => {
+    const rule = validRule('only');
+    rule.settings.palette.entries[0].color = { stops: Array.from({ length: 150 }, () => 1) };
+    const data = { theme: 'auto', projectRules: [rule] };
+
+    const { failure } = invalidFieldsOf(data);
+
+    expect(failure.issues).toEqual(oracleIssues(data));
+    expect(failure.issues).toEqual([
+      {
+        path: 'projectRules[0].settings.palette.entries[0].color',
+        message: 'expected a color string or a gradient object with a stops array of { color, position }',
+      },
+    ]);
+    expect('validationStopped' in failure).toBe(false);
   });
 });
 
@@ -357,6 +386,52 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     expect(failure.issues).toEqual(
       Array.from({ length: 100 }, (_, j) => ({
         path: `projectRules[0].settings.palette.entries[${j}].color`,
+        message: 'expected a color like #rrggbb',
+      })),
+    );
+    expect(failure.validationStopped).toBe(true);
+  });
+
+  it('150 bad stop colors in one gradient stop at stops[100], before the stops count is judged', () => {
+    const rule = validRule('only');
+    rule.settings.palette.entries[0].color = {
+      stops: Array.from({ length: 150 }, (_, j) => ({ color: 'bad', position: j })),
+    };
+    clearSpies();
+
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
+
+    expect(calls()).toEqual([1, 101, 0]);
+    expect(failure.issues).toEqual(
+      Array.from({ length: 100 }, (_, j) => ({
+        path: `projectRules[0].settings.palette.entries[0].color.stops[${j}].color`,
+        message: 'expected a color like #rrggbb',
+      })),
+    );
+    expect(failure.validationStopped).toBe(true);
+  });
+
+  it('101 gradient entries with a bad first stop color stop at entries[100].color.stops[0].color', () => {
+    const rule = validRule('only');
+    rule.settings.palette.entries = Array.from({ length: 101 }, (_, j) => ({
+      id: `e${j}`,
+      name: 'n',
+      color: {
+        stops: [
+          { color: 'bad', position: 0 },
+          { color: '#000000', position: 100 },
+        ],
+      },
+    }));
+    clearSpies();
+
+    const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
+
+    // Entries 0..99 judge both stops; entry 100 stops at its first.
+    expect(calls()).toEqual([1, 100 * 2 + 1, 0]);
+    expect(failure.issues).toEqual(
+      Array.from({ length: 100 }, (_, j) => ({
+        path: `projectRules[0].settings.palette.entries[${j}].color.stops[0].color`,
         message: 'expected a color like #rrggbb',
       })),
     );

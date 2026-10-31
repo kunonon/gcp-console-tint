@@ -2,15 +2,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import contentScript from '../content';
 
+// A stored fill: a '#rrggbb' string or a gradient's { stops } object.
+type StoredFill = string | { stops: { color: string; position: number }[] };
+
 interface PaletteEntry {
   id: string;
   name: string;
-  color: string;
+  color: StoredFill;
 }
 
+// The platform bar text's selection: its custom stays a plain color string.
 interface ColorSelection {
   paletteId: string | null;
   custom: string;
+}
+
+// The bars' selection, whose custom may be a gradient.
+interface FillSelection {
+  paletteId: string | null;
+  custom: StoredFill;
 }
 
 interface PaletteSettings {
@@ -20,14 +30,14 @@ interface PaletteSettings {
 
 interface TopBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   height: number;
   stripes: boolean;
 }
 
 interface PlatformBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   stripes: boolean;
 }
 
@@ -50,8 +60,8 @@ interface ProjectSettings {
 // whatever is omitted, against the real ProjectSettings defaults.
 interface ProjectSettingsOverrides {
   palette?: Partial<PaletteSettings>;
-  topBar?: Partial<Omit<TopBarSettings, 'color'>> & { color?: Partial<ColorSelection> };
-  platformBar?: Partial<Omit<PlatformBarSettings, 'color'>> & { color?: Partial<ColorSelection> };
+  topBar?: Partial<Omit<TopBarSettings, 'color'>> & { color?: Partial<FillSelection> };
+  platformBar?: Partial<Omit<PlatformBarSettings, 'color'>> & { color?: Partial<FillSelection> };
   platformBarText?: Partial<Omit<PlatformBarTextSettings, 'color'>> & { color?: Partial<ColorSelection> };
 }
 
@@ -72,19 +82,27 @@ interface TintSettings {
 
 // The manifest version these tests run under: equal to CURRENT_SCHEMA_VERSION, so defaulted
 // fixtures are current-schema data that no migration step touches.
-const CURRENT_VERSION = '0.3.0';
+const CURRENT_VERSION = '0.5.0';
 
 // Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
 // The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
 // when importing content.ts directly in tests), so we provide a minimal fake here: it simply
-// forwards to the target's native addEventListener, which is all our code relies on.
+// forwards to the target's native addEventListener, which is all our code relies on. The listeners
+// are removed after each test, as WXT's context does when a content script is invalidated, so an
+// earlier test's script does not react to a later test's location changes.
+const ctxListeners: (() => void)[] = [];
 function createFakeCtx() {
   return {
     addEventListener(target: EventTarget, type: string, listener: EventListenerOrEventListenerObject) {
       target.addEventListener(type, listener as EventListener);
+      ctxListeners.push(() => target.removeEventListener(type, listener as EventListener));
     },
   };
 }
+
+afterEach(() => {
+  for (const remove of ctxListeners.splice(0)) remove();
+});
 
 function runContentScript() {
   const ctx = createFakeCtx();
@@ -97,6 +115,33 @@ function getElements() {
   const styleEl = children.find((el) => el.tagName === 'STYLE') as HTMLStyleElement | undefined;
   if (!bar || !styleEl) throw new Error('overlay bar or style element not found');
   return { bar, styleEl };
+}
+
+// The fill's registered custom properties (fill-css.ts): 101 target knots (to), the knots the
+// fade starts from (from), the painted knots mixing the two (stop), and the stripe pair.
+const KNOTS = 101;
+const knotNames = (kind: string) => Array.from({ length: KNOTS }, (_, k) => `--gcp-console-tint-${kind}-${k}`);
+const TO = knotNames('to');
+const FROM = knotNames('from');
+const STOPS = knotNames('stop');
+const STRIPE_LIGHT = '--gcp-console-tint-stripe-light';
+const STRIPE_DARK = '--gcp-console-tint-stripe-dark';
+const FADE = '--gcp-console-tint-fade';
+// stop-k's mix from from-k to to-k by the fade, on the shorter hue arc unless knotMixes says otherwise.
+const stopMix = (k: number) =>
+  `color-mix(in oklch shorter hue, var(${FROM[k]}), var(${TO[k]}) calc(var(${FADE}, 1) * 100%))`;
+// The fixed image both bars paint: stripes over the 101-knot sRGB gradient, every color a property.
+const FILL_IMAGE = `repeating-linear-gradient(-45deg, var(${STRIPE_LIGHT}) 0 8px, var(${STRIPE_DARK}) 8px 16px), linear-gradient(in srgb to right, ${STOPS.map((name) => `var(${name})`).join(', ')})`;
+// background-color steps to the first knot after the knots' fade, so the color underneath stays
+// the previous one while they fade. The knots fade through FADE, so only the stripes transition.
+const COLOR_TRANSITIONS = [
+  'background-color 0s linear 300ms',
+  ...[STRIPE_LIGHT, STRIPE_DARK].map((name) => `${name} 300ms ease`),
+].join(', ');
+
+// The top bar's inline stripe pair.
+function stripePair(bar: HTMLElement) {
+  return [bar.style.getPropertyValue(STRIPE_LIGHT), bar.style.getPropertyValue(STRIPE_DARK)];
 }
 
 // Flushes the microtask queue so the async `browser.storage.local.get(...).then(...)`
@@ -245,7 +290,7 @@ describe('content script', () => {
     expect(styleEl.textContent).toContain('background-size: auto !important;');
   });
 
-  it('keeps viewport background properties after a live height change and removes disabled stripes', async () => {
+  it('keeps viewport background properties after a live height change and makes disabled stripes transparent', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({ topBar: { height: 1, stripes: true }, platformBar: { stripes: true } }),
     );
@@ -273,11 +318,16 @@ describe('content script', () => {
     );
     await flush();
 
-    expect(bar.style.backgroundImage).toBe('');
-    expect(styleEl.textContent).not.toContain('background-image');
-    expect(styleEl.textContent).not.toContain('background-attachment');
-    expect(styleEl.textContent).not.toContain('background-position');
-    expect(styleEl.textContent).not.toContain('background-size');
+    // Stripes stay a layer with transparent colors, so turning them off fades rather than snaps.
+    expect(stripePair(bar)).toEqual(['transparent', 'transparent']);
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
+    expect(styleEl.textContent).toContain(
+      `${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: transparent !important;`,
+    );
+    expect(styleEl.textContent).toContain(`background-image: ${FILL_IMAGE} !important;`);
+    expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
+    expect(styleEl.textContent).toContain('background-position: 0 0 !important;');
+    expect(styleEl.textContent).toContain('background-size: auto !important;');
   });
 
   it('applies the Top bar stripe gradient when topBarStripes is enabled', async () => {
@@ -290,11 +340,11 @@ describe('content script', () => {
     await flush();
 
     const { bar } = getElements();
-    expect(bar.style.backgroundImage).toContain('repeating-linear-gradient');
-    expect(bar.style.backgroundImage).toContain('rgba(0, 0, 0, 0.3)');
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
+    expect(stripePair(bar)).toEqual(['transparent', 'rgba(0, 0, 0, 0.3)']);
   });
 
-  it('omits the Top bar background image when topBarStripes is disabled', async () => {
+  it('makes the Top bar stripes transparent when topBarStripes is disabled', async () => {
     await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { stripes: false } }));
     setTestProjectLocation();
 
@@ -302,7 +352,7 @@ describe('content script', () => {
     await flush();
 
     const { bar } = getElements();
-    expect(bar.style.backgroundImage).toBe('');
+    expect(stripePair(bar)).toEqual(['transparent', 'transparent']);
   });
 
   it('applies the Platform Bar stripe gradient to the CSS rule when platformBarStripes is enabled', async () => {
@@ -316,8 +366,10 @@ describe('content script', () => {
 
     const { styleEl } = getElements();
     expect(styleEl.textContent).toContain('#ocb-platform-bar');
-    expect(styleEl.textContent).toContain('background-image: repeating-linear-gradient');
-    expect(styleEl.textContent).toContain('rgba(255, 255, 255, 0.3)');
+    expect(styleEl.textContent).toContain(`background-image: ${FILL_IMAGE} !important;`);
+    expect(styleEl.textContent).toContain(
+      `${STRIPE_LIGHT}: rgba(255, 255, 255, 0.3) !important; ${STRIPE_DARK}: transparent !important;`,
+    );
   });
 
   it.each([
@@ -336,15 +388,15 @@ describe('content script', () => {
     await flush();
 
     const { bar, styleEl } = getElements();
-    const brightFirst = 'repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.3) 0 8px, transparent 8px 16px)';
-    const darkSecond = 'repeating-linear-gradient(-45deg, transparent 0 8px, rgba(0, 0, 0, 0.3) 8px 16px)';
-    const topBarGradient = topBarColor === '#7744ee' ? brightFirst : darkSecond;
-    const platformBarGradient = platformBarColor === '#7744ee' ? brightFirst : darkSecond;
-    expect(bar.style.backgroundImage).toBe(topBarGradient);
-    expect(styleEl.textContent).toContain(`background-image: ${platformBarGradient} !important;`);
+    const brightFirst = ['rgba(255, 255, 255, 0.3)', 'transparent'];
+    const darkSecond = ['transparent', 'rgba(0, 0, 0, 0.3)'];
+    const topBarPair = topBarColor === '#7744ee' ? brightFirst : darkSecond;
+    const [light, dark] = platformBarColor === '#7744ee' ? brightFirst : darkSecond;
+    expect(stripePair(bar)).toEqual(topBarPair);
+    expect(styleEl.textContent).toContain(`${STRIPE_LIGHT}: ${light} !important; ${STRIPE_DARK}: ${dark} !important;`);
   });
 
-  it('omits the background-image declaration when platformBarStripes is disabled', async () => {
+  it('makes the Platform Bar stripes transparent when platformBarStripes is disabled', async () => {
     await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBar: { stripes: false } }));
     setTestProjectLocation();
 
@@ -352,10 +404,10 @@ describe('content script', () => {
     await flush();
 
     const { styleEl } = getElements();
-    expect(styleEl.textContent).not.toContain('background-image');
-    expect(styleEl.textContent).not.toContain('background-attachment');
-    expect(styleEl.textContent).not.toContain('background-position');
-    expect(styleEl.textContent).not.toContain('background-size');
+    expect(styleEl.textContent).toContain(
+      `${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: transparent !important;`,
+    );
+    expect(styleEl.textContent).toContain(`background-image: ${FILL_IMAGE} !important;`);
   });
 
   it('follows the resolved palette color for stripe tinting on both Top bar and Platform Bar', async () => {
@@ -373,8 +425,8 @@ describe('content script', () => {
 
     const { bar, styleEl } = getElements();
     // Bright palette color -> black-tinted stripes on both.
-    expect(bar.style.backgroundImage).toContain('rgba(0, 0, 0, 0.3)');
-    expect(styleEl.textContent).toContain('rgba(0, 0, 0, 0.3)');
+    expect(stripePair(bar)).toEqual(['transparent', 'rgba(0, 0, 0, 0.3)']);
+    expect(styleEl.textContent).toContain(`${STRIPE_DARK}: rgba(0, 0, 0, 0.3) !important;`);
   });
 
   it('applies settings already stored before load, including palette reference resolution', async () => {
@@ -1114,7 +1166,7 @@ describe('content script', () => {
       expect(styleEl.textContent).toContain('transition:');
     });
 
-    it('applies background-color/height transitions to the bar element when motion is not reduced', async () => {
+    it('applies the color and height transitions to the bar element when motion is not reduced', async () => {
       await fakeBrowser.storage.local.set(
         tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
       );
@@ -1124,8 +1176,7 @@ describe('content script', () => {
       await flush();
 
       const { bar } = getElements();
-      expect(bar.style.transition).toContain('background-color');
-      expect(bar.style.transition).toContain('height');
+      expect(bar.style.transition).toBe(`${COLOR_TRANSITIONS}, height 200ms ease`);
     });
 
     it('adds transition declarations to the generated Platform Bar and text CSS rules', async () => {
@@ -1138,7 +1189,7 @@ describe('content script', () => {
       await flush();
 
       const { styleEl } = getElements();
-      expect(styleEl.textContent).toContain('transition: background-color 300ms ease !important');
+      expect(styleEl.textContent).toContain(`transition: ${COLOR_TRANSITIONS} !important;`);
       expect(styleEl.textContent).toContain('transition: color 300ms ease !important');
     });
 
@@ -1161,7 +1212,273 @@ describe('content script', () => {
         const { bar, styleEl } = getElements();
         expect(bar.style.transition).toBe('');
         expect(styleEl.textContent).not.toContain('transition');
+        // The properties still carry the colors; only the fade is gone.
+        expect(bar.style.getPropertyValue(TO[0] ?? '')).toBe('#111111');
+      });
+
+      it('paints a switch at once even where animate() exists: from is the target, and nothing animates', async () => {
+        vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+        const animate = vi.fn();
+        HTMLElement.prototype.animate = animate;
+        try {
+          await switchFromOrangeToBlue();
+          const { bar } = getElements();
+          expect(animate).not.toHaveBeenCalled();
+          expect(FROM.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(KNOTS).fill('#1a73e8'));
+        } finally {
+          delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+        }
       });
     });
+
+    describe('where the browser can animate', () => {
+      afterEach(() => {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+        vi.restoreAllMocks();
+      });
+
+      // jsdom has no animate() and computes no color-mix(), so both are stubbed: the painted knots
+      // read back as an oklch() color, as a browser serializes a mixed knot. `painted.value` is what
+      // every knot reads back as.
+      function stubBrowser() {
+        const animate = vi.fn();
+        HTMLElement.prototype.animate = animate;
+        const painted = { value: 'oklch(0.7 0.2 45)' };
+        const realGetComputedStyle = window.getComputedStyle.bind(window);
+        vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
+          const style = realGetComputedStyle(element);
+          const getPropertyValue = style.getPropertyValue.bind(style);
+          style.getPropertyValue = (name: string) => (STOPS.includes(name) ? painted.value : getPropertyValue(name));
+          return style;
+        });
+        return { animate, painted };
+      }
+
+      it('fades from the knots as painted to the next fill through the fade property', async () => {
+        const { animate } = stubBrowser();
+
+        await switchFromOrangeToBlue();
+
+        const { bar, styleEl } = getElements();
+        expect(FROM.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(KNOTS).fill('oklch(0.7 0.2 45)'));
+        expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(KNOTS).fill('#1a73e8'));
+        expect(STOPS.map((name) => bar.style.getPropertyValue(name))).toEqual(STOPS.map((_, k) => stopMix(k)));
+        expect(styleEl.textContent).toContain(`${FROM[0]}: oklch(0.7 0.2 45) !important;`);
+        // The platform bar's first tint fades too (the mock paints every knot the same, so the start
+        // is not transparent here); the hidden top bar appears at once. The switch then fades both,
+        // the top bar first.
+        const platformBar = document.querySelector('#ocb-platform-bar');
+        expect(animate.mock.contexts).toEqual([platformBar, bar, platformBar]);
+        expect(animate.mock.calls).toEqual(Array(3).fill([{ [FADE]: [0, 1] }, { duration: 300, easing: 'ease' }]));
+        // Never declared, or the declaration would beat the animation.
+        expect(styleEl.textContent).not.toContain(`${FADE}:`);
+        expect(bar.style.getPropertyValue(FADE)).toBe('');
+      });
+
+      // Mid-fade the knots read back as wherever the fade has got to; restarting from there would
+      // slow the fade down and end it late.
+      it('keeps a running fade when the same fill is applied again', async () => {
+        const { animate, painted } = stubBrowser();
+        await switchFromOrangeToBlue();
+        painted.value = 'oklch(0.6 0.2 300)';
+
+        triggerLocationChange('/?project=blue');
+
+        const { bar, styleEl } = getElements();
+        expect(animate).toHaveBeenCalledTimes(3);
+        expect(FROM.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(KNOTS).fill('oklch(0.7 0.2 45)'));
+        expect(styleEl.textContent).toContain(`${FROM[0]}: oklch(0.7 0.2 45) !important;`);
+      });
+
+      it('fades again into the same fill after a page no rule matches', async () => {
+        const { animate } = stubBrowser();
+        await switchFromOrangeToBlue();
+
+        triggerLocationChange('/?project=elsewhere');
+        triggerLocationChange('/?project=blue');
+
+        // The top bar was hidden, so it appears at once; the platform bar fades in again.
+        const platformBar = document.querySelector('#ocb-platform-bar');
+        expect(animate.mock.contexts.slice(3)).toEqual([platformBar]);
+      });
+    });
+  });
+});
+
+// An orange project, then a switch to a blue one on both bars, over a mock console platform bar.
+async function switchFromOrangeToBlue() {
+  document.body.innerHTML = '<div id="ocb-platform-bar"></div>';
+  const bars = (color: string) => ({
+    topBar: { color: { paletteId: null, custom: color } },
+    platformBar: { color: { paletteId: null, custom: color } },
+  });
+  await fakeBrowser.storage.local.set(
+    tintSettings({
+      projectRules: [
+        { id: 'o', matchType: 'exact', pattern: 'orange', settings: bars('#ff6d00') },
+        { id: 'b', matchType: 'exact', pattern: 'blue', settings: bars('#1a73e8') },
+      ],
+    }),
+  );
+  setLocation('/?project=orange');
+  runContentScript();
+  await flush();
+  triggerLocationChange('/?project=blue');
+}
+
+describe('gradient fills', () => {
+  const SUNSET = {
+    stops: [
+      { color: '#ff6d00', position: 0 },
+      { color: '#1a73e8', position: 100 },
+    ],
+  };
+  // SUNSET sampled at the 101 knots, one per percent: each channel on the straight sRGB line from
+  // #ff6d00 to #1a73e8, rounded (fill-css.test.ts pins the sampling itself).
+  const SUNSET_CHANNELS = [
+    [0xff, 0x1a],
+    [0x6d, 0x73],
+    [0x00, 0xe8],
+  ] as const;
+  const SUNSET_KNOTS = TO.map(
+    (_, k) =>
+      `#${SUNSET_CHANNELS.map(([a, b]) =>
+        Math.round(a + ((b - a) * k) / 100)
+          .toString(16)
+          .padStart(2, '0'),
+      ).join('')}`,
+  );
+  // Painted at once (jsdom has no animate()), so each knot mixes from its own target.
+  const SUNSET_DECLARATIONS = [
+    ...TO.map((name, k) => `${name}: ${SUNSET_KNOTS[k]} !important;`),
+    ...FROM.map((name, k) => `${name}: ${SUNSET_KNOTS[k]} !important;`),
+    ...STOPS.map((name, k) => `${name}: ${stopMix(k)} !important;`),
+  ].join(' ');
+
+  async function apply(settings: ProjectSettingsOverrides) {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule(settings));
+    setTestProjectLocation();
+    runContentScript();
+    await flush();
+    return getElements();
+  }
+
+  it('paints a gradient top bar over its first stop', async () => {
+    const { bar } = await apply({ topBar: { color: { paletteId: null, custom: SUNSET }, stripes: false } });
+
+    expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+    expect(stripePair(bar)).toEqual(['transparent', 'transparent']);
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
+  });
+
+  it('lays the stripes over a gradient top bar', async () => {
+    const { bar } = await apply({ topBar: { color: { paletteId: null, custom: SUNSET }, stripes: true } });
+
+    // '#ff6d00' to '#1a73e8' keeps black stripes: its worst black contrast beats its worst white one.
+    expect(stripePair(bar)).toEqual(['transparent', 'rgba(0, 0, 0, 0.3)']);
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+  });
+
+  it('writes a gradient platform bar with the viewport-anchored image declarations, without stripes', async () => {
+    const { styleEl } = await apply({
+      palette: { entries: [{ id: 'default', name: 'Sunset', color: SUNSET }] },
+      platformBar: { color: { paletteId: 'default' }, stripes: false },
+    });
+
+    expect(styleEl.textContent).toContain(
+      `#ocb-platform-bar { background-color: #ff6d00 !important; ${SUNSET_DECLARATIONS} ${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: transparent !important; background-image: ${FILL_IMAGE} !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important; transition: ${COLOR_TRANSITIONS} !important; }`,
+    );
+  });
+
+  it('tints the platform bar stripes over a gradient', async () => {
+    const { styleEl } = await apply({ platformBar: { color: { paletteId: null, custom: SUNSET }, stripes: true } });
+
+    expect(styleEl.textContent).toContain(
+      `${SUNSET_DECLARATIONS} ${STRIPE_LIGHT}: transparent !important; ${STRIPE_DARK}: rgba(0, 0, 0, 0.3) !important;`,
+    );
+    expect(styleEl.textContent).toContain('background-attachment: fixed !important;');
+  });
+
+  // Same grid on both sides is what lets the fade mix knot by knot.
+  it('moves the knots to the next rule on a project switch, from a gradient to a solid', async () => {
+    await fakeBrowser.storage.local.set(
+      tintSettings({
+        projectRules: [
+          {
+            id: 'g',
+            matchType: 'exact',
+            pattern: 'sunset',
+            settings: { topBar: { color: { paletteId: null, custom: SUNSET } } },
+          },
+          {
+            id: 's',
+            matchType: 'exact',
+            pattern: 'navy',
+            settings: { topBar: { color: { paletteId: null, custom: '#000080' } } },
+          },
+        ],
+      }),
+    );
+    setLocation('/?project=sunset');
+    runContentScript();
+    await flush();
+    const { bar } = getElements();
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(SUNSET_KNOTS);
+
+    triggerLocationChange('/?project=navy');
+
+    expect(TO.map((name) => bar.style.getPropertyValue(name))).toEqual(Array(KNOTS).fill('#000080'));
+    expect(bar.style.backgroundImage).toBe(FILL_IMAGE);
+  });
+
+  it.each([
+    { stops: ['#ff6d00', '#1a73e8'], text: '#000000' },
+    { stops: ['#ff6d00', '#000080'], text: '#ffffff' },
+  ])('picks Auto text $text for the worst stop of $stops', async ({ stops, text }) => {
+    const { styleEl } = await apply({
+      platformBar: {
+        color: { paletteId: null, custom: { stops: stops.map((color, i) => ({ color, position: i * 100 })) } },
+      },
+      platformBarText: { auto: true },
+    });
+
+    expect(styleEl.textContent).toContain(`color: ${text} !important;`);
+  });
+
+  it('paints the text with its custom color while the entry it references is a gradient', async () => {
+    const { styleEl } = await apply({
+      palette: { entries: [{ id: 'default', name: 'Sunset', color: SUNSET }] },
+      platformBarText: { color: { paletteId: 'default', custom: '#abcdef' }, auto: false },
+    });
+
+    expect(styleEl.textContent).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
+  });
+});
+
+describe('fill property registrations', () => {
+  it('registers the fill properties once, in a style element of their own that survives an unmatched project', async () => {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({}));
+    setTestProjectLocation();
+    runContentScript();
+    await flush();
+    triggerLocationChange('/?project=unknown-project');
+
+    const styles = Array.from(document.documentElement.children).filter((el) => el.tagName === 'STYLE');
+    const registrations = styles.filter((el) => el.textContent?.includes('@property'));
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]?.textContent?.match(/@property /g)).toHaveLength(
+      [...TO, ...FROM, ...STOPS, STRIPE_LIGHT, STRIPE_DARK, FADE].length,
+    );
+    for (const name of [...TO, ...FROM, ...STOPS, STRIPE_LIGHT, STRIPE_DARK]) {
+      expect(registrations[0]?.textContent).toContain(
+        `@property ${name} { syntax: '<color>'; inherits: false; initial-value: transparent; }`,
+      );
+    }
+    expect(registrations[0]?.textContent).toContain(
+      `@property ${FADE} { syntax: '<number>'; inherits: false; initial-value: 1; }`,
+    );
+    // The rule element (the first <style>) is the one emptied, not the registrations.
+    expect(getElements().styleEl.textContent).toBe('');
   });
 });

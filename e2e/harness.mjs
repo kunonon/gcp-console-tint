@@ -643,6 +643,16 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
           );
           const overlay = bar ? getComputedStyle(bar) : null;
           const platformBar = computed('#ocb-platform-bar');
+          // The fill's target knots and its fade (content.ts), which say a bar has settled where
+          // its painted oklch() knots serialize with engine-specific digits.
+          const knots = (style) =>
+            style ? Array.from({ length: 101 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-to-${k}`)) : null;
+          const fade = (style) => style?.getPropertyValue('--gcp-console-tint-fade') ?? null;
+          // The knots as painted, oklch() or oklab() colors.
+          const painted = (style) =>
+            style
+              ? Array.from({ length: 101 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-stop-${k}`))
+              : null;
           return {
             origin: location.origin,
             href: location.href,
@@ -653,11 +663,17 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
               height: overlay?.height ?? null,
               backgroundColor: overlay?.backgroundColor ?? null,
               backgroundImage: overlay?.backgroundImage ?? null,
+              fill: knots(overlay),
+              fade: fade(overlay),
+              painted: painted(overlay),
             },
             platformBar: {
               exists: Boolean(platformBar),
               backgroundColor: platformBar?.backgroundColor ?? null,
               backgroundImage: platformBar?.backgroundImage ?? null,
+              fill: knots(platformBar),
+              fade: fade(platformBar),
+              painted: painted(platformBar),
               textColors: {
                 left: computed('#platform-left-text')?.color ?? null,
                 right: computed('#platform-right-text')?.color ?? null,

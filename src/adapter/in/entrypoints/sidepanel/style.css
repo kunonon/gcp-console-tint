@@ -112,25 +112,60 @@ body {
 }
 
 /* A picked colour is one object everywhere, in both themes: a round bead (`.color-chip`, 20px in
-   the triggers and the hex control, 28px for the palette options in the popovers). The bead's
-   rim is the fill pulled a quarter of the way to the text colour: a translucent --foreground
-   border over the edge of the fill, which extends under it, so the inside of the bead stays the
-   true colour. No box-shadow here: the selected bead's `ring-2` is a box-shadow.
+   the triggers and the hex control, 28px for the palette options in the popovers, 16px and 20px
+   for a gradient's stops). The bead's rim is the fill pulled a quarter of the way to the text
+   colour: a translucent --foreground border over the edge of the fill, which extends under it,
+   so the inside of the bead stays the true colour. No box-shadow here: the selected bead's
+   `ring-2` is a box-shadow.
    The fill is the data, so forced colours (a Windows contrast theme) must not repaint it: the
-   bead keeps its colours there, and with them the selection ring and the focus outline. */
+   bead keeps its colours there, and with them the selection ring and the focus outline.
+   A gradient bead's image is laid over the border box: from the default padding box it would
+   tile under the rim, which would then show the last stop on the left and the first on the
+   right. Solid beads look the same either way. */
 .color-chip {
   border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
   forced-color-adjust: none;
+  background-origin: border-box;
+}
+
+/* The gradient preview strip in the stop editor: the same rim and the same forced-colours
+   opt-out as the beads (a Windows contrast theme would otherwise drop the gradient image), and
+   the image laid over the border box so the rim shows the fill under it, not a wrapped tile.
+   No touch panning on it: a pan would take the pointer from a stop being dragged
+   (pointercancel), which puts the stop back. */
+.fill-strip {
+  border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+  forced-color-adjust: none;
+  background-origin: border-box;
+  touch-action: none;
+}
+
+/* Each stop bead sits on the strip over its own colour, so its rim alone dissolves into the
+   gradient. A halo of the popover surface (--overlay) cuts it out of the strip on any stop colour
+   in both themes, and the stop being edited wears a wider one on top of its larger size. Not the
+   accent ring: that stays the panel's one "in use" mark (see FillEditor). `:where` keeps the halo
+   at the bead's own specificity, so the later `.color-chip` rules (transitions only) are not
+   flagged as descending. */
+:where(.fill-strip) .color-chip {
+  box-shadow: 0 0 0 1px var(--overlay);
+}
+.fill-strip [data-selected="true"] {
+  box-shadow: 0 0 0 2px var(--overlay);
 }
 
 /* The accent ring is this panel's selection mark on beads, so keyboard focus on a bead that can
    be pressed (the palette options) cannot be an accent ring too: it is an outline in the text
    colour, one step further out than the selection ring (offset 4 against the ring's 2), so it
    reads as the cursor, and on the selected bead both show. How a bead answers a press is with the
-   other hand-built controls at the end of this file. */
-button.color-chip:focus-visible {
+   other hand-built controls at the end of this file. A stop on the strip that has focus is drawn
+   over the beads it overlaps (the picked one included), so its outline is never hidden under
+   them; unlayered, this beats the beads' Tailwind z-index. */
+.color-chip:focus-visible {
   outline: 2px solid var(--foreground);
   outline-offset: 4px;
+}
+.fill-strip .color-chip:focus-visible {
+  z-index: 20;
 }
 
 /* The bordered controls of the pickers (triggers, Match contrast, the hex control) focus like
@@ -151,7 +186,7 @@ button.color-chip:focus-visible {
     outline-offset: 2px;
   }
   /* A bead keeps its own colours there, but its focus outline lies on the system's canvas. */
-  button.color-chip:focus-visible {
+  .color-chip:focus-visible {
     outline-color: CanvasText;
   }
 }
@@ -266,6 +301,15 @@ button.outlined-control:focus-visible,
     inset 0 0 0 1px rgba(0, 0, 0, 0.28);
 }
 
+/* Solid asks for the gradient rows' height too, as a taller face, so the popover keeps one box
+   across a mode switch, and keeps it under react-aria's cap as well: nothing here gives height
+   back, so a capped dialog has the same scroll range in both modes and a switch never clamps its
+   scrollTop (a face that shrank first moved the switch under the pointer by up to 80px).
+   84px = strip 32 + gap 8 + tools 32 + gap 12 (FillEditor): change those and change 224 with them. */
+.fill-editor[data-mode="solid"] .color-well .color-area {
+  height: 224px;
+}
+
 /* The Settings tab's theme switch: a HeroUI ToggleButtonGroup (`.theme-switch` is the className
    AppearanceCard puts on it) restyled as a miniature of the Rules | Settings tabs — a
    `var(--default)` pill track, one `var(--segment)` thumb carrying the surface shadow, and muted
@@ -367,6 +411,83 @@ button.outlined-control:focus-visible,
   .theme-switch::before,
   .theme-switch > .toggle-button,
   .theme-switch > .toggle-button > svg {
+    transition: none;
+  }
+}
+
+/* The fill editor's Solid | Gradient switch (`.fill-mode` is the className FillEditor puts on its
+   ToggleButtonGroup): .theme-switch's track, sliding thumb and colours, as two equal text segments
+   across the dialog. Unlayered for the same cascade reason as .theme-switch. HeroUI's
+   .toggle-button-group is inline-flex and fit-content, hence width: 100%. */
+.fill-mode {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  gap: 0;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 3px;
+  border-radius: 9999px;
+  background-color: var(--default);
+}
+.fill-mode::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 0;
+  width: calc(50% - 3px);
+  height: 26px;
+  border-radius: 9999px;
+  background-color: var(--segment);
+  box-shadow: var(--surface-shadow);
+  translate: 0 0;
+  transition:
+    translate 250ms var(--ease-out-fluid),
+    scale 150ms var(--ease-out-fluid);
+  pointer-events: none;
+}
+.fill-mode:has(> .toggle-button:nth-child(2)[data-selected="true"])::before {
+  translate: 100% 0;
+}
+.fill-mode:has(> .toggle-button[data-selected="true"][data-pressed="true"])::before {
+  scale: 0.94;
+}
+.fill-mode > .toggle-button {
+  --toggle-button-bg: transparent;
+  --toggle-button-bg-hover: transparent;
+  --toggle-button-bg-pressed: transparent;
+  --toggle-button-bg-selected: transparent;
+  --toggle-button-bg-selected-hover: transparent;
+  --toggle-button-bg-selected-pressed: transparent;
+  --toggle-button-fg: var(--muted);
+  --toggle-button-fg-selected: var(--segment-foreground);
+  z-index: 1;
+  min-width: 0;
+  width: auto;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  transform: none;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  transition:
+    color 150ms var(--ease-smooth),
+    box-shadow 100ms var(--ease-smooth);
+}
+.fill-mode > .toggle-button[data-hovered="true"],
+.fill-mode > .toggle-button[data-pressed="true"] {
+  color: var(--segment-foreground);
+}
+.fill-mode > .toggle-button[data-focus-visible="true"] {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+@media (prefers-reduced-motion: reduce) {
+  .fill-mode::before,
+  .fill-mode > .toggle-button {
     transition: none;
   }
 }

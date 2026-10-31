@@ -239,4 +239,28 @@ describe('DeleteConfirmPopover', () => {
     expect((dialog.querySelector('.confirm-swatch') as HTMLElement).style.background).toBe('rgb(255, 0, 0)');
     expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeTruthy();
   });
+
+  it("paints a gradient swatch (a gradient palette entry) as the swatch's background", async () => {
+    const user = userEvent.setup();
+    render(
+      <DeleteConfirmPopover
+        question="Remove this color?"
+        items={[{ id: '1', text: 'Sunset', swatch: 'linear-gradient(to right, #ff6d00, #1a73e8)' }]}
+        itemsLabel="Color to remove"
+        confirmLabel="Remove"
+        tooltipLabel="Remove color"
+        onConfirm={() => {}}
+      >
+        <button type="button" aria-label="Remove color">
+          X
+        </button>
+      </DeleteConfirmPopover>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Remove color' }));
+    const swatch = screen.getByRole('dialog').querySelector('.confirm-swatch') as HTMLElement;
+    expect(swatch.style.background).toMatch(
+      /linear-gradient\(to right, (#ff6d00|rgb\(255, 109, 0\)), (#1a73e8|rgb\(26, 115, 232\))\)/,
+    );
+  });
 });

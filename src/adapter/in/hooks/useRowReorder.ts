@@ -287,15 +287,14 @@ export function useRowReorder({
     const list = listRef.current;
     const currentKeys = keysRef.current;
     const rows = currentKeys.map((key) => rowsByKey.current.get(key));
-    if (!list || rows.some((row) => !row)) return;
+    if (!list || !rows.every((row) => row !== undefined)) return;
     // A row still opening or closing (Presence's `.reveal` transitions) is moving the rows below
     // it, so no position measured now would hold for the drag.
     if (Array.from(list.children).some((wrapper) => wrapper.getAnimations().length > 0)) return;
     event.preventDefault();
     stopLanding();
     const grip = event.currentTarget;
-    const elements = rows as HTMLElement[];
-    const slots = elements.map((row) => ({ top: docTop(row), height: row.getBoundingClientRect().height }));
+    const slots = rows.map((row) => ({ top: docTop(row), height: row.getBoundingClientRect().height }));
     const gap = Number.parseFloat(getComputedStyle(list).rowGap) || 0;
     const selection = selectedRef.current;
     const chosen = currentKeys.flatMap((key, i) => (selection?.has(key) ? [i] : []));
@@ -305,7 +304,7 @@ export function useRowReorder({
       grip,
       list,
       order: orderOf(currentKeys),
-      rows: elements,
+      rows,
       slots,
       gap,
       moving,
@@ -331,9 +330,9 @@ export function useRowReorder({
       if (Math.abs(e.clientY + window.scrollY - drag.startDocY) < THRESHOLD) return;
       drag.started = true;
       list.setAttribute('data-reordering', '');
-      const lead = elements[moving[0] as number] as HTMLElement;
+      const lead = rows[moving[0] as number] as HTMLElement;
       for (const i of moving) {
-        (elements[i] as HTMLElement).setAttribute('data-dragging', i === moving[0] ? '' : 'follow');
+        (rows[i] as HTMLElement).setAttribute('data-dragging', i === moving[0] ? '' : 'follow');
       }
       lead.style.setProperty(
         '--reorder-block-rest',
@@ -350,7 +349,7 @@ export function useRowReorder({
       // that is one run stays rigid from the first frame.
       const grabbedShift = shifts[moving.indexOf(index)] as number;
       moving.forEach((i, m) => {
-        const row = elements[i] as HTMLElement;
+        const row = rows[i] as HTMLElement;
         const jump = (shifts[m] as number) - grabbedShift;
         const duration = reorderDuration(row);
         if (i === index || jump === 0 || duration === 0) return;

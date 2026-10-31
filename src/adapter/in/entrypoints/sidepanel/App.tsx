@@ -1,11 +1,13 @@
 import { Alert, Button, Card, Checkbox, Input, Switch, Tabs, Tooltip } from '@heroui/react';
 import { useEffect, useRef, useState } from 'react';
-import type { Color } from '../../../../domain/color';
+import { Color } from '../../../../domain/color';
+import type { Fill } from '../../../../domain/gradient';
 import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
 import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../domain/project-rule';
 import { ProjectSettings } from '../../../../domain/project-settings';
 import { TopBarHeight } from '../../../../domain/top-bar-height';
 import type { SettingsStore } from '../../../../port/settings-store';
+import { fillCss } from '../../fill-css';
 import { useRowReorder } from '../../hooks/useRowReorder';
 import { useSelectHint } from '../../hooks/useSelectHint';
 import { useTheme } from '../../hooks/useTheme';
@@ -321,8 +323,9 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     updateCurrent((ps) => ps.changePalette(ps.palette.renameEntry(id, name)));
   };
 
-  // The colour editors validate at their boundary (Color.fromHex) and only ever hand over a Color.
-  const handlePaletteColorChange = (id: PaletteEntryId, color: Color) => {
+  // The fill editors validate at their boundary (Color.fromHex, Gradient's verbs) and only ever
+  // hand over a domain Fill.
+  const handlePaletteColorChange = (id: PaletteEntryId, color: Fill) => {
     updateCurrent((ps) => ps.changePalette(ps.palette.changeEntryColor(id, color)));
   };
 
@@ -341,9 +344,14 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
 
   const topBarEffectiveColor = currentSettings.palette.resolve(currentSettings.topBar.color);
   const platformBarEffectiveColor = currentSettings.palette.resolve(currentSettings.platformBar.color);
+  // resolveSolid, not resolve: the text is painted with its custom colour while the entry it
+  // references is a gradient (content.ts does the same), and the type checker would not catch
+  // resolve here, since a ColorSelection<Color> is also a ColorSelection<Fill>.
   const platformBarTextEffectiveColor = currentSettings.platformBarText.auto
     ? platformBarEffectiveColor.contrastingTextColor()
-    : currentSettings.palette.resolve(currentSettings.platformBarText.color);
+    : currentSettings.palette.resolveSolid(currentSettings.platformBarText.color);
+  // The text can only be a colour, so its picker offers only the solid entries.
+  const solidEntries = currentSettings.palette.entries.filter((e) => e.color instanceof Color);
 
   if (view.type === 'detail') {
     const detailTitle = currentRule?.pattern ?? '';
@@ -435,14 +443,14 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                         />
                         <ColorSwatchField
                           ariaLabel={`${entry.name || '(unnamed)'} color`}
-                          value={entry.color.toHex()}
+                          value={entry.color}
                           onChange={(color) => handlePaletteColorChange(entry.id, color)}
                           hexHidableOnNarrow
                         />
                         <DeleteConfirmPopover
                           question="Remove this color?"
                           items={[
-                            { id: entry.id.toString(), text: entry.name || '(unnamed)', swatch: entry.color.toHex() },
+                            { id: entry.id.toString(), text: entry.name || '(unnamed)', swatch: fillCss(entry.color) },
                           ]}
                           itemsLabel="Color to remove"
                           monospace={false}
@@ -494,8 +502,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                       paletteEnabled={currentSettings.palette.enabled}
                       palette={currentSettings.palette.entries}
                       paletteId={currentSettings.topBar.color.paletteId}
-                      customColor={currentSettings.topBar.color.custom.toHex()}
-                      effectiveColor={topBarEffectiveColor.toHex()}
+                      custom={currentSettings.topBar.color.custom}
+                      effective={topBarEffectiveColor}
                       onSelectPaletteEntry={(id) =>
                         updateCurrent((ps) => ps.changeTopBar(ps.topBar.changeColor(ps.topBar.color.setPalette(id))))
                       }
@@ -577,8 +585,8 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                       paletteEnabled={currentSettings.palette.enabled}
                       palette={currentSettings.palette.entries}
                       paletteId={currentSettings.platformBar.color.paletteId}
-                      customColor={currentSettings.platformBar.color.custom.toHex()}
-                      effectiveColor={platformBarEffectiveColor.toHex()}
+                      custom={currentSettings.platformBar.color.custom}
+                      effective={platformBarEffectiveColor}
                       onSelectPaletteEntry={(id) =>
                         updateCurrent((ps) =>
                           ps.changePlatformBar(ps.platformBar.changeColor(ps.platformBar.color.setPalette(id))),
@@ -641,10 +649,11 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                     <PaletteColorPicker
                       ariaLabel="Platform Bar text color"
                       paletteEnabled={currentSettings.palette.enabled}
-                      palette={currentSettings.palette.entries}
+                      palette={solidEntries}
                       paletteId={currentSettings.platformBarText.color.paletteId}
-                      customColor={currentSettings.platformBarText.color.custom.toHex()}
-                      effectiveColor={platformBarTextEffectiveColor.toHex()}
+                      solidOnly
+                      custom={currentSettings.platformBarText.color.custom}
+                      effective={platformBarTextEffectiveColor}
                       // Picking any explicit color also leaves Auto, in the same save: the two
                       // are mutually exclusive states of this surface.
                       onSelectPaletteEntry={(id) =>
@@ -654,15 +663,16 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
                           ),
                         )
                       }
-                      onSelectCustomColor={(color) =>
+                      onSelectCustomColor={(fill) => {
+                        // Only narrows the prop type the pickers share: under solidOnly the
+                        // picker hands over nothing but colours.
+                        if (!(fill instanceof Color)) return;
                         updateCurrent((ps) =>
                           ps.changePlatformBarText(
-                            ps.platformBarText
-                              .changeColor(ps.platformBarText.color.setCustomColor(color))
-                              .disableAuto(),
+                            ps.platformBarText.changeColor(ps.platformBarText.color.setCustomColor(fill)).disableAuto(),
                           ),
-                        )
-                      }
+                        );
+                      }}
                       supportsAuto
                       autoSelected={currentSettings.platformBarText.auto}
                       autoColor={platformBarEffectiveColor.contrastingTextColor().toHex()}

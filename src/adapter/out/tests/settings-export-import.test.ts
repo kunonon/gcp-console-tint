@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { Color } from '../../../domain/color';
+import { ColorSelection } from '../../../domain/color-selection';
+import { Gradient } from '../../../domain/gradient';
 import { ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
@@ -8,16 +11,28 @@ import { SettingsStoreImpl } from '../browser-settings-store';
 import { CURRENT_SCHEMA_VERSION } from '../migrations';
 import { effectiveSchemaVersion, toStored } from '../settings-repository';
 
-// A release at/above CURRENT_SCHEMA_VERSION ('0.3.0'), so effectiveSchemaVersion keeps it as is.
-const CURRENT_VERSION = '0.3.1';
+// A release at/above CURRENT_SCHEMA_VERSION ('0.5.0'), so effectiveSchemaVersion keeps it as is.
+const CURRENT_VERSION = '0.5.1';
 
 function setManifestVersion(version: string): void {
   (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({ version });
 }
 
+// The second rule's top bar carries a gradient, so the file round-trips a { stops } fill too.
 function sampleSettings(): TintSettings {
+  const gradient = Gradient.fromStops([
+    { color: Color.fromHex('#ff6d00')!, position: 0 },
+    { color: Color.fromHex('#e91e63')!, position: 30 },
+    { color: Color.fromHex('#1a73e8')!, position: 100 },
+  ])!;
+  const graded = ProjectSettings.DEFAULT.changeTopBar(
+    ProjectSettings.DEFAULT.topBar.changeColor(new ColorSelection(undefined, gradient)),
+  );
   return new TintSettings(
-    [ProjectRule.recreate(ProjectRuleId.recreate('rule-1'), 'exact', 'my-app', ProjectSettings.DEFAULT)],
+    [
+      ProjectRule.recreate(ProjectRuleId.recreate('rule-1'), 'exact', 'my-app', ProjectSettings.DEFAULT),
+      ProjectRule.recreate(ProjectRuleId.recreate('rule-2'), 'exact', 'my-graded-app', graded),
+    ],
     'dark',
   );
 }
@@ -52,15 +67,15 @@ describe('SettingsStoreImpl.exportJson / importJson', () => {
     const store = new SettingsStoreImpl();
     const settings = sampleSettings();
 
-    setManifestVersion('0.3.1');
+    setManifestVersion('0.5.1');
     const firstReleaseExport = store.exportJson(settings);
-    setManifestVersion('0.3.2');
+    setManifestVersion('0.5.2');
     const laterReleaseExport = store.exportJson(settings);
 
     expect(JSON.parse(firstReleaseExport).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(JSON.parse(laterReleaseExport).schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
 
-    setManifestVersion('0.3.1');
+    setManifestVersion('0.5.1');
     expect(store.importJson(firstReleaseExport).equals(settings)).toBe(true);
     expect(store.importJson(laterReleaseExport).equals(settings)).toBe(true);
   });
@@ -80,9 +95,11 @@ describe('SettingsStoreImpl.exportJson / importJson', () => {
     const roundTripped = store.importJson(store.exportJson(settings));
 
     expect(roundTripped.equals(settings)).toBe(true);
+    // Rules are entities (equal by id), so the fills are compared through the stored shape.
+    expect(toStored(roundTripped, CURRENT_SCHEMA_VERSION)).toEqual(toStored(settings, CURRENT_SCHEMA_VERSION));
   });
 
-  it.each(['0.3.2', '0.4.0'])('importJson refuses the future schema stamp %s above this release cap', (version) => {
+  it.each(['0.5.2', '0.6.0'])('importJson refuses the future schema stamp %s above this release cap', (version) => {
     const store = new SettingsStoreImpl();
     const text = JSON.stringify(toStored(sampleSettings(), version));
     expect(() => store.importJson(text)).toThrow(SettingsImportError);
@@ -95,14 +112,14 @@ describe('SettingsStoreImpl.exportJson / importJson', () => {
 
   it('still refuses a legacy file stamped with a release version above an older reader cap', () => {
     const store = new SettingsStoreImpl();
-    setManifestVersion('0.3.2');
-    const text = JSON.stringify(toStored(sampleSettings(), '0.3.3'));
+    setManifestVersion('0.5.2');
+    const text = JSON.stringify(toStored(sampleSettings(), '0.5.3'));
 
     expect(() => store.importJson(text)).toThrow(SettingsImportError);
     try {
       store.importJson(text);
     } catch (error) {
-      expect((error as SettingsImportError).failure).toEqual({ reason: 'newer-version', version: '0.3.3' });
+      expect((error as SettingsImportError).failure).toEqual({ reason: 'newer-version', version: '0.5.3' });
     }
   });
 
@@ -118,7 +135,7 @@ describe('SettingsStoreImpl.exportJson / importJson', () => {
   });
 
   // The shipping state right after a schema bump: the manifest still says 0.2.1 while the shape
-  // is 0.3.0. Without the floor, save would stamp '0.2.1', the next load would re-run the 0.3.0
+  // is 0.5.0. Without the floor, save would stamp '0.2.1', the next load would re-run the 0.3.0
   // step and reset the chosen theme to 'auto', and importJson would refuse this build's own
   // exports as newer-version.
   it('save and importJson floor a lagging manifest version at CURRENT_SCHEMA_VERSION', async () => {
