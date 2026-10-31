@@ -1,5 +1,5 @@
 import { ListBox, Select } from '@heroui/react';
-import { MATCH_TYPES, type MatchType } from '../../../../../domain/project-rule';
+import { isMatchType, MATCH_TYPES, type MatchType } from '../../../../../domain/project-rule';
 
 // Shared between the detail page's Pattern card and AddRuleModal so both surfaces speak the
 // same match-type vocabulary (previously the modal used a separate radio list with its own
@@ -25,7 +25,7 @@ export default function MatchTypeSelect({ value, onChange, ariaLabel = 'Match ty
       aria-label={ariaLabel}
       value={value}
       onChange={(key) => {
-        if (key != null) onChange(key as MatchType);
+        if (typeof key === 'string' && isMatchType(key)) onChange(key);
       }}
     >
       {/* No gap utility here: Select.Indicator is absolutely positioned (see the

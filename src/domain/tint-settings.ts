@@ -8,7 +8,8 @@ export type Theme = (typeof THEMES)[number];
 
 // Guard for untrusted input (an imported settings file): whether a string names a theme.
 export function isTheme(value: string): value is Theme {
-  return (THEMES as readonly string[]).includes(value);
+  const all: readonly string[] = THEMES;
+  return all.includes(value);
 }
 
 export class TintSettings extends ValueObject<TintSettings> {

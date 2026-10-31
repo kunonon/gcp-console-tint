@@ -6,14 +6,20 @@ export default defineBackground(() => {
   // migrate in memory on read, so nothing depends on this write having happened yet.
   migrateStoredSettings(browser.runtime.getManifest().version).catch(() => {});
 
-  const sidePanel = (browser as any).sidePanel;
+  // Each API exists only in some browsers (Chrome: sidePanel and action; Firefox MV2: sidebarAction
+  // and browserAction), and Firefox's sidebarAction is missing from WXT's Chrome-based types.
+  const ext: Partial<Pick<typeof browser, 'sidePanel' | 'action' | 'browserAction'>> & {
+    sidebarAction?: { toggle(): Promise<void> };
+  } = browser;
+
+  const sidePanel = ext.sidePanel;
   if (sidePanel?.setPanelBehavior) {
     sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
   }
 
-  const sidebarAction = (browser as any).sidebarAction;
+  const sidebarAction = ext.sidebarAction;
   if (!sidePanel && sidebarAction) {
-    const action = (browser as any).action ?? (browser as any).browserAction;
+    const action = ext.action ?? ext.browserAction;
     action?.onClicked.addListener(() => {
       sidebarAction.toggle();
     });
