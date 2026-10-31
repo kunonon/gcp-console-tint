@@ -12,7 +12,8 @@ function renderHarness(onConfirm: () => void) {
     <div>
       <DeleteConfirmPopover
         question="Delete this rule?"
-        target="my-project"
+        items={[{ id: '1', text: 'my-project', detail: 'exact' }]}
+        itemsLabel="Rule to delete"
         confirmLabel="Delete"
         tooltipLabel="Delete"
         onConfirm={onConfirm}
@@ -56,45 +57,86 @@ describe('DeleteConfirmPopover', () => {
     expect(await screen.findByRole('dialog')).toBeTruthy();
   });
 
-  it('clicking the trigger opens a popover showing the question and target as separate lines, plus a confirm button', async () => {
+  it('clicking the trigger opens a dialog labelled by its question, with a note that it is final, the item, and Cancel and confirm buttons', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('Delete this rule?')).toBeTruthy();
+    const dialog = screen.getByRole('dialog', { name: 'Delete this rule?' });
+    expect(within(dialog).getByRole('heading', { name: 'Delete this rule?' })).toBeTruthy();
+    expect(within(dialog).getByText('This can’t be undone.')).toBeTruthy();
     expect(within(dialog).getByText('my-project')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeTruthy();
   });
 
-  it('renders the target on its own element, styled as monospace/muted so it reads as data rather than prose (not concatenated into the question text)', async () => {
+  it('lists every item in full, each with its detail, in a list named by itemsLabel', async () => {
     const user = userEvent.setup();
-    renderHarness(() => {});
+    const pattern = '^(?:team|org)-billing-(?:eu|us)-west-\\d{2}$';
+    render(
+      <DeleteConfirmPopover
+        question="Delete 3 rules?"
+        items={[
+          { id: 'a', text: 'alpha', detail: 'exact' },
+          { id: 'b', text: 'alpha', detail: 'prefix' },
+          { id: 'c', text: pattern, detail: 'regex' },
+        ]}
+        itemsLabel="Rules to delete"
+        confirmLabel="Delete 3 rules"
+        tooltipLabel="Delete selected"
+        onConfirm={() => {}}
+      >
+        <button type="button" aria-label="Delete selected">
+          X
+        </button>
+      </DeleteConfirmPopover>,
+    );
 
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
-    const dialog = screen.getByRole('dialog');
+    await user.click(screen.getByRole('button', { name: 'Delete selected' }));
+    const list = within(screen.getByRole('dialog')).getByRole('list', { name: 'Rules to delete' });
+    const rows = within(list).getAllByRole('listitem');
 
-    const question = within(dialog).getByText('Delete this rule?');
-    const target = within(dialog).getByText('my-project');
-
-    // Two distinct elements, not one combined string.
-    expect(question).not.toBe(target);
-    expect(target.className).toContain('font-mono');
-    expect(target.className).toContain('text-muted');
-    expect(question.className).not.toContain('font-mono');
+    // Two rules with the same pattern stay apart by their match type.
+    expect(rows.map((row) => row.textContent)).toEqual(['alphaexact', 'alphaprefix', `${pattern}regex`]);
+    const text = within(rows[2] as HTMLElement).getByText(pattern);
+    expect(text.className).toContain('font-mono');
+    expect(text.className).toContain('confirm-item');
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete 3 rules' })).toBeTruthy();
   });
 
-  it('renders the confirm button at full width (w-full) rather than right-aligned', async () => {
+  it("shows a rule's empty pattern as a muted placeholder rather than an empty row", async () => {
+    const user = userEvent.setup();
+    render(
+      <DeleteConfirmPopover
+        question="Delete this rule?"
+        items={[{ id: '1', text: '', detail: 'prefix' }]}
+        itemsLabel="Rule to delete"
+        confirmLabel="Delete"
+        tooltipLabel="Delete"
+        onConfirm={() => {}}
+      >
+        <button type="button" aria-label="Delete">
+          X
+        </button>
+      </DeleteConfirmPopover>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    const placeholder = within(screen.getByRole('dialog')).getByText('(empty pattern)');
+    expect(placeholder.className).toContain('text-muted');
+  });
+
+  it('puts Cancel before the confirm button, both 12px-cornered to sit concentric in the popover', async () => {
     const user = userEvent.setup();
     renderHarness(() => {});
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
     const dialog = screen.getByRole('dialog');
 
-    const confirmButton = within(dialog).getByRole('button', { name: 'Delete' });
-    expect(confirmButton.className).toContain('w-full');
-    expect(confirmButton.className).not.toContain('self-end');
+    const buttons = within(dialog).getAllByRole('button');
+    expect(buttons.map((button) => button.textContent)).toEqual(['Cancel', 'Delete']);
+    for (const button of buttons) expect(button.className).toContain('rounded-xl');
   });
 
   it('renders a Popover.Arrow pointing at the trigger', async () => {
@@ -137,7 +179,7 @@ describe('DeleteConfirmPopover', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('clicking outside the popover dismisses it without calling onConfirm (no Cancel button; dismissal is the only cancel path)', async () => {
+  it('clicking outside the popover dismisses it without calling onConfirm', async () => {
     const onConfirm = vi.fn();
     const user = userEvent.setup();
     renderHarness(onConfirm);
@@ -156,22 +198,28 @@ describe('DeleteConfirmPopover', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('does not render a Cancel button in the popover', async () => {
+  it('Cancel closes the popover without calling onConfirm', async () => {
+    const onConfirm = vi.fn();
     const user = userEvent.setup();
-    renderHarness(() => {});
+    renderHarness(onConfirm);
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
-    const dialog = screen.getByRole('dialog');
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
 
-    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('renders distinct question/target/confirmLabel per instance (e.g. Remove color usage)', async () => {
+  it('renders distinct question/items/confirmLabel per instance (e.g. Remove color, with a swatch and no monospace)', async () => {
     const user = userEvent.setup();
     render(
       <DeleteConfirmPopover
         question="Remove this color?"
-        target="Primary"
+        items={[{ id: '1', text: 'Primary', swatch: '#ff0000' }]}
+        itemsLabel="Color to remove"
+        monospace={false}
         confirmLabel="Remove"
         tooltipLabel="Remove color"
         onConfirm={() => {}}
@@ -185,7 +233,34 @@ describe('DeleteConfirmPopover', () => {
     await user.click(screen.getByRole('button', { name: 'Remove color' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Remove this color?')).toBeTruthy();
-    expect(within(dialog).getByText('Primary')).toBeTruthy();
+    const name = within(dialog).getByText('Primary');
+    expect(name.className).not.toContain('font-mono');
+    expect(within(dialog).getByRole('list', { name: 'Color to remove' })).toBeTruthy();
+    expect((dialog.querySelector('.confirm-swatch') as HTMLElement).style.background).toBe('rgb(255, 0, 0)');
     expect(within(dialog).getByRole('button', { name: 'Remove' })).toBeTruthy();
+  });
+
+  it("paints a gradient swatch (a gradient palette entry) as the swatch's background", async () => {
+    const user = userEvent.setup();
+    render(
+      <DeleteConfirmPopover
+        question="Remove this color?"
+        items={[{ id: '1', text: 'Sunset', swatch: 'linear-gradient(to right, #ff6d00, #1a73e8)' }]}
+        itemsLabel="Color to remove"
+        confirmLabel="Remove"
+        tooltipLabel="Remove color"
+        onConfirm={() => {}}
+      >
+        <button type="button" aria-label="Remove color">
+          X
+        </button>
+      </DeleteConfirmPopover>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Remove color' }));
+    const swatch = screen.getByRole('dialog').querySelector('.confirm-swatch') as HTMLElement;
+    expect(swatch.style.background).toMatch(
+      /linear-gradient\(to right, (#ff6d00|rgb\(255, 109, 0\)), (#1a73e8|rgb\(26, 115, 232\))\)/,
+    );
   });
 });

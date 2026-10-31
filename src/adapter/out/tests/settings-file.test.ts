@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { Color } from '../../../domain/color';
 import { ColorSelection } from '../../../domain/color-selection';
+import { fillEquals, Gradient } from '../../../domain/gradient';
 import { ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
@@ -315,7 +316,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
 
     const topBar = parsed.projectRules[0]!.settings.topBar;
     expect(topBar.color.paletteId?.toString()).toBe('gone');
-    expect(parsed.projectRules[0]!.settings.palette.resolve(topBar.color).equals(topBar.color.custom)).toBe(true);
+    expect(fillEquals(parsed.projectRules[0]!.settings.palette.resolve(topBar.color), topBar.color.custom)).toBe(true);
   });
 
   it('accepts a null paletteId as "no palette reference"', () => {
@@ -332,6 +333,183 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
     });
 
     expect(parse(text).projectRules[0]!.settings.topBar.height.toPixels()).toBe(pixels);
+  });
+});
+
+describe('parseSettingsFile: gradient fills', () => {
+  const FILL_MESSAGE = 'expected a color string or a gradient object with a stops array of { color, position }';
+  const ENTRY = 'projectRules[0].settings.palette.entries[0].color';
+  const TOP_BAR = 'projectRules[0].settings.topBar.color.custom';
+  const PLATFORM_BAR = 'projectRules[0].settings.platformBar.color.custom';
+  const TEXT = 'projectRules[0].settings.platformBarText.color.custom';
+  const gradient = (...stops: [string, number][]) =>
+    Gradient.fromStops(stops.map(([hex, position]) => ({ color: Color.fromHex(hex)!, position })))!;
+  // A gradient in the file's shape.
+  const stored = (...stops: [unknown, unknown][]) => ({
+    stops: stops.map(([color, position]) => ({ color, position })),
+  });
+
+  it('imports gradients in a palette entry and both bars', () => {
+    const parsed = parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = stored(['#ff6d00', 0], ['#e91e63', 30], ['#3f51b5', 100]);
+        rule.settings.topBar.color = { paletteId: null, custom: stored(['#FF6D00', 0], ['#1a73e8', 100]) };
+        // Eight stops, the most, some a percent apart.
+        rule.settings.platformBar.color.custom = stored(
+          ['#000000', 0],
+          ['#ffffff', 1],
+          ['#000000', 2],
+          ['#ffffff', 40],
+          ['#000000', 41],
+          ['#ffffff', 97],
+          ['#000000', 99],
+          ['#ffffff', 100],
+        );
+      }),
+    );
+
+    const settings = parsed.projectRules[0]!.settings;
+    expect(
+      fillEquals(settings.palette.entries[0]!.color, gradient(['#ff6d00', 0], ['#e91e63', 30], ['#3f51b5', 100])),
+    ).toBe(true);
+    expect(fillEquals(settings.topBar.color.custom, gradient(['#ff6d00', 0], ['#1a73e8', 100]))).toBe(true);
+    expect(settings.platformBar.color.custom).toBeInstanceOf(Gradient);
+    expect((settings.platformBar.color.custom as Gradient).stops.map((stop) => stop.position)).toEqual([
+      0, 1, 2, 40, 41, 97, 99, 100,
+    ]);
+  });
+
+  // Stage 1: anything that is neither a string nor { stops: { color: string, position: number }[] }
+  // is one union issue at the fill's own path, never one per element.
+  it.each([
+    ['a number', 5],
+    ['null', null],
+    ['an object without stops', {}],
+    ['a non-array stops', { stops: 'x' }],
+    ['a stop that is a bare color (the unreleased shape)', { stops: ['#000000', '#ffffff'] }],
+    ['a stop without a position', { stops: [{ color: '#000000' }] }],
+    ['a stop with a non-string color', { stops: [{ color: 1, position: 0 }] }],
+    ['a stop with a string position', { stops: [{ color: '#000000', position: '0' }] }],
+  ])('refuses %s as a fill at the entry and bar paths', (_label, value) => {
+    const file = JSON.parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = value;
+        rule.settings.topBar.color.custom = value;
+        rule.settings.platformBar.color.custom = value;
+      }),
+    );
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([
+      { path: ENTRY, message: FILL_MESSAGE },
+      { path: TOP_BAR, message: FILL_MESSAGE },
+      { path: PLATFORM_BAR, message: FILL_MESSAGE },
+    ]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  it('refuses a missing bar custom with the fill message', () => {
+    const file = JSON.parse(fileWithRule((rule) => delete rule.settings.topBar.color.custom));
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([{ path: TOP_BAR, message: FILL_MESSAGE }]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  it('refuses a gradient in the text color, which stays a plain string', () => {
+    const file = JSON.parse(
+      fileWithRule((rule) => (rule.settings.platformBarText.color.custom = stored(['#000000', 0], ['#ffffff', 100]))),
+    );
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([{ path: TEXT, message: 'Invalid input: expected string, received object' }]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  // Stage 2: every stop's color is judged by Color.fromHex, then the stops' shape by
+  // Gradient.stopsProblem, whose first problem is reported at the path it points to.
+  it('reports each bad color and then the first shape problem, in judgment order', () => {
+    const text = fileWithRule((rule) => {
+      rule.settings.palette.entries[0].color = stored(['#000000', 0], ['#111111', 50], ['red', 100]);
+      rule.settings.topBar.color.custom = stored(['#12345', 0]);
+      rule.settings.platformBar.color.custom = stored(['red', 0], ['#000000', 50]);
+    });
+
+    expect(issuesOf(thrownBy(() => parse(text)))).toEqual([
+      { path: `${ENTRY}.stops[2].color`, message: 'expected a color like #rrggbb' },
+      { path: `${TOP_BAR}.stops[0].color`, message: 'expected a color like #rrggbb' },
+      { path: `${TOP_BAR}.stops`, message: 'expected 2 to 8 stops' },
+      { path: `${PLATFORM_BAR}.stops[0].color`, message: 'expected a color like #rrggbb' },
+      { path: `${PLATFORM_BAR}.stops[1].position`, message: 'expected 100: the last stop sits at the right end' },
+    ]);
+  });
+
+  it.each([
+    ['no stops', stored(), '.stops', 'expected 2 to 8 stops'],
+    [
+      'nine stops',
+      stored(...Array.from({ length: 9 }, (_, i): [string, number] => ['#000000', i === 8 ? 100 : i])),
+      '.stops',
+      'expected 2 to 8 stops',
+    ],
+    [
+      'a fractional position',
+      stored(['#000000', 0], ['#111111', 49.5], ['#222222', 100]),
+      '.stops[1].position',
+      'expected a whole number from 0 to 100',
+    ],
+    [
+      'a position past the right end',
+      stored(['#000000', 0], ['#111111', 101], ['#222222', 100]),
+      '.stops[1].position',
+      'expected a whole number from 0 to 100',
+    ],
+    [
+      'a first stop off the left end',
+      stored(['#000000', 5], ['#111111', 100]),
+      '.stops[0].position',
+      'expected 0: the first stop sits at the left end',
+    ],
+    [
+      'a last stop off the right end',
+      stored(['#000000', 0], ['#111111', 50], ['#222222', 95]),
+      '.stops[2].position',
+      'expected 100: the last stop sits at the right end',
+    ],
+    [
+      'two stops at one position',
+      stored(['#000000', 0], ['#111111', 40], ['#222222', 40], ['#333333', 100]),
+      '.stops[2].position',
+      "expected more than the previous stop's position (40)",
+    ],
+    [
+      'a stop before the previous one',
+      stored(['#000000', 0], ['#111111', 60], ['#222222', 30], ['#333333', 100]),
+      '.stops[2].position',
+      "expected more than the previous stop's position (60)",
+    ],
+  ])('refuses %s at the path of the problem', (_label, value, suffix, message) => {
+    expect(
+      issuesOf(thrownBy(() => parse(fileWithRule((rule) => (rule.settings.topBar.color.custom = value))))),
+    ).toEqual([{ path: `${TOP_BAR}${suffix}`, message }]);
+  });
+
+  // The extension's own export writes this, so refusing it would break export-import round trips;
+  // the text falls back to its custom color while the entry is a gradient (Palette.resolveSolid).
+  it('imports a text reference to a gradient entry', () => {
+    const parsed = parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = stored(['#000000', 0], ['#ffffff', 100]);
+        rule.settings.platformBarText.color = { paletteId: 'default', custom: '#123456' };
+      }),
+    );
+
+    const settings = parsed.projectRules[0]!.settings;
+    expect(settings.platformBarText.color.paletteId?.toString()).toBe('default');
+    expect(settings.palette.resolveSolid(settings.platformBarText.color).toHex()).toBe('#123456');
   });
 });
 
@@ -361,18 +539,9 @@ describe('parseSettingsFile: versions and migrations', () => {
     });
   });
 
-  // The real registry's 0.3.0 step adds theme 'auto' to files written before the theme existed.
-  it('imports a 0.2.1 file without theme, which the 0.3.0 migration step completes with auto', () => {
-    const { theme: _theme, ...file } = validFile();
-
-    expect(parseSettingsFile(JSON.stringify({ ...file, schemaVersion: '0.2.1' }), CURRENT_SCHEMA_VERSION).theme).toBe(
-      'auto',
-    );
-  });
-
   it('accepts a stamp equal to the current version, and one between the schema version and it', () => {
-    expect(parseSettingsFile(stamped('0.3.5'), '0.3.5').projectRules).toHaveLength(1);
-    expect(parseSettingsFile(stamped('0.3.2'), '0.3.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.5.5'), '0.5.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.5.2'), '0.5.5').projectRules).toHaveLength(1);
   });
 
   // A fake shape change: 0.2.0 renames topBar.heightPx to topBar.height. Files written before it
@@ -426,7 +595,13 @@ describe('parseSettingsFile: versions and migrations', () => {
 // The order oracle for the structure stage: the whole-file schema the import used to run in one
 // call, restated here on purpose rather than imported, so the element-by-element walk is checked
 // against Zod's own issue order and wording, not against itself.
+// The bars and the palette entries take a fill (a string or { stops }); the text keeps a string.
+const oracleFill = z.union(
+  [z.string(), z.object({ stops: z.array(z.object({ color: z.string(), position: z.number() })) })],
+  { error: 'expected a color string or a gradient object with a stops array of { color, position }' },
+);
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
+const oracleFillSelection = z.object({ paletteId: z.string().nullable(), custom: oracleFill });
 const oracleSchema = z.object({
   theme: z.string(),
   projectRules: z.array(
@@ -437,10 +612,15 @@ const oracleSchema = z.object({
       settings: z.object({
         palette: z.object({
           enabled: z.boolean(),
-          entries: z.array(z.object({ id: z.string(), name: z.string(), color: z.string() })),
+          entries: z.array(z.object({ id: z.string(), name: z.string(), color: oracleFill })),
         }),
-        topBar: z.object({ enabled: z.boolean(), color: oracleSelection, height: z.number(), stripes: z.boolean() }),
-        platformBar: z.object({ enabled: z.boolean(), color: oracleSelection, stripes: z.boolean() }),
+        topBar: z.object({
+          enabled: z.boolean(),
+          color: oracleFillSelection,
+          height: z.number(),
+          stripes: z.boolean(),
+        }),
+        platformBar: z.object({ enabled: z.boolean(), color: oracleFillSelection, stripes: z.boolean() }),
         platformBarText: z.object({ enabled: z.boolean(), color: oracleSelection, auto: z.boolean() }),
       }),
     }),

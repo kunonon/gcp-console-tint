@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { Key } from 'webdriverio';
 import { projectSettings, rule, SCHEMA_VERSION, settings, THEME_HINT_KEY } from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
@@ -97,6 +95,16 @@ async function waitStored(h, predicate) {
   return matched;
 }
 
+// Storage keeps matching `predicate` for `ms`: a save that must not happen gets the time a real
+// one takes to land (useTintSettings writes every change, with no debounce) before it is ruled out.
+async function staysStored(h, predicate, message, ms = 500) {
+  const end = Date.now() + ms;
+  do {
+    const value = await stored(h);
+    assert.ok(value !== null && predicate(value), message);
+  } while (Date.now() < end);
+}
+
 async function dialog(browser) {
   const element = await browser.$('[role="dialog"]');
   await element.waitForDisplayed();
@@ -159,7 +167,7 @@ async function rowAt(browser, index) {
   let rows = [];
   await browser.waitUntil(
     async () => {
-      rows = await browser.$$('[draggable="true"]');
+      rows = await browser.$$('[data-rule-row]');
       return rows.length > index;
     },
     { timeout: 5000, timeoutMsg: 'rule row did not render' },
@@ -204,7 +212,9 @@ async function settled(browser, read, label, ...args) {
   return current;
 }
 
-// The open colour popover's boxes in viewport pixels, rounded to 0.01.
+// The open colour popover's boxes in viewport pixels, rounded to 0.01: the element react-aria
+// places (`popover`), the dialog that scrolls in it, the Solid | Gradient switch (`mode`, null in
+// the text picker) and the well.
 function readColorPopover() {
   const box = (element) => {
     if (!element) return null;
@@ -222,8 +232,11 @@ function readColorPopover() {
   const dialog = document.querySelector('[role="dialog"]');
   if (!dialog) return null;
   return {
+    popover: box(dialog.closest('[data-placement]')),
     dialog: box(dialog),
+    scrollTop: dialog.scrollTop,
     placement: dialog.closest('[data-placement]')?.getAttribute('data-placement') ?? null,
+    mode: box(dialog.querySelector('[role="radiogroup"]')),
     well: box(dialog.querySelector('.color-well')),
     face: box(dialog.querySelector('.color-well .color-area')),
     strip: box(dialog.querySelector('.color-well .color-slider__track')),
@@ -258,7 +271,7 @@ function assertWellCss(css, label) {
 }
 
 // A held mouse drag through viewport points, as WebDriver pointer actions: the pointer events
-// react-aria's colour area and slider listen to. (dragWithPointer is for HTML drag-and-drop.)
+// react-aria's colour area and slider, and the rule list's grips, listen to.
 async function dragThrough(browser, points) {
   const [start, ...rest] = points.map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) }));
   try {
@@ -284,7 +297,101 @@ async function dragThrough(browser, points) {
   }
 }
 
+// Viewport points for a reorder drag: from the center of `from` to two thirds of a row past the
+// center of the `target` row, in the drag's direction, so the end is never exactly on a midpoint.
+// Three points between let the passed rows make way on the way there.
+async function reorderPath(browser, from, target) {
+  const { start, end } = await browser.execute(
+    (source, row) => {
+      source.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const a = source.getBoundingClientRect();
+      const b = row.getBoundingClientRect();
+      const x = a.left + a.width / 2;
+      const y = a.top + a.height / 2;
+      const middle = b.top + b.height / 2;
+      const past = (b.height * 2) / 3;
+      return { start: { x, y }, end: { x, y: middle + (middle > y ? past : -past) } };
+    },
+    from,
+    target,
+  );
+  const between = [1, 2, 3].map((step) => ({ x: start.x, y: start.y + ((end.y - start.y) * step) / 4 }));
+  return [start, ...between, end];
+}
+
 const centerOf = (box) => ({ x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 });
+
+// Moves the mouse onto the middle of `element` without pressing it, as a WebDriver pointer action,
+// so the page sees a real hover there.
+async function pointTo(browser, element) {
+  await element.scrollIntoView({ block: 'center' });
+  const { x, y } = centerOf(
+    await browser.execute((target) => {
+      const { left, right, top, bottom } = target.getBoundingClientRect();
+      return { left, right, top, bottom };
+    }, element),
+  );
+  await browser.performActions([
+    {
+      type: 'pointer',
+      id: 'e2e-mouse',
+      parameters: { pointerType: 'mouse' },
+      actions: [{ type: 'pointerMove', duration: 0, x: Math.round(x), y: Math.round(y) }],
+    },
+  ]);
+}
+
+// A step of a gesture held across reads, as WebDriver actions that leave the pointer or key down
+// between calls (the session keeps an input source's state until its actions are released), so a
+// test can look at storage in the middle of a drag or a key press.
+const mouseSteps = (browser, actions) =>
+  browser.performActions([{ type: 'pointer', id: 'e2e-mouse', parameters: { pointerType: 'mouse' }, actions }]);
+const keySteps = (browser, actions) => browser.performActions([{ type: 'key', id: 'e2e-keys', actions }]);
+
+// The viewport centre of `element` as it is now: nothing is scrolled to reach it.
+const centreInPlace = async (browser, element) =>
+  centerOf(
+    await browser.execute((target) => {
+      const { left, right, top, bottom } = target.getBoundingClientRect();
+      return { left, right, top, bottom };
+    }, element),
+  );
+
+// A primary mouse press and release on the middle of `element` where it is, as WebDriver pointer
+// actions. An element click scrolls the element into view first, which would move a scrolled
+// dialog under a test that is about the dialog keeping its scroll.
+async function pressInPlace(browser, element) {
+  const { x, y } = await centreInPlace(browser, element);
+  try {
+    await mouseSteps(browser, [
+      { type: 'pointerMove', duration: 0, x: Math.round(x), y: Math.round(y) },
+      { type: 'pointerDown', button: 0 },
+      { type: 'pause', duration: 50 },
+      { type: 'pointerUp', button: 0 },
+    ]);
+  } finally {
+    await browser.releaseActions();
+  }
+}
+
+// The fill editor's Solid | Gradient option `name` in the open popover's switch named `group`:
+// "Custom color type" in a surface picker, "Color type" in a palette row's popover. The options
+// are named by their text alone.
+const modeOption = (group, name) =>
+  `//*[@role="dialog"]//*[@role="radiogroup" and @aria-label="${group}"]//*[@role="radio" and normalize-space(.)="${name}"]`;
+
+// A stored gradient from [hex, position] pairs.
+const stopsOf = (...stops) => ({ stops: stops.map(([color, position]) => ({ color, position })) });
+// A stored gradient of these colours spread evenly from 0 to 100, as whole percents.
+const evenStops = (...colors) =>
+  stopsOf(...colors.map((color, index) => [color, Math.round((index * 100) / (colors.length - 1))]));
+
+// The computed opacity of each rule row's selection checkbox, in row order.
+async function ruleSelectOpacities(browser) {
+  return browser.execute(() =>
+    [...document.querySelectorAll('[data-rule-row] .rule-select')].map((element) => getComputedStyle(element).opacity),
+  );
+}
 
 // 'rgb(r, g, b)' as a computed style gives it, to the '#rrggbb' storage holds.
 function rgbToHex(rgb) {
@@ -329,6 +436,21 @@ function pickerSettings() {
     ),
   );
 }
+
+// pickerSettings() with the top bar on its own custom fill, `custom`, and `paletteId` in use.
+function topBarSettings(custom, paletteId = null) {
+  const base = pickerSettings();
+  const [settingsRule] = base.projectRules;
+  const { topBar } = settingsRule.settings;
+  return {
+    ...base,
+    projectRules: [
+      { ...settingsRule, settings: { ...settingsRule.settings, topBar: { ...topBar, color: { paletteId, custom } } } },
+    ],
+  };
+}
+
+const topBarFill = (value) => value.projectRules?.[0]?.settings.topBar.color;
 
 const focusedLabel = (browser) => browser.execute(() => document.activeElement?.getAttribute('aria-label') ?? null);
 
@@ -467,78 +589,6 @@ async function setFileInput(browser, input, path) {
   }
 }
 
-async function dragWithPointer(browser, from, to, browserName) {
-  const { start, end, viewport } = await browser.execute(
-    (source, target) => {
-      source.scrollIntoView({ block: 'center', inline: 'nearest' });
-      target.scrollIntoView({ block: 'center', inline: 'nearest' });
-      const center = (element) => {
-        const rect = element.getBoundingClientRect();
-        return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-      };
-      return { start: center(source), end: center(target), viewport: { width: innerWidth, height: innerHeight } };
-    },
-    from,
-    to,
-  );
-  for (const point of [start, end]) {
-    assert.ok(
-      point.x >= 0 && point.x < viewport.width && point.y >= 0 && point.y < viewport.height,
-      `drag point (${point.x}, ${point.y}) is outside the ${viewport.width}x${viewport.height} viewport`,
-    );
-  }
-  if (browserName === 'firefox') {
-    assert.equal(process.env.E2E_CONTAINER, '1', 'Firefox XTest drag requires the dedicated E2E Compose container');
-    const origin = await browser.execute(() => ({
-      x: window.mozInnerScreenX,
-      y: window.mozInnerScreenY,
-      dpr: window.devicePixelRatio,
-    }));
-    assert.equal(origin.dpr, 1, 'Firefox XTest coordinates require a 1:1 Xvfb display scale');
-    assert.ok(Number.isFinite(origin.x) && Number.isFinite(origin.y), 'Firefox did not expose the panel screen origin');
-    const screenStart = { x: Math.round(origin.x + start.x), y: Math.round(origin.y + start.y) };
-    const screenEnd = { x: Math.round(origin.x + end.x), y: Math.round(origin.y + end.y) };
-    const move = (point) => execFileSync('xdotool', ['mousemove', '--sync', String(point.x), String(point.y)]);
-    let pressed = false;
-    try {
-      move(screenStart);
-      pressed = true;
-      execFileSync('xdotool', ['mousedown', '1']);
-      await sleep(150);
-      for (let step = 1; step <= 8; step++) {
-        move({
-          x: Math.round(screenStart.x + ((screenEnd.x - screenStart.x) * step) / 8),
-          y: Math.round(screenStart.y + ((screenEnd.y - screenStart.y) * step) / 8),
-        });
-        await sleep(80);
-      }
-      await sleep(200);
-    } finally {
-      if (pressed) execFileSync('xdotool', ['mouseup', '1']);
-    }
-    return;
-  }
-  try {
-    await browser.performActions([
-      {
-        type: 'pointer',
-        id: 'e2e-mouse',
-        parameters: { pointerType: 'mouse' },
-        actions: [
-          { type: 'pointerMove', duration: 0, ...start },
-          { type: 'pointerDown', button: 0 },
-          { type: 'pause', duration: 100 },
-          { type: 'pointerMove', duration: 150, ...end },
-          { type: 'pause', duration: 100 },
-          { type: 'pointerUp', button: 0 },
-        ],
-      },
-    ]);
-  } finally {
-    await browser.releaseActions();
-  }
-}
-
 for (const browserName of browserTargets()) {
   describe(`side panel UI: ${browserName}`, { concurrency: false }, () => {
     let h;
@@ -674,7 +724,7 @@ for (const browserName of browserTargets()) {
       await motionIdle(browser);
       assert.deepEqual(
         await browser.execute(() => ({
-          rows: document.querySelectorAll('[draggable="true"]').length,
+          rows: document.querySelectorAll('[data-rule-row]').length,
           inert: document.querySelectorAll('[inert]').length,
           hidden: [...document.querySelectorAll('.reveal')].filter(
             (element) => getComputedStyle(element).opacity !== '1' || element.getBoundingClientRect().height === 0,
@@ -729,7 +779,7 @@ for (const browserName of browserTargets()) {
       await panel(h);
       const first = await rowAt(browser, 0);
       const third = await rowAt(browser, 2);
-      await dragWithPointer(browser, await first.$('span[aria-hidden="true"]'), third, browserName);
+      await dragThrough(browser, await reorderPath(browser, await first.$('[data-reorder-grip]'), third));
       const reordered = await waitStored(h, (value) => value.projectRules?.[0]?.matchType === 'prefix');
       assert.deepEqual(
         reordered.projectRules.map((item) => item.pattern),
@@ -738,7 +788,7 @@ for (const browserName of browserTargets()) {
 
       const before = reordered.projectRules.map((item) => item.pattern);
       const fromText = await (await rowAt(browser, 0)).$(`.//span[normalize-space(.)="${before[0]}"]`);
-      await dragWithPointer(browser, fromText, await rowAt(browser, 2), browserName);
+      await dragThrough(browser, await reorderPath(browser, fromText, await rowAt(browser, 2)));
       let afterTextDrag;
       const unchangedSince = Date.now();
       await browser.waitUntil(
@@ -754,6 +804,153 @@ for (const browserName of browserTargets()) {
         interval: 100,
         timeoutMsg: 'reordered priority did not select the new first matching rule',
       });
+    });
+
+    test('selects rules from checkboxes that show on hover, drags the selection as one block, and deletes it in one confirmation', async () => {
+      await h.seedSettings(settings(rule('a', 'alpha'), rule('b', 'beta'), rule('c', 'gamma'), rule('d', 'delta')));
+      const browser = await panel(h);
+      await rowAt(browser, 3);
+
+      // Nothing selected: a row's checkbox is transparent until the pointer is over that row (it
+      // stays in the layout and the Tab order either way).
+      await pointTo(browser, await rowAt(browser, 1));
+      let opacities;
+      await browser.waitUntil(
+        async () => {
+          opacities = await ruleSelectOpacities(browser);
+          return opacities[1] === '1' && opacities[3] === '0';
+        },
+        { timeout: 5000, interval: 50, timeoutMsg: 'the hovered row did not reveal only its own checkbox' },
+      );
+      assert.equal(opacities.length, 4);
+      // Once shown, it moves with the pointer instead of fading: on the next row it is fully shown
+      // at the first read, and gone from the row it left.
+      await pointTo(browser, await rowAt(browser, 3));
+      opacities = await ruleSelectOpacities(browser);
+      assert.equal(opacities[3], '1', 'the checkbox faded in on the next row instead of moving there');
+      assert.equal(opacities[1], '0', 'the checkbox faded out of the row it left instead of moving away');
+      // The checkboxes' column counts as the list, gaps included: in the gap above the last row,
+      // left of the rows, the pointer has not left the list, so the checkbox stays where it is.
+      const gap = await browser.execute(() => {
+        const rows = document.querySelectorAll('[data-rule-row]');
+        const box = rows[3].querySelector('.rule-select').getBoundingClientRect();
+        return {
+          x: Math.round(box.left + box.width / 2),
+          y: Math.round((rows[2].getBoundingClientRect().bottom + rows[3].getBoundingClientRect().top) / 2),
+        };
+      });
+      await browser.performActions([
+        {
+          type: 'pointer',
+          id: 'e2e-mouse',
+          parameters: { pointerType: 'mouse' },
+          actions: [{ type: 'pointerMove', duration: 0, x: gap.x, y: gap.y }],
+        },
+      ]);
+      assert.deepEqual(
+        await browser.execute(() =>
+          [...document.querySelectorAll('[data-rule-row]')].map((row) => row.hasAttribute('data-select-hint')),
+        ),
+        [false, false, false, true],
+        'the pointer in the gap of the checkboxes column left the list',
+      );
+
+      for (const index of [0, 2]) {
+        const row = await rowAt(browser, index);
+        await pointTo(browser, row);
+        await browser.waitUntil(async () => (await ruleSelectOpacities(browser))[index] === '1', {
+          timeout: 5000,
+          interval: 50,
+          timeoutMsg: `row ${index}'s checkbox did not show under the pointer`,
+        });
+        await (await row.$('.rule-select label')).click();
+        // The first selection brings every row's checkbox inside the card, and the rows' content
+        // slides right to make room: the next row is measured once that is over.
+        await motionIdle(browser);
+      }
+      await browser.$('//div[@data-select-row]/div[normalize-space(.)="2 selected"]').waitForDisplayed();
+      // A selection keeps every row's checkbox shown, hovered or not, inside the card: in line
+      // with the header's select-all checkbox, and the grip moved right to make room.
+      await browser.waitUntil(async () => (await ruleSelectOpacities(browser)).every((opacity) => opacity === '1'), {
+        timeout: 5000,
+        interval: 50,
+        timeoutMsg: 'a selection did not show every row checkbox',
+      });
+      const placement = await browser.execute(() => {
+        const card = document.querySelector('[data-rule-row]').closest('.card').getBoundingClientRect();
+        const all = document.querySelector('input[aria-label="Select all rules"]').closest('.checkbox__content');
+        const header = all.querySelector('.checkbox__control').getBoundingClientRect();
+        return [...document.querySelectorAll('[data-rule-row]')].map((row) => {
+          const control = row.querySelector('.rule-select .checkbox__control').getBoundingClientRect();
+          return {
+            inside: control.left >= card.left,
+            inLine: Math.abs(control.left - header.left) < 0.5,
+            beforeGrip: control.right < row.querySelector('[data-reorder-grip]').getBoundingClientRect().left,
+          };
+        });
+      });
+      assert.ok(
+        placement.every(({ inside, inLine, beforeGrip }) => inside && inLine && beforeGrip),
+        `every row's checkbox should sit inside the card, in line with select-all and before the grip: ${JSON.stringify(placement)}`,
+      );
+
+      // Grabbing a selected row drags the whole selection: alpha and gamma land together after delta.
+      const first = await rowAt(browser, 0);
+      const last = await rowAt(browser, 3);
+      await dragThrough(browser, await reorderPath(browser, await first.$('[data-reorder-grip]'), last));
+      const moved = await waitStored(h, (value) => value.projectRules?.[0]?.pattern === 'beta');
+      assert.deepEqual(
+        moved.projectRules.map((item) => item.pattern),
+        ['beta', 'delta', 'alpha', 'gamma'],
+      );
+
+      // The confirmation lists every selected rule on its own row; Cancel keeps them.
+      await click(browser, 'button[aria-label="Delete selected"]');
+      let confirmation = await dialog(browser);
+      assert.deepEqual(
+        await browser.execute(() =>
+          [...document.querySelectorAll('[role="dialog"] ul[aria-label="Rules to delete"] li')].map(
+            (item) => item.textContent,
+          ),
+        ),
+        ['alphaexact', 'gammaexact'],
+      );
+      await confirmation.$('button=Cancel').click();
+      await browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000 });
+      assert.equal((await stored(h)).projectRules.length, 4);
+
+      await click(browser, 'button[aria-label="Delete selected"]');
+      confirmation = await dialog(browser);
+      await confirmation.$('button=Delete 2 rules').click();
+      const remaining = await waitStored(h, (value) => value.projectRules?.length === 2);
+      assert.deepEqual(
+        remaining.projectRules.map((item) => item.pattern),
+        ['beta', 'delta'],
+      );
+      await motionIdle(browser);
+      assert.deepEqual(
+        await browser.execute(() => ({
+          rows: document.querySelectorAll('[data-rule-row]').length,
+          selecting: document.querySelectorAll('[data-selecting]').length,
+        })),
+        { rows: 2, selecting: 0 },
+        'the deleted selection should have left the list, with nothing selected',
+      );
+
+      // Duplicate selected copies each selected rule right after its original, in one change.
+      for (const index of [0, 1]) {
+        const row = await rowAt(browser, index);
+        await pointTo(browser, row);
+        await (await row.$('.rule-select label')).click();
+        await motionIdle(browser);
+      }
+      await click(browser, 'button[aria-label="Duplicate selected"]');
+      const duplicated = await waitStored(h, (value) => value.projectRules?.length === 4);
+      assert.deepEqual(
+        duplicated.projectRules.map((item) => item.pattern),
+        ['beta', 'beta', 'delta', 'delta'],
+      );
+      assert.equal(new Set(duplicated.projectRules.map((item) => item.id)).size, 4);
     });
 
     test('edits a rule-scoped palette, surface colors, auto text, stripes, and bounded height', async () => {
@@ -1518,8 +1715,10 @@ for (const browserName of browserTargets()) {
     });
 
     // The colour editor's layout, its CSS and its pointer handling exist only in a browser: jsdom
-    // has no boxes, evaluates no style.css and gives react-aria no pointer geometry.
-    test('lays the colour well out as one 200 by 160 shape whose thumbs stay on it for white, black and red', async () => {
+    // has no boxes, evaluates no style.css and gives react-aria no pointer geometry. A palette
+    // row's colour is in Solid mode, whose face is 224px tall: the height the gradient rows take
+    // in Gradient mode (the text picker, with no mode, keeps 140; see the short-window test).
+    test('lays a solid colour well out as one 200 by 244 shape whose thumbs stay on it for white, black and red', async () => {
       await h.seedSettings(pickerSettings());
       const browser = await panel(h);
       await openDetail(browser);
@@ -1537,8 +1736,8 @@ for (const browserName of browserTargets()) {
         const boxes = await settled(browser, readColorPopover, `${name}: the colour popover`);
         const { well, face, strip, faceThumb, hueThumb } = boxes;
         const where = `${name}: ${JSON.stringify(boxes)}`;
-        assert.deepEqual([well.width, well.height], [200, 160], `the well should be 200 by 160. ${where}`);
-        assert.deepEqual([face.width, face.height], [200, 140], `the face should be 200 by 140. ${where}`);
+        assert.deepEqual([well.width, well.height], [200, 244], `the well should be 200 by 244. ${where}`);
+        assert.deepEqual([face.width, face.height], [200, 224], `the face should be 200 by 224. ${where}`);
         assert.deepEqual([strip.width, strip.height], [200, 20], `the hue strip should be 200 by 20. ${where}`);
         assert.ok(
           near(face.top, well.top) && near(face.bottom, strip.top) && near(strip.bottom, well.bottom),
@@ -1785,49 +1984,600 @@ for (const browserName of browserTargets()) {
       assert.deepEqual(await where('pressing Auto'), opened, 'Auto should not move the popover');
     });
 
+    test('keeps a bar popover still while its gradient stops, its mode and the choice change', async () => {
+      // pickerSettings() with the top bar's kept custom fill a gradient, while Red is in use.
+      const kept = stopsOf(['#123456', 0], ['#abcdef', 100]);
+      await h.seedSettings(topBarSettings(kept, 'red'));
+      const browser = await panel(h);
+      await openDetail(browser);
+      const color = topBarFill;
+      const press = async (selector) => (await browser.$(`[role="dialog"] ${selector}`)).click();
+      const pressMode = async (name) => (await browser.$(modeOption('Custom color type', name))).click();
+      // The popover's box and placement, and the Solid | Gradient switch's box: a change that moved
+      // either would move the control just pressed out from under the pointer.
+      const where = async (label) => {
+        const { dialog: box, placement, mode } = await settled(browser, readColorPopover, `the popover after ${label}`);
+        return { box, placement, mode };
+      };
+
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      const opened = await where('opening');
+
+      // A stop is part of the custom choice: picking one to edit leaves Red for the kept gradient
+      // as it is, like a press on the hex control.
+      await press('button[aria-label="Stop 2"]');
+      let saved = await waitStored(h, (value) => color(value)?.paletteId === null);
+      assert.deepEqual(color(saved), { paletteId: null, custom: kept }, 'a stop press should only clear the reference');
+      assert.equal(await browser.$('button[aria-label="Top bar color"]').getText(), 'Gradient');
+      assert.deepEqual(await where('pressing a stop'), opened, 'a stop press should not move the popover');
+
+      // The beads come before Add stop: once the pointer rests on Add or Remove stop, a tooltip
+      // can open over the end of the palette row.
+      await press('button[aria-label="Blue"]');
+      await waitStored(h, (value) => color(value)?.paletteId === 'blue');
+      assert.deepEqual(await where('pressing a palette bead'), opened, 'a palette bead should not move the popover');
+      await press('.hex-control');
+      saved = await waitStored(h, (value) => color(value)?.paletteId === null);
+      assert.deepEqual(color(saved).custom, kept, 'the custom control should keep the gradient as it is');
+      assert.deepEqual(await where('pressing the custom control'), opened, 'the custom control should not move it');
+
+      // Add stop splits the one gap at 50 and picks the new stop; Remove stop takes it out again
+      // and picks Stop 1. Two stops is the fewest: the way to a colour is the switch.
+      await press('button[aria-label="Add stop"]');
+      await waitStored(h, (value) => color(value)?.custom.stops?.length === 3);
+      assert.deepEqual(await where('adding a stop'), opened, 'Add stop should not move the popover');
+      await press('button[aria-label="Remove stop"]');
+      saved = await waitStored(h, (value) => color(value)?.custom.stops?.length === 2);
+      assert.deepEqual(color(saved).custom, kept, 'removing the added stop should leave the two stops as they were');
+      assert.equal(
+        await (await browser.$('[role="dialog"] button[aria-label="Remove stop"]')).isEnabled(),
+        false,
+        'Remove stop should be disabled at two stops',
+      );
+      assert.deepEqual(await where('removing a stop'), opened, 'Remove stop should not move the popover');
+
+      // Solid keeps the colour being edited, Stop 1's, and Gradient brings back the gradient that
+      // Solid left. Solid gives the two rows' height to a taller face, so neither moves the box.
+      await pressMode('Solid');
+      saved = await waitStored(h, (value) => typeof color(value)?.custom === 'string');
+      assert.equal(color(saved).custom, '#123456', "Solid should keep the picked stop's colour");
+      assert.deepEqual(await where('pressing Solid'), opened, 'Solid should not move the popover or its switch');
+      await pressMode('Gradient');
+      saved = await waitStored(h, (value) => typeof color(value)?.custom === 'object');
+      assert.deepEqual(color(saved).custom, kept, 'Gradient should bring back the gradient Solid left');
+      assert.deepEqual(await where('pressing Gradient'), opened, 'Gradient should not move the popover or its switch');
+
+      // The picker keeps the gradient Solid left, not the popover's content, so it outlives a close.
+      await pressMode('Solid');
+      await waitStored(h, (value) => typeof color(value)?.custom === 'string');
+      await waitForPopoverClosed(browser);
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      await pressMode('Gradient');
+      saved = await waitStored(h, (value) => typeof color(value)?.custom === 'object');
+      assert.deepEqual(color(saved).custom, kept, 'Gradient should bring the gradient back after a reopen');
+    });
+
+    test('grows a surface colour into a gradient and back, and lets a palette entry become one that both bars follow and the text picker leaves out', async () => {
+      await h.seedSettings(
+        settings(
+          rule(
+            'gradient',
+            'project-a',
+            'exact',
+            projectSettings({
+              palette: { enabled: true, entries: [{ id: 'brand', name: 'Brand', color: '#cc3366' }] },
+              topBar: { enabled: true, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false },
+              platformBar: { enabled: true, color: { paletteId: 'brand', custom: '#234567' }, stripes: false },
+              platformBarText: { enabled: true, color: { paletteId: 'brand', custom: '#345678' }, auto: false },
+            }),
+          ),
+        ),
+      );
+      const browser = await panel(h);
+      await openDetail(browser);
+      const surface = (value, name) => value.projectRules?.[0]?.settings[name];
+      const brand = (value) => value.projectRules?.[0]?.settings.palette.entries[0]?.color;
+      const chip = (label) =>
+        browser.execute((name) => {
+          const style = getComputedStyle(document.querySelector(`button[aria-label="${name}"] .color-chip`));
+          return { color: style.backgroundColor, image: style.backgroundImage };
+        }, label);
+      const gradient = /linear-gradient\(to right,\s*rgb\(204,\s*51,\s*102\)(?:\s+\d+%)?,\s*rgb\(26,\s*115,\s*232\)/;
+
+      // Gradient starts from two stops of the colour, so the bar does not change until a stop is
+      // edited, and picks Stop 2 for that edit.
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      await click(browser, modeOption('Custom color type', 'Gradient'));
+      let saved = await waitStored(h, (value) => surface(value, 'topBar')?.color.custom.stops?.length === 2);
+      assert.deepEqual(surface(saved, 'topBar').color.custom, stopsOf(['#123456', 0], ['#123456', 100]));
+      await typeHex(browser, 'Custom color, stop 2', '#1a73e8');
+      saved = await waitStored(h, (value) => surface(value, 'topBar')?.color.custom.stops?.[1]?.color === '#1a73e8');
+      assert.deepEqual(surface(saved, 'topBar').color, {
+        paletteId: null,
+        custom: stopsOf(['#123456', 0], ['#1a73e8', 100]),
+      });
+      assert.equal(await browser.$('button[aria-label="Top bar color"]').getText(), 'Gradient');
+      // Solid keeps the colour on screen: the stop being edited.
+      await click(browser, modeOption('Custom color type', 'Solid'));
+      saved = await waitStored(h, (value) => typeof surface(value, 'topBar')?.color.custom === 'string');
+      assert.equal(surface(saved, 'topBar').color.custom, '#1a73e8', 'Solid should keep the edited stop’s colour');
+      await click(browser, '[role="dialog"] button[aria-label="Brand"]');
+      await waitStored(h, (value) => surface(value, 'topBar')?.color.paletteId === 'brand');
+      await waitForPopoverClosed(browser);
+
+      // The palette row's own popover grows the entry the same way.
+      await click(browser, 'button[aria-label="Brand color"]');
+      await dialog(browser);
+      await click(browser, modeOption('Color type', 'Gradient'));
+      await waitStored(h, (value) => brand(value)?.stops?.length === 2);
+      await typeHex(browser, 'Hex, stop 2', '#1a73e8');
+      saved = await waitStored(h, (value) => brand(value)?.stops?.[1]?.color === '#1a73e8');
+      assert.deepEqual(brand(saved), stopsOf(['#cc3366', 0], ['#1a73e8', 100]));
+      await waitForPopoverClosed(browser);
+
+      // Both bars follow the entry; the text keeps its reference but paints its own colour.
+      for (const label of ['Top bar color', 'Platform Bar color']) {
+        assert.equal(await browser.$(`button[aria-label="${label}"]`).getText(), 'Brand');
+        const { color, image } = await chip(label);
+        assert.equal(color, 'rgb(204, 51, 102)', `${label} chip should sit on the first stop`);
+        assert.match(image, gradient, `${label} chip should show the Brand gradient`);
+      }
+      assert.equal(surface(saved, 'platformBarText').color.paletteId, 'brand');
+      assert.equal(await browser.$('button[aria-label="Platform Bar text color"]').getText(), '#345678');
+      assert.deepEqual(await chip('Platform Bar text color'), { color: 'rgb(52, 86, 120)', image: 'none' });
+
+      // The text picker lists no gradient entry, no Solid | Gradient switch and no stops, and its
+      // custom control drops the reference that no entry honours any more.
+      await click(browser, 'button[aria-label="Platform Bar text color"]');
+      await dialog(browser);
+      await (await browser.$('[role="dialog"] input[aria-label="Custom color"]')).waitForDisplayed();
+      assert.equal((await browser.$$('[role="dialog"] button[aria-label="Brand"]')).length, 0);
+      assert.equal((await browser.$$('[role="dialog"] [role="radiogroup"]')).length, 0);
+      assert.equal((await browser.$$('[role="dialog"] fieldset')).length, 0);
+      await (await browser.$('[role="dialog"] .hex-control')).click();
+      saved = await waitStored(h, (value) => surface(value, 'platformBarText')?.color.paletteId === null);
+      assert.deepEqual(surface(saved, 'platformBarText').color, { paletteId: null, custom: '#345678' });
+      await waitForPopoverClosed(browser);
+    });
+
     test('scrolls a surface popover that a short window cannot fit on either side of its trigger', async () => {
       await h.seedSettings(pickerSettings());
       const browser = await panel(h);
       const windowSize = await browser.getWindowSize();
       try {
-        // Short enough that the tallest popover (Auto, palette beads, custom control and well:
-        // 312px) fits neither above nor below its trigger, wherever the trigger is.
+        // Short enough that the tallest popovers fit neither above nor below their trigger,
+        // wherever the trigger is: the text picker's 312px / 348px (Auto, palette beads, custom
+        // control and well) and a bar picker's 396px / 432px (palette beads, the Solid | Gradient
+        // switch, the gradient rows or the taller solid face, custom control and well), in a 380px
+        // / 213px panel.
         await browser.setWindowSize(windowSize.width, 420);
         await openDetail(browser);
-        await click(browser, 'button[aria-label="Platform Bar text color"]');
-        await dialog(browser);
+        for (const trigger of ['Platform Bar text color', 'Top bar color']) {
+          await waitForPopoverClosed(browser);
+          await click(browser, `button[aria-label="${trigger}"]`);
+          await dialog(browser);
 
-        const top = await settled(browser, readPopoverScroll, 'the capped popover', 'start');
-        assert.ok(
-          top.maxHeight !== '' && top.contentHeight > top.popoverHeight,
-          `setup: the window should be too short for the popover, got ${JSON.stringify(top)}`,
-        );
-        assert.equal(top.below, false, `the dialog should not show past the popover: ${JSON.stringify(top)}`);
-        assert.ok(top.firstControl, `the first control should be reachable at the start: ${JSON.stringify(top)}`);
-        assert.ok(
-          top.scrollWidth <= top.clientWidth && top.dialogWidth <= top.popoverWidth,
-          `the capped popover should not scroll sideways: ${JSON.stringify(top)}`,
-        );
-        // The dialog gives up height by scrolling, not by squeezing what is in it.
-        assert.deepEqual(
-          await browser.execute(readAutoOption),
-          { height: 32, mutedWithin: true },
-          'the Auto option should keep its 32px in a capped popover',
-        );
-        assert.equal(
-          (await browser.execute(readColorPopover)).well.height,
-          160,
-          'the well should keep its height in a capped popover',
-        );
+          const top = await settled(browser, readPopoverScroll, `the capped ${trigger} popover`, 'start');
+          assert.ok(
+            top.maxHeight !== '' && top.contentHeight > top.popoverHeight,
+            `setup: the window should be too short for the ${trigger} popover, got ${JSON.stringify(top)}`,
+          );
+          assert.equal(
+            top.below,
+            false,
+            `${trigger}: the dialog should not show past the popover: ${JSON.stringify(top)}`,
+          );
+          assert.ok(top.firstControl, `${trigger}: the first control should be reachable: ${JSON.stringify(top)}`);
+          assert.ok(
+            top.scrollWidth <= top.clientWidth && top.dialogWidth <= top.popoverWidth,
+            `${trigger}: the capped popover should not scroll sideways: ${JSON.stringify(top)}`,
+          );
+          // The dialog gives up height by scrolling, not by squeezing what is in it. Only the
+          // text picker has an Auto option, and it has no mode: its well keeps the 140px face,
+          // where a bar picker's solid face is 224px tall.
+          if (trigger === 'Platform Bar text color') {
+            assert.deepEqual(
+              await browser.execute(readAutoOption),
+              { height: 32, mutedWithin: true },
+              'the Auto option should keep its 32px in a capped popover',
+            );
+          }
+          assert.equal(
+            (await browser.execute(readColorPopover)).well.height,
+            trigger === 'Platform Bar text color' ? 160 : 244,
+            `${trigger}: the well should keep its height in a capped popover`,
+          );
 
-        const last = await settled(browser, readPopoverScroll, 'the popover scrolled to its last control', 'last');
-        assert.ok(last.scrollTop > 0, `the capped popover should scroll: ${JSON.stringify(last)}`);
-        // Reachable also means clear of a scroll bar, which takes its width out of the dialog.
-        assert.ok(last.hueStrip, `the hue strip should be reachable after scrolling: ${JSON.stringify(last)}`);
-        assert.equal(last.below, false, `the dialog should not show past the popover: ${JSON.stringify(last)}`);
+          const last = await settled(browser, readPopoverScroll, `the ${trigger} popover scrolled to its end`, 'last');
+          assert.ok(last.scrollTop > 0, `${trigger}: the capped popover should scroll: ${JSON.stringify(last)}`);
+          // Reachable also means clear of a scroll bar, which takes its width out of the dialog.
+          assert.ok(last.hueStrip, `${trigger}: the hue strip should be reachable: ${JSON.stringify(last)}`);
+          assert.equal(
+            last.below,
+            false,
+            `${trigger}: the dialog should not show past the popover: ${JSON.stringify(last)}`,
+          );
+
+          // Both of a bar picker's modes ask for one height, so Gradient leaves the capped popover
+          // as it is and the dialog scrolls just as far, to the hue strip.
+          if (trigger === 'Top bar color') {
+            await settled(browser, readPopoverScroll, 'the Top bar popover scrolled back', 'start');
+            const solid = await settled(browser, readColorPopover, 'the capped Top bar popover');
+            await pressInPlace(browser, await browser.$(modeOption('Custom color type', 'Gradient')));
+            await waitStored(h, (value) => topBarFill(value)?.custom.stops?.length === 2);
+            const grown = await settled(browser, readColorPopover, 'the capped Top bar popover after Gradient');
+            const box = ({ popover, placement, mode }) => ({ popover, placement, mode });
+            assert.deepEqual(box(grown), box(solid), 'Gradient should not move the capped popover or its switch');
+            assert.equal(grown.well.height, 160, 'the gradient rows should leave the well its 140px face');
+            const end = await settled(browser, readPopoverScroll, 'the Top bar gradient scrolled to its end', 'last');
+            assert.equal(end.contentHeight, last.contentHeight, 'both modes should scroll the same height');
+            assert.ok(end.hueStrip, `Gradient: the hue strip should be reachable: ${JSON.stringify(end)}`);
+            assert.equal(
+              end.below,
+              false,
+              `Gradient: the dialog should not show past the popover: ${JSON.stringify(end)}`,
+            );
+          }
+        }
       } finally {
         await browser.keys('Escape');
         await browser.setWindowSize(windowSize.width, windowSize.height);
+      }
+    });
+
+    test('keeps a popover and its Solid | Gradient switch where they are across a switch and back', async () => {
+      await h.seedSettings(pickerSettings());
+      const browser = await panel(h);
+      const windowSize = await browser.getWindowSize();
+      const red = (value) =>
+        value.projectRules?.[0]?.settings.palette.entries.find((entry) => entry.id === 'red')?.color;
+      // A bar picker and a palette row, each with the fill its switch changes.
+      const pickers = [
+        { label: 'Top bar color', group: 'Custom color type', fill: (value) => topBarFill(value)?.custom },
+        { label: 'Red color', group: 'Color type', fill: red },
+      ];
+      const box = ({ popover, dialog: shown, placement, mode, scrollTop }) => ({
+        popover,
+        dialog: shown,
+        placement,
+        mode,
+        scrollTop,
+      });
+      try {
+        await openDetail(browser);
+        for (const height of [560, 600, 700]) {
+          await browser.setWindowSize(windowSize.width, height);
+          for (const { label, group, fill } of pickers) {
+            await waitForPopoverClosed(browser);
+            // Low in the panel, where the popover opens above its trigger if it opens above at
+            // all: there a popover whose height followed the mode would grow upwards, and move the
+            // switch out from under the pointer that pressed it.
+            const trigger = await browser.$(`button[aria-label="${label}"]`);
+            await trigger.waitForDisplayed();
+            await browser.execute((element) => element.scrollIntoView({ block: 'end' }), trigger);
+            await trigger.click();
+            await dialog(browser);
+            const opened = await settled(browser, readColorPopover, `${label} at ${height}px`);
+            for (const name of ['Gradient', 'Solid']) {
+              await pressInPlace(browser, await browser.$(modeOption(group, name)));
+              await waitStored(h, (value) => (typeof fill(value) === 'object') === (name === 'Gradient'));
+              const now = await settled(browser, readColorPopover, `${label} at ${height}px after ${name}`);
+              assert.deepEqual(
+                box(now),
+                box(opened),
+                `${label} at ${height}px, opened ${opened.placement}: ${name} should not move the popover or its switch`,
+              );
+            }
+          }
+        }
+      } finally {
+        await browser.keys('Escape');
+        await browser.setWindowSize(windowSize.width, windowSize.height);
+      }
+    });
+
+    test('keeps a capped bar popover scrolled where it was across a switch to Solid and back', async () => {
+      const eight = evenStops('#ea4335', '#fbbc04', '#34a853', '#00bcd4', '#1a73e8', '#673ab7', '#e91e63', '#123456');
+      await h.seedSettings(topBarSettings(eight));
+      const browser = await panel(h);
+      const windowSize = await browser.getWindowSize();
+      try {
+        await browser.setWindowSize(windowSize.width, 420);
+        await openDetail(browser);
+        // At the top of the panel, so the popover opens below with room to spare. Where a click
+        // leaves it, the trigger sat 1px off the middle of Firefox's 347px viewport in CI, and
+        // react-aria picks the roomier side again on every reposition: the popover opened below
+        // and flipped above on the first press.
+        const trigger = await browser.$('button[aria-label="Top bar color"]');
+        await trigger.waitForDisplayed();
+        const room = await browser.execute((element) => {
+          element.scrollIntoView({ block: 'start' });
+          const rect = element.getBoundingClientRect();
+          return { above: Math.round(rect.top), below: Math.round(window.innerHeight - rect.bottom) };
+        }, trigger);
+        assert.ok(
+          room.below - room.above >= 100,
+          `setup: the trigger should sit high in the panel, got ${JSON.stringify(room)}`,
+        );
+        await trigger.click();
+        await dialog(browser);
+        await settled(browser, readColorPopover, 'the capped Top bar popover');
+        // As far down as the switch stays whole in view: its top 1px under the top of the
+        // scrollport, so a press on it does not scroll it into view. A mode whose content were
+        // shorter would clamp this scrollTop and move the switch.
+        const scrolled = await browser.execute(() => {
+          const shown = document.querySelector('[role="dialog"]');
+          const group = shown.querySelector('[role="radiogroup"]');
+          const top = shown.getBoundingClientRect().top + shown.clientTop;
+          shown.scrollTop += Math.floor(group.getBoundingClientRect().top - top) - 1;
+          return shown.scrollTop;
+        });
+        assert.ok(scrolled > 0, `setup: the capped dialog should scroll down to its switch, got ${scrolled}`);
+        const before = await settled(browser, readColorPopover, 'the scrolled Top bar popover');
+        const box = ({ popover, placement, mode, scrollTop }) => ({ popover, placement, mode, scrollTop });
+        for (const name of ['Solid', 'Gradient']) {
+          await pressInPlace(browser, await browser.$(modeOption('Custom color type', name)));
+          await waitStored(h, (value) => (typeof topBarFill(value)?.custom === 'string') === (name === 'Solid'));
+          const after = await settled(browser, readColorPopover, `the scrolled Top bar popover after ${name}`);
+          assert.deepEqual(
+            box(after),
+            box(before),
+            `${name} should leave the scrolled popover and its switch as they were`,
+          );
+        }
+        assert.deepEqual(topBarFill(await stored(h)).custom, eight, 'Gradient should bring the eight stops back');
+      } finally {
+        await browser.keys('Escape');
+        await browser.setWindowSize(windowSize.width, windowSize.height);
+      }
+    });
+
+    test('adds stops up to eight, and then says why Add stop is disabled', async () => {
+      await h.seedSettings(topBarSettings(stopsOf(['#123456', 0], ['#abcdef', 100])));
+      const browser = await panel(h);
+      await openDetail(browser);
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      const add = await browser.$('[role="dialog"] button[aria-label="Add stop"]');
+      const box = ({ popover, dialog: shown, placement, mode }) => ({ popover, dialog: shown, placement, mode });
+      const opened = await settled(browser, readColorPopover, 'the popover with two stops');
+      for (let count = 3; count <= 8; count++) {
+        await add.click();
+        await waitStored(h, (value) => topBarFill(value)?.custom.stops?.length === count);
+      }
+      assert.equal(await add.isEnabled(), false, 'Add stop should be disabled at eight stops');
+      const full = await settled(browser, readColorPopover, 'the popover with eight stops');
+      assert.deepEqual(box(full), box(opened), 'eight stops should keep the popover and its switch where they were');
+      // A disabled HeroUI button takes no pointer events, so a pointer over it rests on the
+      // tooltip's trigger around it. That opens the tooltip only while the pointer is the last
+      // input (react-aria's interaction modality), and the last Add moved focus to the new stop
+      // from code, so the "%" beside the position input is pressed first.
+      // Then the pointer moves onto Add stop where it is, scrolling nothing under the popover.
+      await (await browser.$('//*[@role="dialog"]//fieldset//span[normalize-space(.)="%"]')).click();
+      const { x, y } = await centreInPlace(browser, add);
+      await mouseSteps(browser, [{ type: 'pointerMove', duration: 0, x: Math.round(x), y: Math.round(y) }]);
+      let tip;
+      await browser.waitUntil(
+        async () => {
+          const tooltip = await browser.$('[role="tooltip"]');
+          tip = (await tooltip.isDisplayed()) ? await tooltip.getText() : null;
+          return tip === 'Up to 8 stops';
+        },
+        { timeout: 5000, interval: 100, timeoutMsg: () => `the tooltip said ${JSON.stringify(tip)}` },
+      );
+    });
+
+    test('moves an inner stop with a held arrow key and saves it once the key is released', async () => {
+      await h.seedSettings(topBarSettings(stopsOf(['#123456', 0], ['#888888', 40], ['#abcdef', 100])));
+      const browser = await panel(h);
+      await openDetail(browser);
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      const position = (value) => topBarFill(value)?.custom.stops?.[1]?.position;
+      const bead = await click(browser, '[role="dialog"] [role="slider"][aria-label="Stop 2"]');
+      await waitFocused(browser, 'Stop 2', 'a press on an inner stop should focus it');
+      try {
+        await keySteps(browser, [{ type: 'keyDown', value: Key.ArrowRight }]);
+        await browser.waitUntil(async () => (await bead.getAttribute('aria-valuenow')) === '41', {
+          timeout: 5000,
+          timeoutMsg: 'the stop should show the move while the key is down',
+        });
+        await staysStored(h, (value) => position(value) === 40, 'a key still down should not save the move');
+        await keySteps(browser, [{ type: 'keyUp', value: Key.ArrowRight }]);
+      } finally {
+        await browser.releaseActions();
+      }
+      await waitStored(h, (value) => position(value) === 41);
+    });
+
+    test('moves an inner stop with a drag, saves it on release only, and puts it back on Escape', async () => {
+      await h.seedSettings(topBarSettings(stopsOf(['#123456', 0], ['#888888', 50], ['#abcdef', 100])));
+      const browser = await panel(h);
+      await openDetail(browser);
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      const position = (value) => topBarFill(value)?.custom.stops?.[1]?.position;
+      const bead = await browser.$('[role="dialog"] [role="slider"][aria-label="Stop 2"]');
+      const shown = async () => Number(await bead.getAttribute('aria-valuenow'));
+      // The bead centres run over the strip's padding box less 12px at each end (FillEditor's
+      // BEAD_INSET), and a stop follows the pointer over that travel.
+      const travel = await browser.execute(
+        () => document.querySelector('[role="dialog"] .fill-strip').clientWidth - 2 * 12,
+      );
+      // Pressed, then moved by `dx` in two steps, and held: the pointer stays down after this.
+      const holdDragged = async (dx) => {
+        const { x, y } = await centreInPlace(browser, bead);
+        const [startX, startY] = [Math.round(x), Math.round(y)];
+        await mouseSteps(browser, [
+          { type: 'pointerMove', duration: 0, x: startX, y: startY },
+          { type: 'pointerDown', button: 0 },
+          { type: 'pause', duration: 100 },
+          { type: 'pointerMove', duration: 80, x: startX + dx / 2, y: startY },
+          { type: 'pointerMove', duration: 80, x: startX + dx, y: startY },
+          { type: 'pause', duration: 40 },
+        ]);
+      };
+
+      const expected = Math.round(50 + (30 / travel) * 100);
+      try {
+        await holdDragged(30);
+        await browser.waitUntil(async () => Math.abs((await shown()) - expected) <= 1, {
+          timeout: 5000,
+          timeoutMsg: `the stop should follow the pointer to about ${expected}`,
+        });
+        await staysStored(h, (value) => position(value) === 50, 'a drag still held should not save the move');
+        await mouseSteps(browser, [{ type: 'pointerUp', button: 0 }]);
+      } finally {
+        await browser.releaseActions();
+      }
+      const saved = await waitStored(h, (value) => position(value) !== 50);
+      const dropped = position(saved);
+      assert.ok(Math.abs(dropped - expected) <= 1, `the release should save about ${expected}, got ${dropped}`);
+      assert.equal(await shown(), dropped, 'the stop should stay where it was saved');
+
+      // Escape takes a drag back unsaved, and is the drag's alone: the popover stays open.
+      try {
+        await holdDragged(-30);
+        await browser.waitUntil(async () => (await shown()) < dropped, {
+          timeout: 5000,
+          timeoutMsg: 'the stop should follow the pointer back',
+        });
+        await keySteps(browser, [
+          { type: 'keyDown', value: Key.Escape },
+          { type: 'keyUp', value: Key.Escape },
+        ]);
+        await browser.waitUntil(async () => (await shown()) === dropped, {
+          timeout: 5000,
+          timeoutMsg: 'Escape should put the stop back',
+        });
+        assert.equal(await (await browser.$('[role="dialog"]')).isDisplayed(), true, 'Escape should not close it');
+        await mouseSteps(browser, [{ type: 'pointerUp', button: 0 }]);
+      } finally {
+        await browser.releaseActions();
+      }
+      await staysStored(h, (value) => position(value) === dropped, 'a drag ended by Escape should not be saved');
+      assert.equal(await shown(), dropped, 'the release after Escape should not move the stop');
+    });
+
+    test('saves a typed stop position once it can take no more digits, on Enter before that, and never for an end', async () => {
+      await h.seedSettings(topBarSettings(stopsOf(['#123456', 0], ['#888888', 30], ['#abcdef', 100])));
+      const browser = await panel(h);
+      await openDetail(browser);
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      const position = (value) => topBarFill(value)?.custom.stops?.[1]?.position;
+      const bead = await click(browser, '[role="dialog"] [role="slider"][aria-label="Stop 2"]');
+      const input = await browser.$('[role="dialog"] input[aria-label="Stop 2 position"]');
+      assert.equal(await input.isEnabled(), true, 'an inner stop’s position should be editable');
+
+      // Stop 2 can take 1 to 99: "50" is complete (one more digit would pass 99), "5" is not.
+      await fill(browser, input, '50');
+      await waitStored(h, (value) => position(value) === 50);
+      await fill(browser, input, '5');
+      await browser.waitUntil(async () => (await bead.getAttribute('aria-valuenow')) === '5', {
+        timeout: 5000,
+        timeoutMsg: 'the stop should show a typed position at once',
+      });
+      await staysStored(h, (value) => position(value) === 50, 'a position that can take another digit should wait');
+      await browser.keys(Key.Enter);
+      await waitStored(h, (value) => position(value) === 5);
+
+      // An end stays where it is. (Stop 1 is now under Stop 2, so the other end is picked.)
+      await click(browser, '[role="dialog"] button[aria-label="Stop 3"]');
+      const end = await browser.$('[role="dialog"] input[aria-label="Stop 3 position"]');
+      await end.waitForDisplayed();
+      assert.equal(await end.isEnabled(), false, 'an end’s position should not be editable');
+      assert.equal(await end.getValue(), '100');
+    });
+
+    test('keeps every one of eight evenly spaced stops in reach of the pointer in a 213px panel', async () => {
+      await h.seedSettings(
+        topBarSettings(
+          evenStops('#ea4335', '#fbbc04', '#34a853', '#00bcd4', '#1a73e8', '#673ab7', '#e91e63', '#123456'),
+        ),
+      );
+      const browser = await panel(h);
+      await openDetail(browser);
+      await click(browser, 'button[aria-label="Top bar color"]');
+      await dialog(browser);
+      // An inner stop picked, at the larger size: the crowding is worst beside it.
+      await click(browser, '[role="dialog"] [role="slider"][aria-label="Stop 4"]');
+      // The narrowest panel (320px at 150% zoom) is narrower than a browser window can be made,
+      // so the dialog gets the width its max-w-[calc(100vw-24px)] gives it in a 213px viewport.
+      await browser.execute(() => {
+        document.querySelector('[role="dialog"]').style.maxWidth = `${213 - 24}px`;
+      });
+      const reach = await settled(
+        browser,
+        () => {
+          const strip = document.querySelector('[role="dialog"] .fill-strip');
+          return {
+            width: strip.getBoundingClientRect().width,
+            missed: [...strip.querySelectorAll('.color-chip')]
+              .filter((bead) => {
+                const { left, right, top, bottom } = bead.getBoundingClientRect();
+                return document.elementFromPoint((left + right) / 2, (top + bottom) / 2) !== bead;
+              })
+              .map((bead) => bead.getAttribute('aria-label')),
+          };
+        },
+        'the stops in a 213px panel',
+      );
+      assert.equal(reach.width, 165, `setup: the strip should be as wide as in a 213px panel, got ${reach.width}`);
+      assert.deepEqual(reach.missed, [], 'a pointer at each stop’s centre should reach that stop');
+    });
+
+    test('keeps the inner stops of a crowded gradient frontmost, and a focused stop over all', async () => {
+      // Each with the picked stop drawn largest: an end crowded by inner stops, or an inner stop
+      // over its neighbours.
+      const cases = [
+        { positions: [0, 98, 99, 100], pick: 3 },
+        { positions: [0, 5, 10, 100], pick: 1 },
+        { positions: [0, 1, 2, 100], pick: 4 },
+      ];
+      const colours = ['#123456', '#888888', '#cccccc', '#abcdef'];
+      for (const { positions, pick } of cases) {
+        const label = `[${positions.join(', ')}] with Stop ${pick} picked`;
+        await h.seedSettings(topBarSettings(stopsOf(...positions.map((at, index) => [colours[index], at]))));
+        const browser = await panel(h);
+        await openDetail(browser);
+        await click(browser, 'button[aria-label="Top bar color"]');
+        await dialog(browser);
+        // Stop 1 is picked on opening; the others are pressed where they are clear.
+        if (pick !== 1) await click(browser, `[role="dialog"] [aria-label="Stop ${pick}"]`);
+        // Then a press on the checked mode (a press on the custom choice, nothing more) and Tab to
+        // Stop 2: keyboard focus, which picks nothing.
+        await click(browser, modeOption('Custom color type', 'Gradient'));
+        const frontmost = () => {
+          const strip = document.querySelector('[role="dialog"] .fill-strip');
+          const atCentre = (bead) => {
+            const { left, right, top, bottom } = bead.getBoundingClientRect();
+            return document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+          };
+          return {
+            picked: strip.querySelector('[data-selected="true"]')?.getAttribute('aria-label') ?? null,
+            inner: [...strip.querySelectorAll('[role="slider"]')].map((bead) => ({
+              stop: bead.getAttribute('aria-label'),
+              hit: atCentre(bead)?.getAttribute('role') ?? null,
+            })),
+            stop2: atCentre(strip.querySelector('[aria-label="Stop 2"]'))?.getAttribute('aria-label') ?? null,
+          };
+        };
+        const pressed = await settled(browser, frontmost, label);
+        assert.equal(pressed.picked, `Stop ${pick}`, `setup: ${label}`);
+        for (const { stop, hit } of pressed.inner) {
+          assert.equal(hit, 'slider', `${label}: a pointer on ${stop}'s centre should reach a stop that moves`);
+        }
+        await browser.keys([Key.Tab]);
+        await browser.keys([Key.Tab]);
+        await waitFocused(browser, 'Stop 2', `${label}: two Tabs from the switch should reach Stop 2`);
+        const focused = await settled(browser, frontmost, `${label}, Stop 2 focused`);
+        assert.equal(focused.picked, `Stop ${pick}`, `${label}: Tab focus should pick no stop`);
+        assert.equal(focused.stop2, 'Stop 2', `${label}: the focused stop should be drawn over the others`);
+        await waitForPopoverClosed(browser);
       }
     });
 
@@ -1838,11 +2588,28 @@ for (const browserName of browserTargets()) {
           'same',
           'exact',
           projectSettings({
-            palette: { enabled: true, entries: [{ id: 'brand', name: 'Brand', color: '#cc3366' }] },
-            topBar: { enabled: true, color: { paletteId: 'brand', custom: '#123456' }, height: 13, stripes: true },
+            // Gradients in an entry and in a kept custom fill travel through the file as { stops },
+            // each stop with its colour and position.
+            palette: {
+              enabled: true,
+              entries: [
+                { id: 'brand', name: 'Brand', color: '#cc3366' },
+                {
+                  id: 'sunrise',
+                  name: 'Sunrise',
+                  color: stopsOf(['#ff6d00', 0], ['#e91e63', 35], ['#3f51b5', 100]),
+                },
+              ],
+            },
+            topBar: {
+              enabled: true,
+              color: { paletteId: 'brand', custom: stopsOf(['#ff6d00', 0], ['#1a73e8', 100]) },
+              height: 13,
+              stripes: true,
+            },
             platformBar: {
               enabled: true,
-              color: { paletteId: 'brand', custom: '#234567' },
+              color: { paletteId: 'sunrise', custom: '#234567' },
               stripes: true,
             },
             platformBarText: { enabled: true, color: { paletteId: null, custom: '#345678' }, auto: true },

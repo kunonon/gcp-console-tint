@@ -66,6 +66,24 @@ body {
   --border: oklch(35% 0.006 286.033);
 }
 
+/* An unchecked checkbox needs an edge of its own. HeroUI draws none (--field-border-width is 0px)
+   and fills the box with --field-background, which is the card's own surface in both themes, so
+   only the light theme's faint --field-shadow outlined it, and nothing did in dark. The edge is a
+   1px inset ring of a light grey: --muted, the grip's colour, taken 40% of the way to the card's
+   surface, so it reads well under the grip's dots: 2.4:1 against the card in light and 3.0:1 in
+   dark (WCAG asks 3:1 of a control's edge; the lighter edge in light is a deliberate choice).
+   It stays that grey under the pointer: a row's checkbox appears on hover, and a darker edge
+   there made it stand out against the row. An inset ring leaves the 16px box as it is, composes
+   with the focus ring (both are Tailwind's ring variables in the control's box-shadow), and is
+   painted under the accent fill that covers a checked box. An indeterminate box is filled by its background
+   instead, which the ring would paint over, so it has none. */
+.checkbox__control {
+  --tw-inset-ring-shadow: inset 0 0 0 1px color-mix(in oklab, var(--muted) 60%, var(--surface));
+}
+.checkbox[data-indeterminate="true"] .checkbox__control {
+  --tw-inset-ring-shadow: 0 0 #0000;
+}
+
 /* How fast the app's hand-built bordered controls answer hover, focus and press. It belongs to the
    interaction motion rules at the end of this file ("Hand-built controls"); only this one rule
    sits here, because it has to come before the more specific `.dark .outlined-control` selector
@@ -94,25 +112,60 @@ body {
 }
 
 /* A picked colour is one object everywhere, in both themes: a round bead (`.color-chip`, 20px in
-   the triggers and the hex control, 28px for the palette options in the popovers). The bead's
-   rim is the fill pulled a quarter of the way to the text colour: a translucent --foreground
-   border over the edge of the fill, which extends under it, so the inside of the bead stays the
-   true colour. No box-shadow here: the selected bead's `ring-2` is a box-shadow.
+   the triggers and the hex control, 28px for the palette options in the popovers, 16px and 20px
+   for a gradient's stops). The bead's rim is the fill pulled a quarter of the way to the text
+   colour: a translucent --foreground border over the edge of the fill, which extends under it,
+   so the inside of the bead stays the true colour. No box-shadow here: the selected bead's
+   `ring-2` is a box-shadow.
    The fill is the data, so forced colours (a Windows contrast theme) must not repaint it: the
-   bead keeps its colours there, and with them the selection ring and the focus outline. */
+   bead keeps its colours there, and with them the selection ring and the focus outline.
+   A gradient bead's image is laid over the border box: from the default padding box it would
+   tile under the rim, which would then show the last stop on the left and the first on the
+   right. Solid beads look the same either way. */
 .color-chip {
   border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
   forced-color-adjust: none;
+  background-origin: border-box;
+}
+
+/* The gradient preview strip in the stop editor: the same rim and the same forced-colours
+   opt-out as the beads (a Windows contrast theme would otherwise drop the gradient image), and
+   the image laid over the border box so the rim shows the fill under it, not a wrapped tile.
+   No touch panning on it: a pan would take the pointer from a stop being dragged
+   (pointercancel), which puts the stop back. */
+.fill-strip {
+  border-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+  forced-color-adjust: none;
+  background-origin: border-box;
+  touch-action: none;
+}
+
+/* Each stop bead sits on the strip over its own colour, so its rim alone dissolves into the
+   gradient. A halo of the popover surface (--overlay) cuts it out of the strip on any stop colour
+   in both themes, and the stop being edited wears a wider one on top of its larger size. Not the
+   accent ring: that stays the panel's one "in use" mark (see FillEditor). `:where` keeps the halo
+   at the bead's own specificity, so the later `.color-chip` rules (transitions only) are not
+   flagged as descending. */
+:where(.fill-strip) .color-chip {
+  box-shadow: 0 0 0 1px var(--overlay);
+}
+.fill-strip [data-selected="true"] {
+  box-shadow: 0 0 0 2px var(--overlay);
 }
 
 /* The accent ring is this panel's selection mark on beads, so keyboard focus on a bead that can
    be pressed (the palette options) cannot be an accent ring too: it is an outline in the text
    colour, one step further out than the selection ring (offset 4 against the ring's 2), so it
    reads as the cursor, and on the selected bead both show. How a bead answers a press is with the
-   other hand-built controls at the end of this file. */
-button.color-chip:focus-visible {
+   other hand-built controls at the end of this file. A stop on the strip that has focus is drawn
+   over the beads it overlaps (the picked one included), so its outline is never hidden under
+   them; unlayered, this beats the beads' Tailwind z-index. */
+.color-chip:focus-visible {
   outline: 2px solid var(--foreground);
   outline-offset: 4px;
+}
+.fill-strip .color-chip:focus-visible {
+  z-index: 20;
 }
 
 /* The bordered controls of the pickers (triggers, Match contrast, the hex control) focus like
@@ -133,7 +186,7 @@ button.color-chip:focus-visible {
     outline-offset: 2px;
   }
   /* A bead keeps its own colours there, but its focus outline lies on the system's canvas. */
-  button.color-chip:focus-visible {
+  .color-chip:focus-visible {
     outline-color: CanvasText;
   }
 }
@@ -248,6 +301,15 @@ button.outlined-control:focus-visible,
     inset 0 0 0 1px rgba(0, 0, 0, 0.28);
 }
 
+/* Solid asks for the gradient rows' height too, as a taller face, so the popover keeps one box
+   across a mode switch, and keeps it under react-aria's cap as well: nothing here gives height
+   back, so a capped dialog has the same scroll range in both modes and a switch never clamps its
+   scrollTop (a face that shrank first moved the switch under the pointer by up to 80px).
+   84px = strip 32 + gap 8 + tools 32 + gap 12 (FillEditor): change those and change 224 with them. */
+.fill-editor[data-mode="solid"] .color-well .color-area {
+  height: 224px;
+}
+
 /* The Settings tab's theme switch: a HeroUI ToggleButtonGroup (`.theme-switch` is the className
    AppearanceCard puts on it) restyled as a miniature of the Rules | Settings tabs — a
    `var(--default)` pill track, one `var(--segment)` thumb carrying the surface shadow, and muted
@@ -349,6 +411,83 @@ button.outlined-control:focus-visible,
   .theme-switch::before,
   .theme-switch > .toggle-button,
   .theme-switch > .toggle-button > svg {
+    transition: none;
+  }
+}
+
+/* The fill editor's Solid | Gradient switch (`.fill-mode` is the className FillEditor puts on its
+   ToggleButtonGroup): .theme-switch's track, sliding thumb and colours, as two equal text segments
+   across the dialog. Unlayered for the same cascade reason as .theme-switch. HeroUI's
+   .toggle-button-group is inline-flex and fit-content, hence width: 100%. */
+.fill-mode {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  gap: 0;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 3px;
+  border-radius: 9999px;
+  background-color: var(--default);
+}
+.fill-mode::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 0;
+  width: calc(50% - 3px);
+  height: 26px;
+  border-radius: 9999px;
+  background-color: var(--segment);
+  box-shadow: var(--surface-shadow);
+  translate: 0 0;
+  transition:
+    translate 250ms var(--ease-out-fluid),
+    scale 150ms var(--ease-out-fluid);
+  pointer-events: none;
+}
+.fill-mode:has(> .toggle-button:nth-child(2)[data-selected="true"])::before {
+  translate: 100% 0;
+}
+.fill-mode:has(> .toggle-button[data-selected="true"][data-pressed="true"])::before {
+  scale: 0.94;
+}
+.fill-mode > .toggle-button {
+  --toggle-button-bg: transparent;
+  --toggle-button-bg-hover: transparent;
+  --toggle-button-bg-pressed: transparent;
+  --toggle-button-bg-selected: transparent;
+  --toggle-button-bg-selected-hover: transparent;
+  --toggle-button-bg-selected-pressed: transparent;
+  --toggle-button-fg: var(--muted);
+  --toggle-button-fg-selected: var(--segment-foreground);
+  z-index: 1;
+  min-width: 0;
+  width: auto;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  transform: none;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  transition:
+    color 150ms var(--ease-smooth),
+    box-shadow 100ms var(--ease-smooth);
+}
+.fill-mode > .toggle-button[data-hovered="true"],
+.fill-mode > .toggle-button[data-pressed="true"] {
+  color: var(--segment-foreground);
+}
+.fill-mode > .toggle-button[data-focus-visible="true"] {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+@media (prefers-reduced-motion: reduce) {
+  .fill-mode::before,
+  .fill-mode > .toggle-button {
     transition: none;
   }
 }
@@ -557,54 +696,45 @@ html.theme-transitions {
    the rules above, and built on HeroUI's easing tokens only. Four duration tokens, plus the delays
    written next to them, run the panels, views, sections and rows: things arrive in 250ms (the
    length of the tab pill's slide, on the curve the 300ms switch thumb uses), leave in 160ms, and
-   fade in 150ms / out 100ms (HeroUI's own overlay fades). The hand-built controls repeat HeroUI's
+   fade in 150ms / out 100ms (HeroUI's own overlay fades). A fifth, 200ms, moves the rule rows that
+   make way for a dragged row and lands them on release. The hand-built controls repeat HeroUI's
    own literal 100/150/250ms instead. `--ease-out-fluid` is a hard ease-out, so most of any travel
-   is over by half time and the rest is settling. Enter and exit are never symmetric: exits are
-   shorter and fade before they collapse. */
+   is over by half time and the rest is settling. Enter and exit are symmetric only where two
+   panels swap in one place (the tab panels' cross-fade); elsewhere exits are shorter and fade
+   before they collapse. */
 :root {
   --motion-enter: 250ms;
   --motion-exit: 160ms;
   --motion-fade-in: 150ms;
   --motion-fade-out: 100ms;
+  --motion-reorder: 200ms;
 }
 
-/* Tab panels: a fade-through. react-aria marks the incoming panel `data-entering` for one style
-   flush and keeps the outgoing one mounted (`data-exiting`, inert) while a transition declared on
-   the panel itself runs. HeroUI makes the outgoing panel absolute at top: 0, so the panels need a
-   positioned box of their own (`.tab-panels`). The outgoing panel is all but gone (100ms) when the
-   incoming one starts (80ms delay); a plain cross-fade showed both texts at once. The incoming
-   slide lands at 250ms, together with the pill. Direction needs no JS: the first panel always
-   lives on the left, so it leaves and returns to the left. HeroUI declares no transition on
+/* Tab panels: a cross-fade in place. react-aria marks the incoming panel `data-entering` for one
+   style flush and keeps the outgoing one mounted (`data-exiting`, inert) while a transition
+   declared on the panel itself runs. HeroUI makes the outgoing panel absolute at top: 0, so the
+   panels need a positioned box of their own (`.tab-panels`), where the two share their top edge
+   and width. Both fades start together on one duration and curve, so where the cards of the two
+   panels overlap their surfaces stay on screen and only the content changes. A fade-through (the
+   outgoing panel gone before the incoming one shows) left both all but invisible for a moment,
+   which read as a blink. Neither panel slides: two overlapping texts moving apart read as a double
+   image, and the pill already shows the direction. HeroUI declares no transition on
    `.tabs__panel`, so this shorthand replaces nothing. */
 .tab-panels {
   position: relative;
 }
 .tabs__panel {
-  transition:
-    opacity var(--motion-fade-in) var(--ease-smooth) 80ms,
-    translate calc(var(--motion-enter) - 80ms) var(--ease-out-fluid) 80ms;
+  transition: opacity var(--motion-fade-in) var(--ease-smooth);
 }
 .tabs__panel[data-entering],
 .tabs__panel[data-exiting] {
   opacity: 0;
 }
-.tabs__panel[data-exiting] {
-  transition-duration: var(--motion-fade-out);
-  transition-delay: 0ms;
-}
-.tab-panel-start[data-entering],
-.tab-panel-start[data-exiting] {
-  translate: -8px 0;
-}
-.tab-panel-end[data-entering],
-.tab-panel-end[data-exiting] {
-  translate: 8px 0;
-}
 
 /* List <-> detail: enter only. The two view roots are keyed, so each navigation mounts a new
    root; the attribute is absent on the first paint of the panel, and absent on the list unless the
    user pressed Back. The fade is shorter than the slide so the new view is readable while it is
-   still settling. 12px, more than the tab's 8px: a level change, not a lateral one. */
+   still settling. Unlike the tab panels it slides, 12px: a level change, not a lateral one. */
 @keyframes view-fade {
   from {
     opacity: 0;
@@ -675,6 +805,235 @@ html.theme-transitions {
     opacity var(--motion-fade-out) var(--ease-smooth);
 }
 
+/* Rule reordering (hooks/useRowReorder.ts). While rows are dragged the list carries
+   `data-reordering`, and `data-settling` while the rows land after the release; every moving row
+   carries `data-dragging`: the grabbed row alone, or a whole selection, which travels as one block
+   whose top row (the lead) has the empty value and the others `follow`. The hook moves rows with
+   inline transforms: the others slide aside on the transition below, and the gathering of a
+   selection and the landing are Web Animations that read `--motion-reorder` from the row. Rows sit
+   inside the `.reveal` clip, which leaves only 4px outside them, so the clip is lifted for the
+   gesture: the rows' own wrappers and the one around the whole list, which would cut the shadow of
+   a row at the list's end. The moving rows follow the pointer without a transition and are lifted
+   like a popover: the card's surface under them (in dark, one step up), the overlay shadow around
+   them. That surface is one pseudo-element on the lead, reaching past it 6px above and 8px to the
+   sides (a selection's checkboxes are inside the rows then, see "Rule selection" below), and below
+   it 6px past the
+   block's last row: the hook sets `--reorder-block-rest` on the lead to the block's height below
+   the lead's own (0 for a single row). The follow rows paint above it, being later in the
+   document at the same z-index, each on a flat surface of the same colour reaching half the gap
+   above and below, with no shadow: inside the block they disappear into the lead's surface, so a
+   block reads as one lifted card rather than a stack, and while a scattered selection gathers, or
+   lands apart again after a cancel, the rows they cross do not show through them. The row's 36px
+   buttons and its text get room inside it without the row's layout changing; its 16px corners sit
+   concentric with the card's 24px ones, 8px further out. */
+[data-reordering] .reveal > div,
+[data-settling] .reveal > div,
+.reveal > div:has(> [data-reordering]),
+.reveal > div:has(> [data-settling]) {
+  overflow-y: visible;
+}
+[data-reordering] [data-rule-row]:not([data-dragging]) {
+  transition: transform var(--motion-reorder) var(--ease-out-fluid);
+}
+[data-rule-row][data-dragging] {
+  position: relative;
+  z-index: 1;
+}
+[data-rule-row][data-dragging]::before {
+  content: "";
+  position: absolute;
+  inset: -6px -8px calc(-6px - var(--reorder-block-rest, 0px));
+  z-index: -1;
+  background-color: var(--surface);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--overlay-shadow);
+}
+/* In dark the overlay shadow is only a faint rim, so the lifted row also takes the next surface
+   step up, as raised surfaces do in dark themes. */
+.dark [data-rule-row][data-dragging]::before {
+  background-color: var(--surface-secondary);
+}
+[data-rule-row][data-dragging="follow"]::before {
+  inset: -4px -8px;
+  box-shadow: none;
+}
+/* From a drop until the rows land: the browser's scroll anchoring would otherwise answer the new
+   row order by shifting a scrolled window by a row. Set on <html>, the scroller, before React
+   commits the order. */
+:root[data-reordering-drop] {
+  overflow-anchor: none;
+}
+/* From the press on a grip to the release: no text selection starts, and the pointer shows a grab
+   wherever it travels. */
+:root[data-reordering-pending] {
+  user-select: none;
+}
+:root[data-reordering-pending],
+:root[data-reordering-pending] * {
+  cursor: grabbing;
+}
+
+/* The delete confirmation (DeleteConfirmPopover). `.confirm-popover` is on Popover.Content
+   (HeroUI's `.popover`, which sets no overflow of its own) and `.confirm` on Popover.Dialog: a flex
+   column with min-height 0 at each level, so when the max-height react-aria gives the popover is
+   less than the content, only the item list shrinks and scrolls, and nothing spills out of the
+   surface. The heading and the note share the items' text column (the tiles' 10px padding). */
+.confirm-popover {
+  display: flex;
+  flex-direction: column;
+}
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  max-width: 20rem;
+  padding: 12px;
+}
+.confirm-heading,
+.confirm-note {
+  padding-inline: 10px;
+}
+.confirm-note {
+  margin-top: -4px;
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: var(--muted);
+}
+/* The items: one tile each in a 12px-radius well (the popover's 24px less its 12px padding). The
+   2px gaps show the popover's surface, which stays visible in both themes where a hairline would
+   not. The scroller is HeroUI's ScrollShadow with a short fade, so a cut tile still reads as cut;
+   its scrollbar stays. The fade spans the full width: HeroUI keeps a 10px strip at the right
+   unmasked for a classic scrollbar, which left a notch in the cut tile's corner where scrollbars
+   overlay the content. */
+.confirm-list {
+  --scroll-shadow-scrollbar-size: 0px;
+  min-height: 0;
+  max-height: 13.5rem;
+  border-radius: var(--radius-xl);
+  overscroll-behavior: contain;
+}
+/* The list takes focus only while it scrolls. An inset ring, as HeroUI draws them: the fade's
+   mask would clip an outline. The mask fades the ring's bottom edge along with the list's, so the
+   ring shows on the other three sides. */
+.confirm-list:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+.confirm-list > ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.confirm-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background-color: var(--surface-secondary);
+}
+/* A long pattern fills each line and wraps at any character: a pattern is not prose, and
+   wrapping at hyphens left lines half empty and took more of them. */
+.confirm-item {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+.confirm-detail {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  color: var(--muted);
+}
+.confirm-swatch {
+  flex-shrink: 0;
+  align-self: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Rule selection (App.tsx). The header's select-all checkbox and every row's checkbox
+   (`.rule-select`, in a `data-select-row`) are placed and shown the same way.
+   With nothing selected a checkbox stays out of sight until it is wanted: a row's under the
+   pointer, any of them with keyboard focus in its row. The pointer's is one checkbox that fades in
+   on the first row it reaches and then moves with it from row to row (useSelectHint marks the row
+   `data-select-hint`, and `data-select-hint-moving` switches the opacities at once for a move),
+   until the pointer leaves the list. It shows outside the row, left of it, as
+   far from the grip's box as the grip is from the pattern, half over the card's edge: no column
+   is kept for it, so the rows keep even edges and nothing in them moves as it shows.
+   Once anything is selected (`data-selecting` on the card's content) every checkbox fades in and
+   makes room for itself inside the card: the content of the header and of each row slides right
+   by the checkbox and its gap, and the checkbox slides in to the row's start, so the title and the
+   rows move together and the checkboxes stand in one column. While a row is dragged with nothing
+   selected its checkbox stays hidden, so the lifted row carries only what lies inside it.
+   Keyboard focus is react-aria's `data-focus-visible`, not the :focus-visible pseudo-class: the
+   browser keeps the checkbox's own <input> matching :focus-visible after a click on it, so a
+   checkbox just cleared by the mouse would stay shown while the pointer is away.
+   Hidden, a checkbox only turns transparent, never invisible or undisplayed, so it stays in the
+   Tab order and in the accessibility tree, and it still answers the pointer: lying outside the
+   row's box, it is what makes a pointer coming in from the card's edge reach the row and so reveal
+   it. Without hover (touch) there is no way to reveal a row's, so those always show. The fade is
+   an opacity change, which the reduced-motion blocks leave alone; the slides are movement, so
+   reduced motion makes them at once (the last block of this file). */
+[data-select-row] {
+  transition: padding-left var(--motion-enter) var(--ease-out-fluid);
+}
+[data-select-row] .rule-select {
+  left: -1.5rem;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fade-in) var(--ease-smooth),
+    left var(--motion-enter) var(--ease-out-fluid);
+}
+[data-rule-row][data-select-hint] .rule-select,
+[data-select-row]:has([data-focus-visible="true"]) .rule-select {
+  opacity: 1;
+}
+[data-rule-row][data-select-hint-moving] .rule-select {
+  transition: none;
+}
+/* The checkboxes' column, left of the rows, belongs to the list for the pointer, gaps included:
+   a pointer going down it would otherwise leave the list at every gap between two rows (the card
+   is under it there) and fade the checkbox out and in again instead of moving it. Painted before
+   the rows, it never covers a checkbox. */
+[data-select-list]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: -1.5rem;
+  width: 1.5rem;
+}
+[data-reordering] [data-rule-row] .rule-select,
+[data-settling] [data-rule-row] .rule-select {
+  opacity: 0;
+}
+/* The header's checkbox does not show under the pointer, so until a selection shows it, it does
+   not take the pointer either: a press there would select every rule unseen. */
+[data-select-row]:not([data-rule-row]) .rule-select {
+  pointer-events: none;
+}
+[data-selecting] [data-select-row] {
+  padding-left: 1.5rem;
+}
+[data-selecting] [data-select-row] .rule-select {
+  left: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  [data-rule-row] .rule-select {
+    opacity: 1;
+  }
+}
+
 /* Hand-built controls (picker triggers, Auto option, palette chips) answer hover and press exactly
    like the HeroUI buttons beside them: `.button` is background 100ms, transform 250ms
    `--ease-smooth`, hover `--default` at 60%, press 0.97/0.98; the small round close button presses
@@ -705,12 +1064,7 @@ button.color-chip:active {
    written. */
 @media (prefers-reduced-motion: reduce) {
   .tabs__panel {
-    transition-property: opacity;
     transition-duration: var(--motion-fade-out);
-  }
-  .tabs__panel[data-entering],
-  .tabs__panel[data-exiting] {
-    translate: none;
   }
   [data-view-enter] {
     --view-enter-x: 0px;
@@ -738,5 +1092,20 @@ button.color-chip:active {
   button.outlined-control:active,
   button.color-chip:active {
     scale: none;
+  }
+}
+
+/* Reduced motion for rule reordering: the rows that make way swap at once and nothing glides on
+   release. The grabbed row still follows the pointer, which is the gesture itself. A selection's
+   checkboxes, and the rows' content, move into place at once. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-reorder: 0ms;
+  }
+  [data-select-row] {
+    transition: none;
+  }
+  [data-select-row] .rule-select {
+    transition: opacity var(--motion-fade-in) var(--ease-smooth);
   }
 }

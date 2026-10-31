@@ -1,6 +1,6 @@
 import { Card, ToggleButton, ToggleButtonGroup } from '@heroui/react';
 import type { ReactNode } from 'react';
-import type { Theme } from '../../../../../domain/tint-settings';
+import { isTheme, type Theme } from '../../../../../domain/tint-settings';
 
 export const THEME_LABELS: Record<Theme, string> = {
   auto: 'Auto',
@@ -119,7 +119,7 @@ export default function AppearanceCard({ theme, onChange }: AppearanceCardProps)
               // Clicking the checked radio again re-reports its own key, so only a different key saves.
               onSelectionChange={(keys) => {
                 const [key] = keys;
-                if (key != null && key !== theme) onChange(key as Theme);
+                if (typeof key === 'string' && isTheme(key) && key !== theme) onChange(key);
               }}
             >
               {THEME_OPTIONS.map((option) => {

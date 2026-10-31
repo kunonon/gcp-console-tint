@@ -8,7 +8,8 @@ export type Theme = (typeof THEMES)[number];
 
 // Guard for untrusted input (an imported settings file): whether a string names a theme.
 export function isTheme(value: string): value is Theme {
-  return (THEMES as readonly string[]).includes(value);
+  const all: readonly string[] = THEMES;
+  return all.includes(value);
 }
 
 export class TintSettings extends ValueObject<TintSettings> {
@@ -74,13 +75,36 @@ export class TintSettings extends ValueObject<TintSettings> {
     return new TintSettings(next, this.theme);
   }
 
-  // Drag-and-drop reorder: the rule at `fromIndex` is lifted out and re-inserted at `toIndex`
-  // of the remaining list (so dropping on a row before it inserts above, after inserts below).
-  moveRule(fromIndex: number, toIndex: number): TintSettings {
-    const next = [...this.projectRules];
-    const [moved] = next.splice(fromIndex, 1);
-    if (!moved) return this;
-    next.splice(toIndex, 0, moved);
+  // Duplicates every rule whose id is listed, in one change (the list's bulk duplicate): each copy
+  // right after its original, as duplicateRule places one. Ids that match no rule are ignored.
+  duplicateRules(ids: readonly ProjectRuleId[]): TintSettings {
+    if (!this.projectRules.some((rule) => ids.some((id) => rule.id.equals(id)))) return this;
+    return new TintSettings(
+      this.projectRules.flatMap((rule) => (ids.some((id) => rule.id.equals(id)) ? [rule, rule.duplicate()] : [rule])),
+      this.theme,
+    );
+  }
+
+  // Removes every rule whose id is listed, in one change (the list's bulk delete). Ids that match no
+  // rule are ignored.
+  removeRules(ids: readonly ProjectRuleId[]): TintSettings {
+    return new TintSettings(
+      this.projectRules.filter((rule) => !ids.some((id) => rule.id.equals(id))),
+      this.theme,
+    );
+  }
+
+  // Drag-and-drop reorder of one rule or a selection: the rules at `fromIndices` are lifted out,
+  // keeping their order in the list whatever order the indices come in, and re-inserted as one
+  // contiguous block at `toIndex` of the remaining list (so dropping on a row before them inserts
+  // above, after inserts below). Indices outside the list are ignored; with nothing left to move,
+  // nothing changes.
+  moveRules(fromIndices: readonly number[], toIndex: number): TintSettings {
+    const from = new Set(fromIndices);
+    const moved = this.projectRules.filter((_, index) => from.has(index));
+    if (moved.length === 0) return this;
+    const next = this.projectRules.filter((_, index) => !from.has(index));
+    next.splice(toIndex, 0, ...moved);
     return new TintSettings(next, this.theme);
   }
 

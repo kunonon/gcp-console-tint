@@ -14,12 +14,22 @@ import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 
+// A fill as stored: '#rrggbb' or a gradient's stops.
+type StoredFill = string | { stops: { color: string; position: number }[] };
+
 interface PaletteEntry {
   id: string;
   name: string;
-  color: string;
+  color: StoredFill;
 }
 
+// The bars' selection: the custom fill may be a gradient.
+interface FillSelection {
+  paletteId: string | null;
+  custom: StoredFill;
+}
+
+// The Platform Bar text's selection: always a colour.
 interface ColorSelection {
   paletteId: string | null;
   custom: string;
@@ -32,14 +42,14 @@ interface PaletteSettings {
 
 interface TopBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   height: number;
   stripes: boolean;
 }
 
 interface PlatformBarSettings {
   enabled: boolean;
-  color: ColorSelection;
+  color: FillSelection;
   stripes: boolean;
 }
 
@@ -71,7 +81,7 @@ interface StoredTintSettings {
 
 // The manifest version these tests run under: equal to CURRENT_SCHEMA_VERSION, so the storage
 // stamp is this version itself.
-const CURRENT_VERSION = '0.3.0';
+const CURRENT_VERSION = '0.5.0';
 
 async function getStoredSettings(): Promise<StoredTintSettings> {
   const result = await fakeBrowser.storage.local.get('tintSettings');
@@ -175,9 +185,9 @@ function hexOrRgb(hex: string): (string | undefined)[] {
   return [hex, `rgb(${r}, ${g}, ${b})`];
 }
 
-// Rule rows are the only list-page elements with the native `draggable` attribute.
+// Rule rows are the list-page elements marked `data-rule-row`.
 function getAllRuleRows(): HTMLElement[] {
-  return Array.from(document.querySelectorAll('[draggable="true"]')) as HTMLElement[];
+  return Array.from(document.querySelectorAll('[data-rule-row]')) as HTMLElement[];
 }
 
 function getRuleRowAt(index: number): HTMLElement {
@@ -190,13 +200,13 @@ function getRuleRowAt(index: number): HTMLElement {
 // Duplicate, when two rows briefly share the same pattern text); use getRuleRowAt for those.
 function getRuleRow(pattern: string): HTMLElement {
   const label = screen.getByText(pattern);
-  const row = label.closest('[draggable="true"]');
+  const row = label.closest('[data-rule-row]');
   if (!row) throw new Error(`rule row not found for pattern "${pattern}"`);
   return row as HTMLElement;
 }
 
 function getGrip(row: HTMLElement): HTMLElement {
-  const grip = row.querySelector('span[aria-hidden="true"]');
+  const grip = row.querySelector('[data-reorder-grip]');
   if (!grip) throw new Error('grip handle not found in row');
   return grip as HTMLElement;
 }
@@ -258,18 +268,92 @@ async function goBack(user: ReturnType<typeof userEvent.setup>) {
   });
 }
 
-function makeDataTransferInit() {
-  const store: Record<string, string> = {};
-  return {
-    dataTransfer: {
-      setData: (format: string, data: string) => {
-        store[format] = data;
-      },
-      getData: (format: string) => store[format] ?? '',
-      effectAllowed: '',
-      dropEffect: '',
+// jsdom lays nothing out, so the rule rows are given a layout for the reordering to measure: 36px
+// tall, 44px apart, in their current document order. Transforms are not reflected. jsdom also
+// computes no flex gap (it applies no stylesheet), so the list containing the rows is given the 8px
+// row gap that `gap-2` gives it in a browser, which the 44px pitch already assumes.
+const ROW_PITCH = 44;
+const ROW_HEIGHT = 36;
+const ROW_GAP = ROW_PITCH - ROW_HEIGHT;
+// About two thirds of a row past a midpoint: never exactly on one.
+const DRAG_PAST = 24;
+const rowCenter = (index: number) => index * ROW_PITCH + ROW_HEIGHT / 2;
+
+function layOutRuleRows() {
+  const measure = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rowRect(this: Element) {
+    const index = getAllRuleRows().indexOf(this as HTMLElement);
+    if (index < 0) return measure.call(this);
+    const top = index * ROW_PITCH;
+    return {
+      x: 0,
+      y: top,
+      left: 0,
+      top,
+      right: 300,
+      bottom: top + ROW_HEIGHT,
+      width: 300,
+      height: ROW_HEIGHT,
+      toJSON: () => ({}),
+    };
+  });
+  // As an inline style, which jsdom's getComputedStyle does report. The list holds the rows'
+  // Presence wrappers; React sets no style on it.
+  const list = getAllRuleRows()[0]?.closest('.reveal')?.parentElement;
+  list?.style.setProperty('row-gap', `${ROW_GAP}px`);
+}
+
+// A primary mouse button. PointerEventInit's isPrimary defaults to false, which the grip ignores.
+// jsdom has no setPointerCapture, so these also check that reordering works without it.
+const POINTER = { pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0 };
+
+// Presses the row's grip at the row's center, moves through `path` (viewport y) and releases on its
+// last point.
+function dragGrip(row: HTMLElement, path: number[]) {
+  const grip = getGrip(row);
+  fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(getAllRuleRows().indexOf(row)) });
+  for (const clientY of path) fireEvent.pointerMove(grip, { ...POINTER, clientY });
+  fireEvent.pointerUp(grip, { ...POINTER, clientY: path.at(-1) });
+}
+
+// Nothing of a drag may stay behind: a leftover attribute on <html> would block text selection,
+// or scroll anchoring, for the whole panel.
+function expectReorderIdle() {
+  expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(false);
+  expect(document.documentElement.hasAttribute('data-reordering-drop')).toBe(false);
+  expect(document.querySelector('[data-reordering], [data-settling], [data-dragging]')).toBeNull();
+  for (const row of getAllRuleRows()) {
+    expect(row.style.transform).toBe('');
+    expect(row.style.getPropertyValue('--reorder-block-rest')).toBe('');
+  }
+}
+
+// Stores rules straight away, each pattern also serving as its id, for tests that need several rows
+// without going through the Add rule modal for each. Call before rendering.
+async function seedRules(patterns: string[]) {
+  await fakeBrowser.storage.local.set({
+    tintSettings: {
+      schemaVersion: CURRENT_VERSION,
+      projectRules: patterns.map((pattern) => ({ id: pattern, matchType: 'exact', pattern, settings: {} })),
     },
-  };
+  });
+}
+
+async function storedPatterns() {
+  return (await getStoredSettings()).projectRules.map((r) => r.pattern);
+}
+
+function getRowCheckbox(row: HTMLElement): HTMLInputElement {
+  return within(row).getByRole('checkbox') as HTMLInputElement;
+}
+
+// The header's checkbox over the whole list; there only while something is selected.
+function getSelectAll(): HTMLInputElement {
+  return screen.getByRole('checkbox', { name: 'Select all rules' }) as HTMLInputElement;
+}
+
+async function selectRules(user: ReturnType<typeof userEvent.setup>, patterns: string[]) {
+  for (const pattern of patterns) await user.click(getRowCheckbox(getRuleRow(pattern)));
 }
 
 // Switches the list page from the default Rules tab to Settings, and waits for the Backup card.
@@ -340,9 +424,6 @@ function replacementFor(rule: ProjectRule, topBarHeight: number): ProjectRule {
 function newRule(rule: ProjectRule, pattern: string): ProjectRule {
   return { ...rule, id: 'file-beta', pattern };
 }
-
-const TOP_INDICATOR = 'shadow-[inset_0_2px_0_0_var(--focus)]';
-const BOTTOM_INDICATOR = 'shadow-[inset_0_-2px_0_0_var(--focus)]';
 
 beforeEach(() => {
   fakeBrowser.reset();
@@ -1317,6 +1398,102 @@ describe('App', () => {
       expect(hexOrRgb('#000000')).toContain(autoBead(dialog).style.backgroundColor);
     });
 
+    const GRADIENT_STOPS = '(#ff6d00|rgb\\(255, 109, 0\\)) 0%, (#1a73e8|rgb\\(26, 115, 232\\)) 100%';
+    const GRADIENT = new RegExp(`^linear-gradient\\(to right, ${GRADIENT_STOPS}\\)$`);
+    const SUNSET = {
+      stops: [
+        { color: '#ff6d00', position: 0 },
+        { color: '#1a73e8', position: 100 },
+      ],
+    };
+    const typeOption = (dialog: HTMLElement, group: string, name: 'Solid' | 'Gradient') =>
+      within(within(dialog).getByRole('radiogroup', { name: group })).getByRole('radio', { name });
+
+    it('Top bar: Gradient, a stop edit and Solid each change the custom fill in one save, and the trigger shows "Gradient" meanwhile', async () => {
+      const { user, save } = await renderRuleDetail();
+
+      let dialog = await openPicker(user, 'Top bar color');
+      await user.click(typeOption(dialog, 'Custom color type', 'Gradient'));
+      await waitFor(async () => {
+        // The kept custom colour grows, not the entry in use, which the bar then leaves.
+        expect((await storedSettings()).topBar.color).toEqual({
+          paletteId: null,
+          custom: {
+            stops: [
+              { color: '#ff6d00', position: 0 },
+              { color: '#ff6d00', position: 100 },
+            ],
+          },
+        });
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+
+      fireEvent.change(within(dialog).getByLabelText('Custom color, stop 2'), { target: { value: '#1a73e8' } });
+      await waitFor(async () => {
+        expect((await storedSettings()).topBar.color.custom).toEqual(SUNSET);
+      });
+      expect(save).toHaveBeenCalledTimes(2);
+
+      await closePicker(user);
+      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toBe('Gradient');
+      expect(getTriggerSwatch('Top bar color').style.backgroundImage).toMatch(GRADIENT);
+
+      // Reopened, the editor starts on stop 1: Solid takes its colour.
+      dialog = await openPicker(user, 'Top bar color');
+      await user.click(typeOption(dialog, 'Custom color type', 'Solid'));
+      await waitFor(async () => {
+        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#ff6d00' });
+      });
+      expect(save).toHaveBeenCalledTimes(3);
+      expect(getCustomColorInput(dialog).value).toBe('#ff6d00');
+    });
+
+    it('a palette entry made a gradient paints both bars that use it, its delete swatch shows it, and the text picker leaves it out', async () => {
+      const { user } = await renderRuleDetail();
+      // The text follows the entry while it is a colour.
+      let dialog = await openPicker(user, 'Platform Bar text color');
+      await user.click(getPaletteSwatch(dialog, 'Primary'));
+      await closePicker(user);
+
+      dialog = await openPaletteRowEditor(user, 'Primary');
+      await user.click(typeOption(dialog, 'Color type', 'Gradient'));
+      fireEvent.change(within(dialog).getByLabelText('Hex, stop 2'), { target: { value: '#1a73e8' } });
+      await closePicker(user);
+      await waitFor(async () => {
+        expect((await storedSettings()).palette.entries[0]!.color).toEqual(SUNSET);
+      });
+
+      expect(screen.getByRole('button', { name: 'Primary color' }).textContent).toBe('Gradient');
+      for (const label of ['Top bar color', 'Platform Bar color']) {
+        expect(screen.getByRole('button', { name: label }).textContent).toBe('Primary');
+        expect(getTriggerSwatch(label).style.backgroundImage).toMatch(GRADIENT);
+      }
+      // The text keeps its reference but paints its custom colour, and its trigger says so.
+      expect((await storedSettings()).platformBarText.color).toEqual({ paletteId: 'default', custom: '#ffffff' });
+      expect(screen.getByRole('button', { name: 'Platform Bar text color' }).textContent).toBe('#ffffff');
+      expect(hexOrRgb('#ffffff')).toContain(getTriggerSwatch('Platform Bar text color').style.backgroundColor);
+      expect(getTriggerSwatch('Platform Bar text color').style.backgroundImage).toBe('');
+
+      const remove = await openDeleteConfirm(user, screen.getByRole('button', { name: 'Remove color' }));
+      expect((remove.querySelector('.confirm-swatch') as HTMLElement).style.background).toMatch(
+        new RegExp(`linear-gradient\\(to right, ${GRADIENT_STOPS}\\)`),
+      );
+      await closePicker(user);
+
+      // The text picker offers no gradient entry; its custom colour is the one in use, and a press
+      // on it drops the reference.
+      dialog = await openPicker(user, 'Platform Bar text color');
+      expect(within(dialog).queryByRole('button', { name: 'Primary' })).toBeNull();
+      expect(within(dialog).queryByRole('radiogroup')).toBeNull();
+      expect(within(dialog).queryByRole('group', { name: 'Gradient stops' })).toBeNull();
+      const customInput = getCustomColorInput(dialog);
+      expect(customInput.parentElement?.className).toContain('ring-2');
+      await user.click(customInput);
+      await waitFor(async () => {
+        expect((await storedSettings()).platformBarText.color).toEqual({ paletteId: null, custom: '#ffffff' });
+      });
+    });
+
     it('names every picker dialog after its trigger', async () => {
       const { user } = await renderRuleDetail();
 
@@ -1413,7 +1590,7 @@ describe('App', () => {
     });
   });
 
-  it('wraps every icon-only button (Edit/Duplicate/Delete/Add rule/Back/Remove color/Add color) in a HeroUI Tooltip.Trigger with a single Tab stop (the button itself, not the trigger wrapper)', async () => {
+  it('wraps every icon-only button (Edit/Duplicate/Delete/Add rule/Duplicate selected/Delete selected/Back/Remove color/Add color) in a HeroUI Tooltip.Trigger with a single Tab stop (the button itself, not the trigger wrapper)', async () => {
     const user = userEvent.setup();
     render(<App settingsStore={new SettingsStoreImpl()} />);
     await screen.findByRole('button', { name: 'Add rule' });
@@ -1453,6 +1630,13 @@ describe('App', () => {
     expectNoIntermediateWrapper(within(row).getByRole('button', { name: 'Delete' }), 'popover-trigger');
     expectSingleTabStop(screen.getByRole('button', { name: 'Add rule' }));
     expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Add rule' }), 'modal-trigger');
+
+    // Duplicate selected and Delete selected, in the header, are there only while a rule is selected.
+    await user.click(within(row).getByRole('checkbox'));
+    expectSingleTabStop(screen.getByRole('button', { name: 'Duplicate selected' }));
+    expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Duplicate selected' }), 'tooltip-trigger');
+    expectSingleTabStop(screen.getByRole('button', { name: 'Delete selected' }));
+    expectNoIntermediateWrapper(screen.getByRole('button', { name: 'Delete selected' }), 'popover-trigger');
 
     // Detail page: Back, Remove color, Add color.
     await openRuleDetail(user, 'my-project');
@@ -1581,9 +1765,9 @@ describe('App', () => {
 
     await addRule(user, 'my-project');
 
-    // CURRENT_VERSION ('0.3.0') currently equals CURRENT_SCHEMA_VERSION, so
+    // CURRENT_VERSION ('0.5.0') currently equals CURRENT_SCHEMA_VERSION, so
     // effectiveSchemaVersion is a no-op here; asserting through the real function (rather
-    // than the literal '0.3.0') keeps this test meaningful if that ever changes. The
+    // than the literal '0.5.0') keeps this test meaningful if that ever changes. The
     // dedicated regression test below exercises a manifest version that actually differs
     // from CURRENT_SCHEMA_VERSION.
     await waitFor(async () => {
@@ -1592,12 +1776,12 @@ describe('App', () => {
   });
 
   it('stamps schemaVersion as the manifest version when it is already current-or-newer, and the saved payload survives a toDomain round-trip unchanged', async () => {
-    // '0.3.5' is newer than CURRENT_SCHEMA_VERSION ('0.3.0'), so effectiveSchemaVersion
+    // '0.5.5' is newer than CURRENT_SCHEMA_VERSION ('0.5.0'), so effectiveSchemaVersion
     // passes it through unfloored (effectiveSchemaVersion's floor is unit-tested in
     // settings-repository.test.ts). What this guards: a save-then-reload round-trip on
     // current-shape data keeps the user's values, whichever valid schemaVersion label it carries.
     (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({
-      version: '0.3.5',
+      version: '0.5.5',
     });
 
     const user = userEvent.setup();
@@ -1612,7 +1796,7 @@ describe('App', () => {
     });
 
     const stored = await getStoredSettings();
-    expect(stored.schemaVersion).toBe('0.3.5');
+    expect(stored.schemaVersion).toBe('0.5.5');
 
     const reloaded = toDomain(stored);
     expect(reloaded.projectRules[0]!.settings.topBar.height.toPixels()).toBe(19);
@@ -1948,7 +2132,7 @@ describe('App', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
 
-    it('reorders rules via drag-and-drop from the grip handle, and persists the new order to storage', async () => {
+    it('reorders a rule downward by dragging its grip, and persists the new order to storage', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
@@ -1956,44 +2140,58 @@ describe('App', () => {
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
       expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      layOutRuleRows();
 
-      const alphaRow = getRuleRow('alpha');
-      const betaRow = getRuleRow('beta');
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
-
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      fireEvent.drop(betaRow, dt);
-      fireEvent.dragEnd(alphaRow, dt);
+      dragGrip(getRuleRow('alpha'), [40, rowCenter(1) + DRAG_PAST]);
 
       await waitFor(async () => {
         expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['beta', 'alpha']);
       });
+      expect(getAllRuleRows().map((row) => row.textContent)).toEqual([
+        expect.stringContaining('beta'),
+        expect.stringContaining('alpha'),
+      ]);
+      expectReorderIdle();
     });
 
-    it('does not start a drag when the gesture does not originate on the grip handle', async () => {
+    it('reorders a rule upward by dragging its grip', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      await addRule(user, 'gamma');
+      layOutRuleRows();
 
-      const alphaRow = getRuleRow('alpha');
-      const betaRow = getRuleRow('beta');
-      const dt = makeDataTransferInit();
+      dragGrip(getRuleRow('gamma'), [rowCenter(1) - DRAG_PAST, rowCenter(0) - DRAG_PAST]);
 
-      // No mousedown on the grip first: dragstart should be cancelled and no reorder should occur.
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      fireEvent.drop(betaRow, dt);
-
-      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      await waitFor(async () => {
+        expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['gamma', 'alpha', 'beta']);
+      });
+      expectReorderIdle();
     });
 
-    it('dropping a row onto itself is a no-op: order and storage stay unchanged, and no drop indicator is shown', async () => {
+    it('does nothing when the drag starts on the rule text instead of the grip', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      layOutRuleRows();
+
+      const text = screen.getByText('alpha');
+      fireEvent.pointerDown(text, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(text, { ...POINTER, clientY: rowCenter(1) + DRAG_PAST });
+      expect(document.querySelector('[data-dragging]')).toBeNull();
+      fireEvent.pointerUp(text, { ...POINTER, clientY: rowCenter(1) + DRAG_PAST });
+
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      expectReorderIdle();
+    });
+
+    it('does nothing when the pointer is released before it has moved 3px', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
@@ -2001,120 +2199,495 @@ describe('App', () => {
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
       const before = (await getStoredSettings()).projectRules.map((r) => r.id);
+      layOutRuleRows();
 
-      const alphaRow = getRuleRow('alpha');
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
-
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt); // draggingIndex = 0
-      fireEvent.dragOver(alphaRow, dt); // dragOverIndex = 0 === draggingIndex -> no indicator
-      expect(alphaRow.className).not.toContain('var(--focus)');
-
-      fireEvent.drop(alphaRow, dt);
-      fireEvent.dragEnd(alphaRow, dt);
+      const grip = getGrip(getRuleRow('alpha'));
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: rowCenter(0) + 2 });
+      expect(document.querySelector('[data-dragging]')).toBeNull();
+      expect(getRuleRow('alpha').style.transform).toBe('');
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: rowCenter(0) + 2 });
 
       expect((await getStoredSettings()).projectRules.map((r) => r.id)).toEqual(before);
+      expectReorderIdle();
+    });
+
+    it('saves nothing when the row is dragged away and back to its own place', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      const before = (await getStoredSettings()).projectRules.map((r) => r.id);
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      dragGrip(getRuleRow('alpha'), [rowCenter(1) + DRAG_PAST, rowCenter(0) + 1]);
+
+      expect(save).not.toHaveBeenCalled();
+      expect((await getStoredSettings()).projectRules.map((r) => r.id)).toEqual(before);
+      expectReorderIdle();
+    });
+
+    it('cancels the drag on Escape: the rows go back and the release saves nothing', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      const grip = getGrip(getRuleRow('alpha'));
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      expect(getRuleRow('alpha').hasAttribute('data-dragging')).toBe(true);
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expectReorderIdle();
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
+
+      expect(save).not.toHaveBeenCalled();
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      expectReorderIdle();
+    });
+
+    it('cancels the drag when the browser cancels the pointer', async () => {
+      const user = userEvent.setup();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('button', { name: 'Add rule' });
+
+      await addRule(user, 'alpha');
+      await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      const grip = getGrip(getRuleRow('alpha'));
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      fireEvent.pointerCancel(grip, { ...POINTER, clientY: target });
+      expectReorderIdle();
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
+
+      expect(save).not.toHaveBeenCalled();
       expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
     });
 
-    it('shows a bottom-edge drop indicator on the target row when dragging downward (dragOverIndex > draggingIndex)', async () => {
+    it('cancels the drag when the window loses focus', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
 
-      const alphaRow = getRuleRow('alpha'); // index 0
-      const betaRow = getRuleRow('beta'); // index 1
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
+      const grip = getGrip(getRuleRow('alpha'));
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      fireEvent.blur(window);
+      expectReorderIdle();
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
 
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt); // draggingIndex = 0
-      fireEvent.dragOver(betaRow, dt); // dragOverIndex = 1 (> 0) -> downward -> bottom line on beta
-
-      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
-      expect(betaRow.className).not.toContain(TOP_INDICATOR);
-      // The dragged row itself never shows an indicator.
-      expect(alphaRow.className).not.toContain('var(--focus)');
+      expect(save).not.toHaveBeenCalled();
+      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
     });
 
-    it('shows a top-edge drop indicator on the target row when dragging upward (dragOverIndex < draggingIndex)', async () => {
+    it('leaves nothing on <html> and saves nothing when the panel unmounts mid-drag', async () => {
       const user = userEvent.setup();
-      render(<App settingsStore={new SettingsStoreImpl()} />);
+      const { unmount } = render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
 
-      const alphaRow = getRuleRow('alpha'); // index 0
-      const betaRow = getRuleRow('beta'); // index 1
-      const grip = getGrip(betaRow);
-      const dt = makeDataTransferInit();
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(getGrip(getRuleRow('alpha')), { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(window, { ...POINTER, clientY: target });
+      expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(true);
+      unmount();
+      expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(false);
+      fireEvent.pointerUp(window, { ...POINTER, clientY: target });
 
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(betaRow, dt); // draggingIndex = 1
-      fireEvent.dragOver(alphaRow, dt); // dragOverIndex = 0 (< 1) -> upward -> top line on alpha
-
-      expect(alphaRow.className).toContain(TOP_INDICATOR);
-      expect(alphaRow.className).not.toContain(BOTTOM_INDICATOR);
-      expect(betaRow.className).not.toContain('var(--focus)');
+      expect(save).not.toHaveBeenCalled();
     });
 
-    it('clears the drop indicator once the drop is handled', async () => {
+    it('lifts the dragged row and moves the passed row aside while dragging, and clears both on release', async () => {
       const user = userEvent.setup();
       render(<App settingsStore={new SettingsStoreImpl()} />);
       await screen.findByRole('button', { name: 'Add rule' });
 
       await addRule(user, 'alpha');
       await addRule(user, 'beta');
+      layOutRuleRows();
 
       const alphaRow = getRuleRow('alpha');
       const betaRow = getRuleRow('beta');
       const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
+      const target = rowCenter(1) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      expect(document.documentElement.hasAttribute('data-reordering-pending')).toBe(true);
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
 
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
+      expect(alphaRow.hasAttribute('data-dragging')).toBe(true);
+      expect(betaRow.hasAttribute('data-dragging')).toBe(false);
+      // The dragged row stops at the end of the list: its top at beta's.
+      expect(alphaRow.style.transform).toBe(`translateY(${ROW_PITCH}px)`);
+      // Beta makes way by one row pitch: alpha's height and the list's row gap.
+      expect(betaRow.style.transform).toBe(`translateY(-${ROW_PITCH}px)`);
 
-      fireEvent.drop(betaRow, dt);
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
       await waitFor(async () => {
         expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['beta', 'alpha']);
       });
-      // Rows are recreated post-reorder; re-fetch and confirm neither shows an indicator.
-      expect(getRuleRow('alpha').className).not.toContain('var(--focus)');
-      expect(getRuleRow('beta').className).not.toContain('var(--focus)');
+      expectReorderIdle();
     });
 
-    it('clears the drop indicator on dragEnd even when the drag ends outside any row (e.g. dropped outside the list)', async () => {
-      const user = userEvent.setup();
+    it("gives every row a checkbox named after the row, out of the row's flow, with its hit area on the label", async () => {
+      await seedRules(['alpha', '']);
       render(<App settingsStore={new SettingsStoreImpl()} />);
-      await screen.findByRole('button', { name: 'Add rule' });
+      await screen.findByText('alpha');
 
-      await addRule(user, 'alpha');
-      await addRule(user, 'beta');
+      const [first, second] = getAllRuleRows() as [HTMLElement, HTMLElement];
+      expect(getRowCheckbox(first).getAttribute('aria-label')).toBe('Rule row 1, exact, alpha');
+      expect(getRowCheckbox(second).getAttribute('aria-label')).toBe('Rule row 2, exact, (empty pattern)');
+      // style.css shows and hides `.rule-select`, so it must be the checkbox's root, with the
+      // pressable label (and its hit area) inside it. It sits out of the flow of a positioned row
+      // (style.css places it: left of the grip, or inside the row while anything is selected).
+      const root = first.querySelector('.rule-select');
+      const label = getRowCheckbox(first).closest('label');
+      expect(root?.contains(label)).toBe(true);
+      expect(first.classList.contains('relative')).toBe(true);
+      for (const name of ['absolute', 'inset-y-0']) expect(root?.classList.contains(name)).toBe(true);
+      expect(first.firstElementChild).toBe(getGrip(first));
+      expect(getGrip(first).nextElementSibling).toBe(root);
+      // The 24x36 hit area joins HeroUI's own classes on the label rather than replacing them.
+      expect(label?.classList.contains('checkbox__content')).toBe(true);
+      for (const name of ['-mx-1', '-my-2.5', 'px-1', 'py-2.5']) expect(label?.classList.contains(name)).toBe(true);
+      // No visible label text: the pattern is still the row's only text.
+      expect(first.textContent).toBe('alphaexact');
+    });
 
-      const alphaRow = getRuleRow('alpha');
-      const betaRow = getRuleRow('beta');
-      const grip = getGrip(alphaRow);
-      const dt = makeDataTransferInit();
+    it('selecting rules turns the header into a count with a select-all checkbox and a bulk Delete, and clearing them brings Projects back', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      // `data-selecting` sits on the card's content, over both the header and the list: style.css
+      // shows and places the select-all and row checkboxes, and slides the title and the rows,
+      // from it.
+      const content = getRuleRow('alpha').closest('[data-slot="card-content"]') as HTMLElement;
+      expect(content.contains(getSelectAll())).toBe(true);
+      expect(getSelectAll().closest('[data-select-row]')).not.toBeNull();
+      for (const row of getAllRuleRows()) expect(row.hasAttribute('data-select-row')).toBe(true);
+      expect(screen.getByText('Projects')).toBeTruthy();
+      // The select-all checkbox is there, unchecked, before anything is selected (style.css keeps
+      // it hidden then), so it can fade in rather than appear.
+      expect(getSelectAll().checked).toBe(false);
+      expect(getSelectAll().indeterminate).toBe(false);
+      expect(getSelectAll().closest('.rule-select')).not.toBeNull();
+      expect(screen.queryByRole('button', { name: 'Delete selected' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Duplicate selected' })).toBeNull();
+      expect(content.hasAttribute('data-selecting')).toBe(false);
 
-      fireEvent.mouseDown(grip);
-      fireEvent.dragStart(alphaRow, dt);
-      fireEvent.dragOver(betaRow, dt);
-      expect(betaRow.className).toContain(BOTTOM_INDICATOR);
+      await selectRules(user, ['alpha', 'gamma']);
 
-      // dragEnd without a preceding drop, as happens when the drag is released outside the list.
-      fireEvent.dragEnd(alphaRow, dt);
+      expect(screen.getByText('2 selected')).toBeTruthy();
+      // The bulk actions follow the count, in the rows' order: Duplicate, then Delete.
+      const count = screen.getByText('2 selected');
+      const duplicate = screen.getByRole('button', { name: 'Duplicate selected' });
+      const remove = screen.getByRole('button', { name: 'Delete selected' });
+      expect(count.compareDocumentPosition(duplicate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(duplicate.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(
+        remove.compareDocumentPosition(screen.getByRole('button', { name: 'Add rule' })) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.queryByText('Projects')).toBeNull();
+      expect(getSelectAll()).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Delete selected' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Add rule' })).toBeTruthy();
+      expect(content.hasAttribute('data-selecting')).toBe(true);
+      expect(getRowCheckbox(getRuleRow('alpha')).checked).toBe(true);
+      expect(getRowCheckbox(getRuleRow('beta')).checked).toBe(false);
 
-      expect(getRuleRow('beta').className).not.toContain('var(--focus)');
-      // Cancelling the drag (no drop) must not reorder anything: handleRowDrop, which is the
-      // only place that calls save() with a reordered array, was never invoked.
-      expect((await getStoredSettings()).projectRules.map((r) => r.pattern)).toEqual(['alpha', 'beta']);
+      await selectRules(user, ['alpha', 'gamma']);
+
+      expect(screen.getByText('Projects')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Delete selected' })).toBeNull();
+      expect(content.hasAttribute('data-selecting')).toBe(false);
+    });
+
+    it('the select-all checkbox shows a partial selection, selects every rule from it and clears the selection from all', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+
+      await selectRules(user, ['beta']);
+      expect(getSelectAll().checked).toBe(false);
+      expect(getSelectAll().indeterminate).toBe(true);
+
+      await user.click(getSelectAll());
+      expect(screen.getByText('3 selected')).toBeTruthy();
+      expect(getSelectAll().checked).toBe(true);
+      expect(getSelectAll().indeterminate).toBe(false);
+      for (const row of getAllRuleRows()) expect(getRowCheckbox(row).checked).toBe(true);
+
+      await user.click(getSelectAll());
+      expect(screen.getByText('Projects')).toBeTruthy();
+      for (const row of getAllRuleRows()) expect(getRowCheckbox(row).checked).toBe(false);
+      // The select-all checkbox stays when the selection empties, so focus stays on it, and it
+      // selects every rule again from there.
+      expect(document.activeElement).toBe(getSelectAll());
+      await user.click(getSelectAll());
+      expect(screen.getByText('3 selected')).toBeTruthy();
+    });
+
+    it('bulk Delete asks about the selected rules and keeps them on Escape or an outside click', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      const heading = screen.getByRole('heading', { name: 'GCP Console Tint' });
+
+      await selectRules(user, ['alpha']);
+      let popover = await openDeleteConfirm(user, screen.getByRole('button', { name: 'Delete selected' }));
+      expect(within(popover).getByText('Delete this rule?')).toBeTruthy();
+      expect(within(popover).getByText('alpha')).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+
+      await selectRules(user, ['gamma']);
+      popover = await openDeleteConfirm(user, screen.getByRole('button', { name: 'Delete selected' }));
+      expect(within(popover).getByText('Delete 2 rules?')).toBeTruthy();
+      // Every selected rule is listed on its own row, not joined into one cut line.
+      const listed = within(within(popover).getByRole('list', { name: 'Rules to delete' })).getAllByRole('listitem');
+      expect(listed.map((row) => row.querySelector('.confirm-item')?.textContent)).toEqual(['alpha', 'gamma']);
+      expect(within(popover).getByRole('button', { name: 'Delete 2 rules' })).toBeTruthy();
+      await user.click(heading);
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+
+      expect(await storedPatterns()).toEqual(['alpha', 'beta', 'gamma']);
+      expect(screen.getByText('2 selected')).toBeTruthy();
+    });
+
+    it('Duplicate selected copies every selected rule right after its original in one save, and moves the selection to the copies', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      await user.click(screen.getByRole('button', { name: 'Duplicate selected' }));
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['alpha', 'alpha', 'beta', 'gamma', 'gamma']);
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      const stored = (await getStoredSettings()).projectRules;
+      expect(new Set(stored.map((r) => r.id)).size).toBe(5);
+      // The copies (rows 2 and 5) are the selection now; the originals are not.
+      await waitFor(() => {
+        expect(getAllRuleRows().map((row) => getRowCheckbox(row).checked)).toEqual([false, true, false, false, true]);
+      });
+      expect(screen.getByText('2 selected')).toBeTruthy();
+    });
+
+    it('confirming bulk Delete removes every selected rule in one save and clears the selection', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma', 'delta']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      await confirmDelete(user, screen.getByRole('button', { name: 'Delete selected' }), 'Delete 2 rules');
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['beta', 'delta']);
+      });
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Projects')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Delete selected' })).toBeNull();
+      expect(document.querySelector('[data-selecting]')).toBeNull();
+      // The bulk Delete button has gone with the selection; focus lands on Add rule beside it.
+      await waitFor(() => {
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add rule' }));
+      });
+    });
+
+    it("deleting a selected rule from its own row takes it out of the selection's count", async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+
+      await confirmDelete(user, within(getRuleRow('alpha')).getByRole('button', { name: 'Delete' }), 'Delete');
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['beta', 'gamma']);
+      });
+      expect(screen.getByText('1 selected')).toBeTruthy();
+      // The remaining selected rule is now all but one of two: the select-all checkbox is partial.
+      expect(getSelectAll().indeterminate).toBe(true);
+    });
+
+    it('drags a scattered selection down as one block: the rows gather under the pointer and land together', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma', 'delta']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+      layOutRuleRows();
+      const [alpha, beta, gamma, delta] = getAllRuleRows() as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+
+      const grip = getGrip(alpha);
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: rowCenter(0) + 22 });
+      // Alpha leads the block 22px down; gamma sits one pitch below it, and beta makes way below
+      // the block, whose two rows and the gap after them are two pitches.
+      expect(alpha.getAttribute('data-dragging')).toBe('');
+      expect(gamma.getAttribute('data-dragging')).toBe('follow');
+      expect(beta.hasAttribute('data-dragging')).toBe(false);
+      expect(alpha.style.getPropertyValue('--reorder-block-rest')).toBe(`${ROW_PITCH}px`);
+      expect(alpha.style.transform).toBe('translateY(22px)');
+      expect(gamma.style.transform).toBe(`translateY(${22 + ROW_PITCH - 2 * ROW_PITCH}px)`);
+      expect(beta.style.transform).toBe(`translateY(${ROW_PITCH}px)`);
+      expect(delta.style.transform).toBe('');
+
+      // Past delta's midpoint: the block stops at the list's end, beta and delta move up above it.
+      const target = rowCenter(3) + DRAG_PAST;
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      expect(alpha.style.transform).toBe(`translateY(${2 * ROW_PITCH}px)`);
+      expect(gamma.style.transform).toBe(`translateY(${ROW_PITCH}px)`);
+      expect(beta.style.transform).toBe(`translateY(-${ROW_PITCH}px)`);
+      expect(delta.style.transform).toBe(`translateY(-${2 * ROW_PITCH}px)`);
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['beta', 'delta', 'alpha', 'gamma']);
+      });
+      expectReorderIdle();
+      // The selection follows the rules to their new places.
+      expect(screen.getByText('2 selected')).toBeTruthy();
+      expect(getRowCheckbox(getRuleRow('alpha')).checked).toBe(true);
+      expect(getRowCheckbox(getRuleRow('gamma')).checked).toBe(true);
+    });
+
+    it('drags a scattered selection up as one block, grabbed by its last row', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma', 'delta']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['beta', 'delta']);
+      layOutRuleRows();
+      const [, beta, , delta] = getAllRuleRows() as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+
+      const grip = getGrip(delta);
+      const target = rowCenter(0) - DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(3) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: rowCenter(1) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      // Beta, the first selected row, leads the block, which stops at the list's top.
+      expect(beta.getAttribute('data-dragging')).toBe('');
+      expect(delta.getAttribute('data-dragging')).toBe('follow');
+      expect(beta.style.transform).toBe(`translateY(-${ROW_PITCH}px)`);
+      expect(delta.style.transform).toBe(`translateY(-${2 * ROW_PITCH}px)`);
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['beta', 'delta', 'alpha', 'gamma']);
+      });
+      expectReorderIdle();
+    });
+
+    it('dragging a row outside the selection moves that row alone and keeps the selection', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma', 'delta']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+      layOutRuleRows();
+
+      dragGrip(getRuleRow('beta'), [rowCenter(1) + 10, rowCenter(2) + DRAG_PAST]);
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['alpha', 'gamma', 'beta', 'delta']);
+      });
+      expectReorderIdle();
+      expect(screen.getByText('2 selected')).toBeTruthy();
+      expect(getRowCheckbox(getRuleRow('alpha')).checked).toBe(true);
+      expect(getRowCheckbox(getRuleRow('beta')).checked).toBe(false);
+    });
+
+    it('saves nothing when a selection already together is dragged away and back to its own place', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma', 'delta']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['beta', 'gamma']);
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      dragGrip(getRuleRow('beta'), [rowCenter(3) + DRAG_PAST, rowCenter(1) + 1]);
+
+      expect(save).not.toHaveBeenCalled();
+      expect(await storedPatterns()).toEqual(['alpha', 'beta', 'gamma', 'delta']);
+      expectReorderIdle();
+    });
+
+    // Unlike a selection already together, the rows were shown gathered there: what is seen lands.
+    it('saves a scattered selection released at its starting place, gathered there', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma', 'delta']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+      layOutRuleRows();
+
+      dragGrip(getRuleRow('alpha'), [rowCenter(0) + 10]);
+
+      await waitFor(async () => {
+        expect(await storedPatterns()).toEqual(['alpha', 'gamma', 'beta', 'delta']);
+      });
+      expectReorderIdle();
+    });
+
+    it('cancels a selection drag on Escape: the rows go back apart and the release saves nothing', async () => {
+      const user = userEvent.setup();
+      await seedRules(['alpha', 'beta', 'gamma', 'delta']);
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByText('alpha');
+      await selectRules(user, ['alpha', 'gamma']);
+      layOutRuleRows();
+      const save = vi.spyOn(SettingsStoreImpl.prototype, 'save');
+
+      const grip = getGrip(getRuleRow('alpha'));
+      const target = rowCenter(3) + DRAG_PAST;
+      fireEvent.pointerDown(grip, { ...POINTER, clientY: rowCenter(0) });
+      fireEvent.pointerMove(grip, { ...POINTER, clientY: target });
+      expect(getRuleRow('gamma').getAttribute('data-dragging')).toBe('follow');
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expectReorderIdle();
+      fireEvent.pointerUp(grip, { ...POINTER, clientY: target });
+
+      expect(save).not.toHaveBeenCalled();
+      expect(await storedPatterns()).toEqual(['alpha', 'beta', 'gamma', 'delta']);
+      expect(screen.getByText('2 selected')).toBeTruthy();
     });
 
     it("editing a rule's settings in detail saves to that rule only, without affecting other rules", async () => {
@@ -2555,7 +3128,7 @@ describe('App', () => {
       await addRule(user, 'alpha');
       const existing = (await getStoredSettings()).projectRules[0]!;
       const before = await getStoredSettings();
-      // The manifest here is CURRENT_VERSION ('0.3.0'); a file this build could not have written.
+      // The manifest here is CURRENT_VERSION ('0.5.0'); a file this build could not have written.
       const fromTheFuture = JSON.parse(settingsFile(existing));
       fromTheFuture.schemaVersion = '9.9.9';
 

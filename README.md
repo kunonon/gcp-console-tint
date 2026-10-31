@@ -6,10 +6,10 @@ A browser extension (Chrome MV3 / Firefox MV2) that tints parts of the [Google C
 
 - **Per-project rules** — matched against the console URL's `?project=` parameter with four match types: *Starts with*, *Ends with*, *Exact* (literal string comparisons), or *Regex* (must match the entire project id). Rules are an ordered list: the first match wins, drag the grip to reprioritize, and when nothing matches, nothing is tinted.
 - **Tinted surfaces**
-  - A fixed bar along the top edge (height 1–40px, optional diagonal stripes)
-  - The platform bar background (`#ocb-platform-bar`), optional stripes
-  - The platform bar text color (descendants of `.cfc-platform-bar-left` / `.cfc-platform-bar-right` / `.pcc-platform-bar-button`), with an auto mode that picks black or white by WCAG contrast against the platform bar color
-- **Per-project color palette** — named color entries that the pickers reference; change a palette color once and every surface using it follows.
+  - A fixed bar along the top edge (height 1–40px, optional diagonal stripes), in a color or a left-to-right gradient of 2–4 colors
+  - The platform bar background (`#ocb-platform-bar`), optional stripes, in a color or a gradient
+  - The platform bar text color (descendants of `.cfc-platform-bar-left` / `.cfc-platform-bar-right` / `.pcc-platform-bar-button`), with an auto mode that picks black or white by WCAG contrast against the platform bar color (against every stop of a gradient)
+- **Per-project color palette** — named color or gradient entries that the pickers reference; change a palette entry once and every bar using it follows (the text color, which cannot be a gradient, keeps its own color while the entry it references is a gradient).
 - **Live updates** — settings apply immediately via `storage.onChanged`, and the tint follows the console's SPA project switches without a reload, with a short crossfade (disabled under `prefers-reduced-motion`).
 - **Export / import** — the Settings tab saves every rule (with its palette and colors) to a JSON file, as stored once pending changes have been written, and imports rules back from one: pick the rules to take, and a rule with the same match type and pattern as an existing one replaces that rule in place instead of being added.
 - **Theme** — the Settings tab picks *Auto* (follow the system), *Light*, or *Dark* for the side panel. The colours fade from one theme to the other instead of flipping.

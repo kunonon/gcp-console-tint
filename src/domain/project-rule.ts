@@ -9,7 +9,8 @@ export type MatchType = (typeof MATCH_TYPES)[number];
 
 // Guard for untrusted input (an imported settings file): whether a string names a match type.
 export function isMatchType(value: string): value is MatchType {
-  return (MATCH_TYPES as readonly string[]).includes(value);
+  const all: readonly string[] = MATCH_TYPES;
+  return all.includes(value);
 }
 
 // Identity of a ProjectRule. The raw string is private so this type stays nominally distinct
