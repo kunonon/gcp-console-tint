@@ -13,6 +13,7 @@ import {
 import { isTheme, TintSettings } from '../../domain/tint-settings';
 import { TopBarHeight } from '../../domain/top-bar-height';
 import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIN_VERSION } from './migrations';
+import type { SettingsFile } from './settings-file';
 import { compareVersions, VersionComparisonResult } from './version';
 
 // The domain owns the default VALUES, this module owns which field recovers to what: every
@@ -24,6 +25,11 @@ const DEFAULT_ENTRY_COLOR = DEFAULTS.topBar.color.custom;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Array.isArray narrows to any[]; this keeps the elements unknown so each one is checked before use.
+function isArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
 }
 
 // Fresh instances on every call so two independently-recovered defaults never alias each other.
@@ -47,7 +53,7 @@ function colorField(fallback: Color) {
 // of development builds is not read either, and falls back like any other junk.
 function parseStoredFill(value: unknown): Fill | undefined {
   if (typeof value === 'string') return Color.fromHex(value);
-  if (!isRecord(value) || !Array.isArray(value.stops)) return undefined;
+  if (!isRecord(value) || !isArray(value.stops)) return undefined;
   const stops: GradientStop[] = [];
   for (const stop of value.stops) {
     if (!isRecord(stop) || typeof stop.color !== 'string' || typeof stop.position !== 'number') return undefined;
@@ -101,7 +107,7 @@ const paletteEntrySchema = z
 // default entries wholesale, otherwise each element is parsed independently and invalid
 // elements are dropped (not substituted) so one bad entry can't nuke its valid siblings.
 function parseEntries(value: unknown): PaletteEntry[] {
-  if (!Array.isArray(value)) return defaultPaletteEntries();
+  if (!isArray(value)) return defaultPaletteEntries();
   return value.reduce<PaletteEntry[]>((kept, item) => {
     const parsed = paletteEntrySchema.safeParse(item);
     if (parsed.success) kept.push(parsed.data);
@@ -222,7 +228,7 @@ export function toDomain(stored: unknown): TintSettings {
   const { data } = runMigrations(stored, schemaVersion);
 
   const projectRules: ProjectRule[] = [];
-  if (Array.isArray(data.projectRules)) {
+  if (isArray(data.projectRules)) {
     for (const value of data.projectRules) {
       const parsed = projectRuleSchema.safeParse(value);
       if (parsed.success) projectRules.push(parsed.data);
@@ -238,7 +244,7 @@ export function toDomain(stored: unknown): TintSettings {
 // storedFill), everything else is written verbatim — this is the persisted contract, so keep it
 // in sync with the schemas that read it back (adapter/out/tests/browser-settings-store.test.ts
 // asserts it).
-export function toStored(settings: TintSettings, schemaVersion: string): Record<string, unknown> {
+export function toStored(settings: TintSettings, schemaVersion: string): SettingsFile & { schemaVersion: string } {
   return {
     schemaVersion,
     theme: settings.theme,
@@ -268,7 +274,10 @@ export function toStored(settings: TintSettings, schemaVersion: string): Record<
         },
         platformBarText: {
           enabled: rule.settings.platformBarText.enabled,
-          color: storedSelection(rule.settings.platformBarText.color),
+          color: {
+            paletteId: rule.settings.platformBarText.color.paletteId?.toString() ?? null,
+            custom: rule.settings.platformBarText.color.custom.toHex(),
+          },
           auto: rule.settings.platformBarText.auto,
         },
       },
@@ -285,7 +294,8 @@ function storedFill(fill: Fill) {
     : fill.toHex();
 }
 
-// One function for all three surfaces: the text's Color becomes a string like any solid fill.
+// The bars' selections. toStored writes the text's selection itself: SettingsFile types its custom as a
+// string, which storedFill's string | { stops } result is not.
 function storedSelection(selection: ColorSelection) {
   return { paletteId: selection.paletteId?.toString() ?? null, custom: storedFill(selection.custom) };
 }

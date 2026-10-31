@@ -34,6 +34,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// Array.isArray narrows to any[]; this keeps the elements unknown so each one is checked before use.
+function isArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
 // Stage 1. `z.object` ignores unknown keys within the supported schema version range.
 // Stamps above this build's effective schema version ceiling are rejected before validation.
 //
@@ -87,10 +92,12 @@ const arrayDiagnosis = z.array(z.unknown());
 type FillFile = z.infer<typeof fillSchema>;
 type PaletteEntryFile = z.infer<typeof paletteEntrySchema>;
 type RuleFile = z.infer<typeof ruleShellSchema> & { settings: { palette: { entries: PaletteEntryFile[] } } };
-interface SettingsFile {
+// A type alias, not an interface: toStored() returns it, and an interface (no implicit index signature)
+// would not be assignable to the Record<string, unknown> its callers may hold it as.
+export type SettingsFile = {
   theme: string;
   projectRules: RuleFile[];
-}
+};
 
 // Each stage keeps at most this many issues, so a file that is wrong everywhere is neither
 // walked nor reported in full.
@@ -139,7 +146,7 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
   rejectAll([], root.error?.issues);
   const theme = root.data?.theme ?? '';
   const projectRules = data.projectRules;
-  if (!Array.isArray(projectRules)) {
+  if (!isArray(projectRules)) {
     rejectAll(['projectRules'], arrayDiagnosis.safeParse(projectRules).error?.issues);
     return { theme, projectRules: [] };
   }
@@ -163,7 +170,7 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
     if (isRecord(palette)) {
       const entriesAt = [...at, 'settings', 'palette', 'entries'];
       const rawEntries = palette.entries;
-      if (Array.isArray(rawEntries)) {
+      if (isArray(rawEntries)) {
         entries = [];
         for (let entryIndex = 0; entryIndex < rawEntries.length; entryIndex++) {
           const entry = paletteEntrySchema.safeParse(rawEntries[entryIndex]);
