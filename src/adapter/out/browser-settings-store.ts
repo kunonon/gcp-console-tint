@@ -56,6 +56,9 @@ export class SettingsStoreImpl implements SettingsStore {
 // so there is a single writer (content scripts and the side panel migrate in memory on read via
 // toDomain and never write back). No-ops when storage is empty — an unconfigured install stays
 // unconfigured — or already current.
+// The get and set are not atomic (storage.local has no compare-and-set): a side panel save landing
+// between them is overwritten. Accepted: the window is one round trip, once per CURRENT_SCHEMA_VERSION
+// bump, and a save that lands before the get already carries a current stamp and ends the migration.
 export async function migrateStoredSettings(currentVersion: string): Promise<void> {
   const result = await browser.storage.local.get(STORAGE_KEY);
   const stored: unknown = result[STORAGE_KEY];

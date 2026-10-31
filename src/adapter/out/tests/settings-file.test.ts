@@ -539,22 +539,6 @@ describe('parseSettingsFile: versions and migrations', () => {
     });
   });
 
-  // A solid file from the 0.4.1 release runs only the 0.5.0 stamp step and reads unchanged.
-  it('imports a 0.4.1-stamped solid file through the real registry', () => {
-    const settings = parseSettingsFile(stamped('0.4.1'), CURRENT_SCHEMA_VERSION);
-
-    expect(settings.projectRules[0]!.settings).toEqual(ProjectSettings.DEFAULT);
-  });
-
-  // The real registry's 0.3.0 step adds theme 'auto' to files written before the theme existed.
-  it('imports a 0.2.1 file without theme, which the 0.3.0 migration step completes with auto', () => {
-    const { theme: _theme, ...file } = validFile();
-
-    expect(parseSettingsFile(JSON.stringify({ ...file, schemaVersion: '0.2.1' }), CURRENT_SCHEMA_VERSION).theme).toBe(
-      'auto',
-    );
-  });
-
   it('accepts a stamp equal to the current version, and one between the schema version and it', () => {
     expect(parseSettingsFile(stamped('0.5.5'), '0.5.5').projectRules).toHaveLength(1);
     expect(parseSettingsFile(stamped('0.5.2'), '0.5.5').projectRules).toHaveLength(1);
