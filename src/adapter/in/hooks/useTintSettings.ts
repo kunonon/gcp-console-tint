@@ -9,11 +9,15 @@ export function useTintSettings(settingsStore: SettingsStore) {
   // meanwhile.
   const [settings, setSettings] = useState<TintSettings>(() => new TintSettings([], TintSettings.DEFAULT_THEME));
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  // Why load() rejected while status is 'failed': a StoredSettingsError (the stored value cannot be
+  // read) or the storage API's own failure.
+  const [loadError, setLoadError] = useState<unknown>();
   const saveTail = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
+    setLoadError(undefined);
     settingsStore
       .load()
       .then((loaded) => {
@@ -23,6 +27,7 @@ export function useTintSettings(settingsStore: SettingsStore) {
       })
       .catch((error) => {
         if (cancelled) return;
+        setLoadError(error);
         setStatus('failed');
         console.error('[gcp-console-tint] settings load failed', error);
       });
@@ -59,5 +64,14 @@ export function useTintSettings(settingsStore: SettingsStore) {
     return tail.then(() => settingsStore.load());
   };
 
-  return { settings, status, save, saveThenApply, loadSaved };
+  // Replaces unreadable stored settings with explicit empty ones through the normal save path, so
+  // the stored value carries the current stamp and every open content script sees the change (a
+  // storage removal would be ignored by them). Rejects, leaving status 'failed', when the write fails.
+  const reset = () =>
+    enqueueSave(new TintSettings([], TintSettings.DEFAULT_THEME), true).then(() => {
+      setLoadError(undefined);
+      setStatus('ready');
+    });
+
+  return { settings, status, loadError, save, saveThenApply, loadSaved, reset };
 }

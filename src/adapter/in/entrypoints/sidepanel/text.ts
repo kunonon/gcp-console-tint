@@ -2,6 +2,16 @@
 // these come from (an import failure's version, issues and cause, a picked file's name) are never
 // rewritten, so DevTools and the console still see them whole.
 
+import type { SettingsImportIssue } from '../../../../port/settings-store';
+
+export const plural = (count: number, noun: string) => `${count} ${count === 1 ? noun : `${noun}s`}`;
+
+// Refused fields one per line, so the user can see exactly what to fix. The root has an empty path,
+// which would read as a bare ": message" line, so it is named by `rootLabel` ("Settings file").
+export function issueLines(issues: readonly SettingsImportIssue[], rootLabel: string): string {
+  return issues.map((issue) => `${issue.path === '' ? rootLabel : issue.path}: ${issue.message}`).join('\n');
+}
+
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
 // Moves a cut point back by one when it would land between the two halves of a surrogate pair,

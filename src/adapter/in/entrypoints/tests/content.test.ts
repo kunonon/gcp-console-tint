@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { StoredSettingsError } from '../../../../port/settings-store';
 import contentScript from '../content';
 
 // A stored fill: { type: 'solid', color } or { type: 'gradient', stops }.
@@ -57,9 +58,9 @@ interface ProjectSettings {
 }
 
 // Partial, section-by-section override shape for building test fixtures: every section (and
-// each section's nested `color`) is independently optional, since the real fromStored() (Zod
-// schemas in the domain, exercised inside content.ts and not re-implemented here) fills in
-// whatever is omitted, against the real ProjectSettings defaults.
+// each section's nested `color`) is independently optional. The storage reader is strict, so
+// tintSettings() merges the overrides into a complete rule (DEFAULT_STORED_SETTINGS) before
+// storing it.
 interface ProjectSettingsOverrides {
   palette?: Partial<PaletteSettings>;
   topBar?: Partial<Omit<TopBarSettings, 'color'>> & { color?: Partial<FillSelection> };
@@ -104,6 +105,7 @@ function createFakeCtx() {
 
 afterEach(() => {
   for (const remove of ctxListeners.splice(0)) remove();
+  vi.restoreAllMocks();
 });
 
 function runContentScript() {
@@ -172,16 +174,46 @@ function triggerLocationChange(newUrl: string = location.href) {
   window.dispatchEvent(event);
 }
 
-// Defaults schemaVersion to a valid/current value so existing tests that seed storage
-// without thinking about schemaVersion keep exercising the "data accepted, no migration"
-// path rather than accidentally being discarded (or migrated as if flat) by fromStored().
-// Pass schemaVersion explicitly to override for tests that specifically probe the
-// discard/migrate boundary.
+// A rule's settings as this build stores ProjectSettings.DEFAULT (settings-repository's toStored).
+const DEFAULT_STORED_SETTINGS: ProjectSettings = {
+  palette: { enabled: true, entries: [{ id: 'default', name: 'Primary', color: solid('#ff6d00') }] },
+  topBar: { enabled: true, color: { paletteId: 'default', custom: solid('#ff6d00') }, height: 4, stripes: false },
+  platformBar: { enabled: true, color: { paletteId: 'default', custom: solid('#ff6d00') }, stripes: false },
+  platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: false },
+};
+
+// The overrides merged section by section (and each section's `color` field by field) into
+// DEFAULT_STORED_SETTINGS, so the stored rule is complete.
+function storedSettings(overrides: ProjectSettingsOverrides = {}): ProjectSettings {
+  const d = DEFAULT_STORED_SETTINGS;
+  return {
+    palette: { ...d.palette, ...overrides.palette },
+    topBar: { ...d.topBar, ...overrides.topBar, color: { ...d.topBar.color, ...overrides.topBar?.color } },
+    platformBar: {
+      ...d.platformBar,
+      ...overrides.platformBar,
+      color: { ...d.platformBar.color, ...overrides.platformBar?.color },
+    },
+    platformBarText: {
+      ...d.platformBarText,
+      ...overrides.platformBarText,
+      color: { ...d.platformBarText.color, ...overrides.platformBarText?.color },
+    },
+  };
+}
+
+// Current-schema storage: stamped with this build's version under theme auto, every rule
+// completed by storedSettings(). Tests that probe unreadable or older data seed storage directly.
 function tintSettings(partial: {
-  schemaVersion?: string;
-  projectRules?: { id?: string; matchType: MatchType; pattern: string; settings?: ProjectSettingsOverrides }[];
-}) {
-  return { tintSettings: { schemaVersion: CURRENT_VERSION, theme: 'auto', ...partial } as unknown as TintSettings };
+  projectRules?: { id: string; matchType: MatchType; pattern: string; settings?: ProjectSettingsOverrides }[];
+}): { tintSettings: TintSettings } {
+  return {
+    tintSettings: {
+      schemaVersion: CURRENT_VERSION,
+      theme: 'auto',
+      projectRules: (partial.projectRules ?? []).map((rule) => ({ ...rule, settings: storedSettings(rule.settings) })),
+    },
+  };
 }
 
 // Schema change: `defaultProject` (the fallback project) has been removed entirely — a
@@ -204,6 +236,36 @@ function tintSettingsWithRule(
   matchType: MatchType = 'regex',
 ) {
   return tintSettings({ projectRules: [{ id: 'r', matchType, pattern, settings }] });
+}
+
+// A complete rule as 0.1.x-0.4.x stored it: '#rrggbb' strings in every fill slot, the top bar's
+// custom `color` selected.
+function legacyRule(pattern: string, color: string, height = 4) {
+  return {
+    id: 'legacy',
+    matchType: 'regex',
+    pattern,
+    settings: {
+      palette: { enabled: true, entries: [{ id: 'default', name: 'Primary', color: '#ff6d00' }] },
+      topBar: { enabled: true, color: { paletteId: null, custom: color }, height, stripes: false },
+      platformBar: { enabled: true, color: { paletteId: 'default', custom: '#ff6d00' }, stripes: false },
+      platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: false },
+    },
+  };
+}
+
+// Nothing painted: the bar hidden and no generated CSS.
+function expectUntinted() {
+  const { bar, styleEl } = getElements();
+  expect(bar.style.display).toBe('none');
+  expect(styleEl.textContent).toBe('');
+}
+
+// The content script's log for storage it refused to read, once, with the reader's error.
+function expectUnreadableLogged(consoleError: { mock: { calls: unknown[][] } }) {
+  expect(consoleError.mock.calls).toEqual([
+    ['[gcp-console-tint] saved settings could not be read', expect.any(StoredSettingsError)],
+  ]);
 }
 
 beforeEach(() => {
@@ -247,23 +309,24 @@ describe('content script', () => {
     expect(bar.style.height).toBe('12px');
   });
 
-  it('falls back to the default height for out-of-range or non-numeric values', async () => {
-    for (const invalid of [0, 41, Number.NaN, -5]) {
-      document.documentElement.innerHTML = '<head></head><body></body>';
-      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: invalid } }));
-      setTestProjectLocation();
+  // No current build stores these: the reader refuses them, and nothing is painted.
+  it.each([0, 41, Number.NaN, -5, 2.5])('tints nothing and logs when the stored height is %s', async (invalid) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: invalid } }));
+    setTestProjectLocation();
 
-      runContentScript();
-      await flush();
+    runContentScript();
+    await flush();
 
-      const { bar } = getElements();
-      expect(bar.style.height).toBe('4px');
-    }
+    expectUntinted();
+    expectUnreadableLogged(consoleError);
   });
 
-  // The storage reader rounds numeric heights before the domain checks its range.
-  it('rounds a fractional stored topBarHeight before applying it', async () => {
-    await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: 2.5 } }));
+  // 0.1.x saved any finite height and painted it rounded; the 0.2.0 step reads it the same way.
+  it('paints a v0.1.3 fractional height rounded, as v0.1.3 did', async () => {
+    await fakeBrowser.storage.local.set({
+      tintSettings: { schemaVersion: '0.1.3', projectRules: [legacyRule(TEST_PROJECT_PATTERN, '#334455', 2.5)] },
+    });
     setTestProjectLocation();
 
     runContentScript();
@@ -271,6 +334,7 @@ describe('content script', () => {
 
     const { bar } = getElements();
     expect(bar.style.height).toBe('3px');
+    expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
   });
 
   it.each([1, 4, 12, 40])('sets shared viewport background properties at top bar height %i px', async (height) => {
@@ -655,138 +719,88 @@ describe('content script', () => {
     expect(styleEl.textContent).toContain('color: #ffffff !important;');
   });
 
-  it('discards stored data with no schemaVersion (pre-release shape); nothing is applied even where a rule would have matched', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
+  // Storage the reader refuses tints nothing, even where a rule would have matched: no stored
+  // #334455, and no default color either.
+  it.each([
+    ['no schemaVersion (the pre-release shape)', { projectRules: [legacyRule(TEST_PROJECT_PATTERN, '#334455')] }],
+    ['a non-string schemaVersion', { schemaVersion: 123, projectRules: [legacyRule(TEST_PROJECT_PATTERN, '#334455')] }],
+    [
+      'a schemaVersion below SCHEMA_MIN_VERSION',
+      { schemaVersion: '0.0.9', projectRules: [legacyRule(TEST_PROJECT_PATTERN, '#334455')] },
+    ],
+    // A newer build's data is not read at all (its unknown fields would be lost).
+    [
+      'a schemaVersion newer than this build',
+      {
+        schemaVersion: '9.9.9',
+        theme: 'auto',
         projectRules: [
           {
             id: '1',
             matchType: 'regex',
             pattern: TEST_PROJECT_PATTERN,
-            settings: { topBar: { color: { paletteId: null, custom: '#334455' } } },
+            settings: storedSettings({ topBar: { color: { paletteId: null, custom: solid('#334455') } } }),
           },
         ],
       },
+    ],
+    // Pre-release: no SCHEMA_MIGRATIONS step reshapes the flat rule settings (the 0.2.0 step finds
+    // no topBar).
+    [
+      'the pre-release flat rule settings at schemaVersion 0.1.0',
+      {
+        schemaVersion: '0.1.0',
+        projectRules: [
+          {
+            id: '1',
+            matchType: 'regex',
+            pattern: TEST_PROJECT_PATTERN,
+            settings: { topBarPaletteId: null, topBarColor: '#334455' },
+          },
+        ],
+      },
+    ],
+    ['a string', 'not-a-settings-record'],
+  ])('tints nothing and logs when storage holds %s', async (_label, stored) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await fakeBrowser.storage.local.set({ tintSettings: stored });
+    setTestProjectLocation();
+
+    runContentScript();
+    await flush();
+
+    expectUntinted();
+    expectUnreadableLogged(consoleError);
+  });
+
+  // Only an absent key is an unconfigured install. Stubbed: fake-browser's set() deletes a key set
+  // to null (the cast because the spy's type follows get()'s void-returning callback overload).
+  it('tints nothing and logs when storage holds null', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(fakeBrowser.storage.local, 'get').mockImplementation((async () => ({ tintSettings: null })) as never);
+    setTestProjectLocation();
+
+    runContentScript();
+    await flush();
+
+    expectUntinted();
+    expectUnreadableLogged(consoleError);
+  });
+
+  // SCHEMA_MIN_VERSION data goes through the 0.2.0 step (an in-range height is kept), the 0.3.0
+  // step, which adds the theme, and the 0.5.0 step, which wraps the plain '#rrggbb' fills as
+  // { type: 'solid', color }; the rules are otherwise already in the current nested shape and apply.
+  it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION (nested shape, plain-string fills)', async () => {
+    await fakeBrowser.storage.local.set({
+      tintSettings: { schemaVersion: '0.1.0', projectRules: [legacyRule(TEST_PROJECT_PATTERN, '#334455')] },
     });
     setTestProjectLocation();
 
     runContentScript();
     await flush();
 
-    const { bar, styleEl } = getElements();
-    // No schemaVersion -> the whole payload (including projectRules) is discarded, so there's
-    // no rule left to match against -> nothing is applied, not the stored #334455.
-    expect(bar.style.display).toBe('none');
-    expect(styleEl.textContent).toBe('');
-  });
-
-  // SCHEMA_MIN_VERSION data goes through the 0.3.0 step, which adds the theme, and the 0.5.0 step,
-  // which wraps the plain '#rrggbb' custom as { type: 'solid', color }; the rules are otherwise
-  // already in the current nested shape and apply.
-  it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION (nested shape, plain-string fills)', async () => {
-    await fakeBrowser.storage.local.set(
-      tintSettings({
-        schemaVersion: '0.1.0',
-        projectRules: [
-          {
-            id: '1',
-            matchType: 'regex',
-            pattern: TEST_PROJECT_PATTERN,
-            // A 0.4.x fill: the plain string the 0.5.0 step wraps.
-            settings: {
-              topBar: { color: { paletteId: null, custom: '#334455' } },
-            } as unknown as ProjectSettingsOverrides,
-          },
-        ],
-      }),
-    );
-    setTestProjectLocation();
-
-    runContentScript();
-    await flush();
-
     const { bar } = getElements();
     expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
-  });
-
-  // Pre-release: no SCHEMA_MIGRATIONS step reshapes flat settings (the 0.3.0 step only adds the
-  // theme, the 0.5.0 step only wraps the nested fills). Old flat-shaped settings (the pre-nested-schema shape) stored at schemaVersion 0.1.0 are read
-  // destructively -- none of the old flat keys match the Zod schemas' expected nested shape, so
-  // every surface falls back to its default rather than picking up the stored custom color.
-  it('ignores old flat-shaped settings at schemaVersion 0.1.0 since no migration reshapes them; the default color applies instead', async () => {
-    await fakeBrowser.storage.local.set(
-      tintSettings({
-        schemaVersion: '0.1.0',
-        projectRules: [
-          {
-            id: '1',
-            matchType: 'regex',
-            pattern: TEST_PROJECT_PATTERN,
-            settings: { topBarPaletteId: null, topBarColor: '#334455' } as unknown as ProjectSettingsOverrides,
-          },
-        ],
-      }),
-    );
-    setTestProjectLocation();
-
-    runContentScript();
-    await flush();
-
-    const { bar } = getElements();
-    // '#334455' never applies -- the DEFAULT_COLOR ('#ff6d00') resolves instead, since
-    // topBar.color.paletteId defaults to 'default' and the default palette entry is that color.
-    expect(hexOrRgb('#334455')).not.toContain(bar.style.backgroundColor);
-    expect(hexOrRgb('#ff6d00')).toContain(bar.style.backgroundColor);
-  });
-
-  it('applies stored data whose schemaVersion is newer than the current version as-is', async () => {
-    await fakeBrowser.storage.local.set(
-      tintSettings({
-        schemaVersion: '9.9.9',
-        projectRules: [
-          {
-            id: '1',
-            matchType: 'regex',
-            pattern: TEST_PROJECT_PATTERN,
-            settings: { topBar: { color: { paletteId: null, custom: solid('#334455') } } },
-          },
-        ],
-      }),
-    );
-    setTestProjectLocation();
-
-    runContentScript();
-    await flush();
-
-    const { bar } = getElements();
-    expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
-  });
-
-  it('discards stored data whose schemaVersion is missing, non-string, or below SCHEMA_MIN_VERSION; nothing is applied', async () => {
-    const rule = {
-      id: '1',
-      matchType: 'regex' as const,
-      pattern: TEST_PROJECT_PATTERN,
-      settings: { topBar: { color: { paletteId: null, custom: '#334455' } } },
-    };
-    const invalidCases = [
-      { schemaVersion: '0.0.9', projectRules: [rule] },
-      { schemaVersion: 123, projectRules: [rule] },
-      { projectRules: [rule] },
-    ];
-
-    for (const invalid of invalidCases) {
-      document.documentElement.innerHTML = '<head></head><body></body>';
-      await fakeBrowser.storage.local.set({ tintSettings: invalid });
-      setTestProjectLocation();
-
-      runContentScript();
-      await flush();
-
-      const { bar, styleEl } = getElements();
-      expect(bar.style.display).toBe('none');
-      expect(styleEl.textContent).toBe('');
-    }
   });
 
   it('applies project-specific settings when the URL "project" param matches a rule pattern', async () => {
@@ -1145,13 +1159,64 @@ describe('content script', () => {
 
       expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
 
-      // On removal, changes.tintSettings.newValue is undefined; content.ts's `if (newValue)`
-      // guard skips re-applying, so the bar keeps showing the last applied color rather than
-      // resetting to "nothing".
-      await fakeBrowser.storage.local.remove('tintSettings');
+      // On removal, Chrome and Firefox report changes.tintSettings with an oldValue and no
+      // newValue; the store's watch skips it, so the bar keeps showing the last applied color
+      // rather than resetting to "nothing". Dispatched by hand: fake-browser's remove() reports
+      // newValue: null, which no browser does.
+      const { tintSettings: oldValue } = await fakeBrowser.storage.local.get('tintSettings');
+      await fakeBrowser.storage.onChanged.trigger({ tintSettings: { oldValue } }, 'local');
       await flush();
 
+      expect(getElements().bar.style.display).not.toBe('none');
       expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+    });
+
+    // A tab already tinted agrees with a newly opened one, whose load() refuses the same value.
+    it('removes the tint when an unreadable value is stored, and tints again once a readable one is', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await fakeBrowser.storage.local.set(
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
+      );
+      setTestProjectLocation();
+      runContentScript();
+      await flush();
+      expect(hexOrRgb('#111111')).toContain(getElements().bar.style.backgroundColor);
+
+      await fakeBrowser.storage.local.set(tintSettingsWithRule({ topBar: { height: 0 } }));
+      await flush();
+
+      expectUntinted();
+      expectUnreadableLogged(consoleError);
+
+      // An SPA navigation re-resolves against the last applied settings, which are the empty ones
+      // now, not the refused data's predecessor.
+      setLocation('/?project=test-project&tab=logs');
+      triggerLocationChange();
+      await flush();
+
+      expectUntinted();
+
+      await fakeBrowser.storage.local.set(
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#222222') } } }),
+      );
+      await flush();
+
+      expect(getElements().bar.style.display).not.toBe('none');
+      expect(hexOrRgb('#222222')).toContain(getElements().bar.style.backgroundColor);
+    });
+
+    // The storage API's own failure is not unreadable data, but there is nothing to paint either.
+    it('tints nothing and logs when storage cannot be read at all', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const storageError = new Error('storage is unavailable');
+      vi.spyOn(fakeBrowser.storage.local, 'get').mockRejectedValue(storageError);
+      setTestProjectLocation();
+
+      runContentScript();
+      await flush();
+
+      expectUntinted();
+      expect(consoleError.mock.calls).toEqual([['[gcp-console-tint] saved settings could not be read', storageError]]);
     });
   });
 

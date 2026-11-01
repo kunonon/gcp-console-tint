@@ -6,7 +6,7 @@ import { PaletteEntry, type PaletteEntryId } from '../../../../domain/palette';
 import { type MatchType, ProjectRule, type ProjectRuleId } from '../../../../domain/project-rule';
 import { ProjectSettings } from '../../../../domain/project-settings';
 import { TopBarHeight } from '../../../../domain/top-bar-height';
-import type { SettingsStore } from '../../../../port/settings-store';
+import { type SettingsStore, StoredSettingsError } from '../../../../port/settings-store';
 import { fillCss } from '../../fill-css';
 import { useRowReorder } from '../../hooks/useRowReorder';
 import { useSelectHint } from '../../hooks/useSelectHint';
@@ -20,6 +20,7 @@ import DeleteConfirmPopover from './components/DeleteConfirmPopover';
 import MatchTypeSelect from './components/MatchTypeSelect';
 import PaletteColorPicker from './components/PaletteColorPicker';
 import { Presence } from './components/Presence';
+import StoredSettingsRecovery from './components/StoredSettingsRecovery';
 
 const nameInputClassName = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 text-sm';
 
@@ -172,7 +173,7 @@ function IconButtonTooltip({ label, children }: { label: string; children: React
 }
 
 function App({ settingsStore }: { settingsStore: SettingsStore }) {
-  const { settings, status, save, saveThenApply, loadSaved } = useTintSettings(settingsStore);
+  const { settings, status, loadError, save, saveThenApply, loadSaved, reset } = useTintSettings(settingsStore);
   // Applied before the loading/failed early returns, so those screens follow the theme too. Theme
   // changes fade only once the stored settings are in place.
   useTheme(settings.theme, status === 'ready');
@@ -208,6 +209,15 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
     }
   }, [view, settings.projectRules]);
 
+  // Set by the recovery screen's Reset. When it succeeds, that screen and the button focus was on go
+  // away; once the rule list has replaced it, focus goes to Add rule instead of falling to <body>.
+  const focusAddRuleRef = useRef(false);
+  useEffect(() => {
+    if (status !== 'ready' || !focusAddRuleRef.current) return;
+    focusAddRuleRef.current = false;
+    document.querySelector<HTMLElement>('button[aria-label="Add rule"]')?.focus();
+  }, [status]);
+
   if (status === 'loading') {
     return (
       <div role="status" className="p-3 text-sm text-muted">
@@ -217,6 +227,21 @@ function App({ settingsStore }: { settingsStore: SettingsStore }) {
   }
 
   if (status === 'failed') {
+    // Unreadable stored data gets the recovery screen; a failure of the storage API itself may be
+    // transient, so it only asks for a reload and offers no reset.
+    if (loadError instanceof StoredSettingsError) {
+      return (
+        <StoredSettingsRecovery
+          error={loadError}
+          onReset={() => {
+            // Raised up front, not after the save: status turns 'ready' only when the reset
+            // succeeds, and a failed one leaves this screen up for another try.
+            focusAddRuleRef.current = true;
+            return reset();
+          }}
+        />
+      );
+    }
     return (
       <Alert status="danger">
         <Alert.Indicator />

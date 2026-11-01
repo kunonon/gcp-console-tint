@@ -171,13 +171,21 @@ export default defineContentScript({
     // Composition root for this entrypoint: the content script owns its store instance.
     const settingsStore = new SettingsStoreImpl();
 
+    // Unreadable storage tints nothing: a stale tint would disagree with a newly opened tab (whose
+    // load() fails too) and keep painting from data the extension refuses to trust. Saying which
+    // fields are wrong is the side panel's job; the console page stays the user's.
+    const onUnreadable = (error: unknown) => {
+      console.error('[gcp-console-tint] saved settings could not be read', error);
+      applySettings(emptySettings);
+    };
+
     settingsStore.load().then((settings) => {
       applySettings(settings);
-    });
+    }, onUnreadable);
 
     settingsStore.watch((settings) => {
       applySettings(settings);
-    });
+    }, onUnreadable);
 
     // GCP Console is an SPA: the `?project=` query param can change without a full page
     // reload. Re-resolve and re-apply against the last known settings whenever that happens.

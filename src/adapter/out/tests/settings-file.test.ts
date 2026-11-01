@@ -8,7 +8,7 @@ import { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
 import { SettingsImportError, type SettingsImportIssue } from '../../../port/settings-store';
 import { CURRENT_SCHEMA_VERSION, type SchemaMigration } from '../migrations';
-import { parseSettingsFile } from '../settings-file';
+import { parseSettingsFile, readSettingsValue } from '../settings-file';
 import { toStored } from '../settings-repository';
 
 // Runs `fn`, returning whatever it throws. Fails the test (via a plain thrown Error) if `fn`
@@ -556,6 +556,15 @@ describe('parseSettingsFile: gradient fills', () => {
 
 describe('parseSettingsFile: versions and migrations', () => {
   const stamped = (schemaVersion: string): string => JSON.stringify({ ...validFile(), schemaVersion });
+  // validFile as 0.4.x and earlier wrote it: the entries' and the bars' fills are '#rrggbb' strings.
+  const legacyFile = (schemaVersion: string): string => {
+    const file = validFile();
+    const settings = (file.projectRules as RawRule[])[0].settings;
+    for (const entry of settings.palette.entries) entry.color = entry.color.color;
+    settings.topBar.color.custom = settings.topBar.color.custom.color;
+    settings.platformBar.color.custom = settings.platformBar.color.custom.color;
+    return JSON.stringify({ ...file, schemaVersion });
+  };
 
   it.each([
     ['an empty first component', '.1.0'],
@@ -569,8 +578,42 @@ describe('parseSettingsFile: versions and migrations', () => {
     });
   });
 
+  // Both stamps sort below 0.5.0, so the file holds 0.4.x's '#rrggbb' fills for the 0.5.0 step to wrap.
   it.each(['0.1', '0.1.0.0'])('keeps accepting numeric version stamps with this component count (%s)', (version) => {
-    expect(parseSettingsFile(stamped(version), CURRENT_SCHEMA_VERSION).projectRules).toHaveLength(1);
+    expect(parseSettingsFile(legacyFile(version), CURRENT_SCHEMA_VERSION).projectRules).toHaveLength(1);
+  });
+
+  // 0.1.x saved any finite height and painted it rounded; the 0.2.0 step reads it the same way.
+  it('imports a 0.1.x file with a fractional height as the rounded height', () => {
+    const file = JSON.parse(legacyFile('0.1.3'));
+    file.projectRules[0].settings.topBar.height = 2.5;
+
+    const settings = parseSettingsFile(JSON.stringify(file), CURRENT_SCHEMA_VERSION);
+
+    expect(settings.projectRules[0]!.settings.topBar.height.toPixels()).toBe(3);
+  });
+
+  // A step's own refusal keeps its paths: it is not wrapped as migration-failed.
+  it("reports every fill the 0.5.0 step cannot wrap in one invalid-fields refusal, in the step's words", () => {
+    const file = JSON.parse(legacyFile('0.4.1'));
+    file.projectRules[0].settings.topBar.color.custom = 42;
+    file.projectRules[0].settings.palette.entries[0].color = null;
+
+    expect(failureOf(thrownBy(() => parse(JSON.stringify(file))))).toEqual({
+      reason: 'invalid-fields',
+      issues: [
+        { path: 'projectRules[0].settings.palette.entries[0].color', message: 'expected a color like #rrggbb' },
+        { path: 'projectRules[0].settings.topBar.color.custom', message: 'expected a color like #rrggbb' },
+      ],
+    });
+  });
+
+  it('refuses a tagged fill under a pre-0.5.0 stamp, which no release wrote', () => {
+    expect(paths(thrownBy(() => parse(stamped('0.4.1'))))).toEqual([
+      'projectRules[0].settings.palette.entries[0].color',
+      'projectRules[0].settings.topBar.color.custom',
+      'projectRules[0].settings.platformBar.color.custom',
+    ]);
   });
 
   it('refuses a file stamped newer than what this build can have written (newer-version)', () => {
@@ -975,5 +1018,56 @@ describe('parseSettingsFile: migration failures', () => {
   ])('keeps %s after a successful migration', (_label, text, failure) => {
     // Restamped at 0.1.0 so the injected identity step (to 0.1.1) runs under a 0.1.1 ceiling.
     expect(failureOf(thrownBy(() => parseSettingsFile(text(), '0.1.1', [identity])))).toEqual(failure);
+  });
+
+  it("keeps a step's own SettingsImportError as the refusal, not migration-failed", () => {
+    const refusal = new SettingsImportError({
+      reason: 'invalid-fields',
+      issues: [{ path: 'projectRules', message: 'x' }],
+    });
+
+    expect(thrownBy(() => parseSettingsFile(stampedFile('0.1.0'), '0.1.2', [identity, throwingStep(refusal)]))).toBe(
+      refusal,
+    );
+  });
+});
+
+// The value-level reader storage shares with the import: everything but JSON.parse and no-rules.
+describe('readSettingsValue', () => {
+  it('reads zero rules, which only the import refuses', () => {
+    const value = { schemaVersion: CURRENT_SCHEMA_VERSION, theme: 'dark', projectRules: [] };
+
+    expect(readSettingsValue(value, CURRENT_SCHEMA_VERSION)).toEqual(new TintSettings([], 'dark'));
+    expect(failureOf(thrownBy(() => parse(JSON.stringify(value))))).toEqual({ reason: 'no-rules' });
+  });
+
+  it('reads the same settings as the import of the same value', () => {
+    const value = validFile();
+
+    expect(readSettingsValue(value, CURRENT_SCHEMA_VERSION)).toEqual(parse(JSON.stringify(value)));
+  });
+
+  // A string is a value, not text to parse: it is not a settings record.
+  it.each([
+    ['a JSON string', JSON.stringify(validFile())],
+    ['null', null],
+    ['undefined', undefined],
+  ])('refuses %s as not-settings', (_label, value) => {
+    expect(failureOf(thrownBy(() => readSettingsValue(value, CURRENT_SCHEMA_VERSION)))).toEqual({
+      reason: 'not-settings',
+    });
+  });
+
+  it('does not mutate the value it reads', () => {
+    const value: Record<string, unknown> = { ...validFile(), schemaVersion: '0.4.1' };
+    const settings = (value.projectRules as RawRule[])[0].settings;
+    settings.topBar.color.custom = '#123456';
+    settings.platformBar.color.custom = '#654321';
+    for (const entry of settings.palette.entries) entry.color = entry.color.color;
+    const before = structuredClone(value);
+
+    readSettingsValue(value, CURRENT_SCHEMA_VERSION);
+
+    expect(value).toEqual(before);
   });
 });

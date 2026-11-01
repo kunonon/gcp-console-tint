@@ -4,7 +4,9 @@ import type { ProjectRule } from '../../../../../domain/project-rule';
 import type { TintSettings } from '../../../../../domain/tint-settings';
 import { SettingsImportError, type SettingsStore } from '../../../../../port/settings-store';
 import { assertNever } from '../../../../../utils/assert';
-import { fitDetail, shortenForDisplay } from '../text';
+import { downloadJson, today } from '../download';
+import { fitDetail, issueLines, plural, shortenForDisplay } from '../text';
+import ErrorDetails from './ErrorDetails';
 import ImportRulesModal from './ImportRulesModal';
 
 interface BackupCardProps {
@@ -46,7 +48,7 @@ const VALIDATION_STOPPED_FOOTER = 'Validation stopped after 100 issues; fix thes
 // file's rules are on screen.
 type Phase = 'idle' | 'export' | 'read' | 'modal';
 
-function DownloadIcon() {
+export function DownloadIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -84,21 +86,12 @@ function UploadIcon() {
   );
 }
 
-// Local calendar date, not UTC: the file name should read as the day the user pressed Export.
-function today(): string {
-  const now = new Date();
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
 function successDescription(fileName: string, added: number, replaced: number): string {
   const counts = [added > 0 ? `${added} added` : '', replaced > 0 ? `${replaced} replaced` : '']
     .filter((part) => part !== '')
     .join(' and ');
   return `${counts} from ${shortenForDisplay(fileName)}`;
 }
-
-const plural = (count: number, noun: string) => `${count} ${count === 1 ? noun : `${noun}s`}`;
 
 // One sentence per refusal reason, naming the file so it is clear which one was rejected. The
 // file name and version come from the user's file, so both are shortened for display.
@@ -132,14 +125,12 @@ function failureSentence(file: string, error: unknown): string {
 // since SettingsImportError's own message is already spelled out as the sentence above. Fitted to
 // a bounded length (see fitDetail) so a huge cause or issue list cannot flood the panel.
 function failureDetail(error: unknown): string | undefined {
-  // A field-level refusal has no underlying error — the offending fields ARE the detail, one per
-  // line, so the user can see exactly what to fix in the file. The file's root has an empty path,
-  // which would read as a bare ": message" line, so it is named instead.
+  // A field-level refusal has no underlying error — the offending fields ARE the detail.
   if (error instanceof SettingsImportError && error.failure.reason === 'invalid-fields') {
-    const lines = error.failure.issues.map(
-      (issue) => `${issue.path === '' ? 'Settings file' : issue.path}: ${issue.message}`,
+    return fitDetail(
+      issueLines(error.failure.issues, 'Settings file'),
+      error.failure.validationStopped ? VALIDATION_STOPPED_FOOTER : undefined,
     );
-    return fitDetail(lines.join('\n'), error.failure.validationStopped ? VALIDATION_STOPPED_FOOTER : undefined);
   }
   const underlying = error instanceof SettingsImportError ? error.cause : error;
   return underlying instanceof Error ? fitDetail(`${underlying.name}: ${underlying.message}`) : undefined;
@@ -217,20 +208,7 @@ export default function BackupCard({
         });
         return;
       }
-      const url = URL.createObjectURL(new Blob([settingsStore.exportJson(saved)], { type: 'application/json' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `gcp-console-tint-settings-${today()}.json`;
-      // Attached for the click and released on the next tick: Firefox only honors `download` on an
-      // anchor that is in the document, and revoking the blob URL synchronously can cut off a
-      // download that has not started yet. Released even if this card is gone by then.
-      document.body.appendChild(link);
-      try {
-        link.click();
-      } finally {
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 0);
-      }
+      downloadJson(`gcp-console-tint-settings-${today()}.json`, settingsStore.exportJson(saved));
       setPhase('idle');
       onNotice({
         tone: 'success',
@@ -387,27 +365,7 @@ export default function BackupCard({
               <Alert.Description>{notice.description}</Alert.Description>
             </div>
             {/* Outside the live region: a long detail is for copying, not for being read out. */}
-            {detail !== undefined && (
-              <>
-                <section aria-label="Error details" className="mt-2 w-full">
-                  <div className="w-full rounded-xl bg-surface-secondary p-2 font-mono text-xs break-all whitespace-pre-wrap">
-                    {detail}
-                  </div>
-                </section>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 self-end"
-                  onPress={() => {
-                    void navigator.clipboard?.writeText(detail).catch((error) => {
-                      console.error('[gcp-console-tint] clipboard copy failed', error);
-                    });
-                  }}
-                >
-                  Copy details
-                </Button>
-              </>
-            )}
+            {detail !== undefined && <ErrorDetails detail={detail} />}
           </Alert.Content>
         </Alert>
       )}

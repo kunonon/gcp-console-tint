@@ -330,15 +330,54 @@ function expectReorderIdle() {
   }
 }
 
+// A complete rule's settings as stored, with ProjectSettings.DEFAULT's values: storage is read
+// strictly, so a seeded rule must carry every field.
+const DEFAULT_STORED_SETTINGS: ProjectSettings = {
+  palette: { enabled: true, entries: [{ id: 'default', name: 'Primary', color: solid('#ff6d00') }] },
+  topBar: { enabled: true, color: { paletteId: 'default', custom: solid('#ff6d00') }, height: 4, stripes: false },
+  platformBar: { enabled: true, color: { paletteId: 'default', custom: solid('#ff6d00') }, stripes: false },
+  platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: false },
+};
+
 // Stores rules straight away, each pattern also serving as its id, for tests that need several rows
 // without going through the Add rule modal for each. Call before rendering.
 async function seedRules(patterns: string[]) {
   await fakeBrowser.storage.local.set({
     tintSettings: {
       schemaVersion: CURRENT_VERSION,
-      projectRules: patterns.map((pattern) => ({ id: pattern, matchType: 'exact', pattern, settings: {} })),
-    },
+      theme: 'auto',
+      projectRules: patterns.map((pattern) => ({
+        id: pattern,
+        matchType: 'exact',
+        pattern,
+        settings: DEFAULT_STORED_SETTINGS,
+      })),
+    } satisfies StoredTintSettings,
   });
+}
+
+// A complete rule in the 0.4.x stored shape, whose fills were '#rrggbb' strings. `topBar` is the
+// top bar's custom colour as stored, and can be made the wrong type on purpose.
+function legacyRule(pattern: string, { topBar = '#ff6d00' }: { topBar?: unknown } = {}) {
+  return {
+    id: pattern,
+    matchType: 'exact',
+    pattern,
+    settings: {
+      palette: { enabled: true, entries: [{ id: 'default', name: 'Primary', color: '#ff6d00' }] },
+      topBar: { enabled: true, color: { paletteId: null, custom: topBar }, height: 4, stripes: false },
+      platformBar: { enabled: true, color: { paletteId: 'default', custom: '#ff6d00' }, stripes: false },
+      platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: false },
+    },
+  };
+}
+
+// The recovery screen's Reset button itself. The tooltip and popover triggers wrapped around it are
+// role="button" too, out of the Tab order, and take its text as their name.
+function getResetButton(): HTMLElement {
+  const button = screen.getAllByRole('button', { name: 'Reset to defaults' }).find((el) => el.tagName === 'BUTTON');
+  if (!button) throw new Error('Reset to defaults button not found');
+  return button;
 }
 
 async function storedPatterns() {
@@ -1661,22 +1700,12 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: 'Reset to defaults' })).toBeNull();
   });
 
-  it('reflects a partial stored settings object merged with defaults', async () => {
-    // Nested on purpose: no migration step reshapes flat rules (the 0.3.0 step only adds the
-    // theme, the 0.5.0 step only wraps the nested fills, here the plain '#123123'), so a
-    // "partial merge" fixture must already be in the nested rule shape to actually exercise
-    // per-field merging rather than the destructive old-shape path (covered separately below,
-    // "... but destructively").
+  it('reads a complete 0.4.x stored rule, wrapping its plain colours as solid fills', async () => {
     await fakeBrowser.storage.local.set({
       tintSettings: {
-        schemaVersion: '0.1.0',
-        projectRules: [
-          {
-            id: 'r1',
-            pattern: 'my-project',
-            settings: { topBar: { color: { custom: '#123123', paletteId: null } } },
-          },
-        ],
+        schemaVersion: '0.4.1',
+        theme: 'auto',
+        projectRules: [legacyRule('my-project', { topBar: '#123123' })],
       },
     });
 
@@ -1685,86 +1714,145 @@ describe('App', () => {
     await screen.findByText('my-project');
     await openRuleDetail(user, 'my-project');
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#123123');
-    });
-    // Fields not present in the stored partial object fall back to defaults (still referencing "Primary").
-    expect(screen.getByRole('button', { name: 'Platform Bar color' }).textContent).toContain('Primary');
+    expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#123123');
   });
 
-  it('discards stored data with no schemaVersion (old flat v1 shape) and applies fresh (empty) defaults on mount', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        projectRules: [{ id: 'r1', pattern: 'should-not-appear', settings: { topBarColor: '#334455' } }],
+  describe('unreadable stored settings', () => {
+    it.each<[string, unknown, string, string | null]>([
+      [
+        'no schemaVersion (the pre-release flat shape)',
+        { projectRules: [{ id: 'r1', pattern: 'should-not-appear', settings: { topBarColor: '#334455' } }] },
+        'The saved data isn’t a GCP Console Tint settings record.',
+        null,
+      ],
+      [
+        'a schemaVersion that is not a string',
+        { schemaVersion: 123, projectRules: [] },
+        'The saved data isn’t a GCP Console Tint settings record.',
+        null,
+      ],
+      [
+        'a schemaVersion below SCHEMA_MIN_VERSION',
+        { schemaVersion: '0.0.9', projectRules: [] },
+        'The saved data was written by an unsupported version (0.0.9).',
+        null,
+      ],
+      [
+        'a schemaVersion newer than this extension',
+        { schemaVersion: '9.9.9', theme: 'auto', projectRules: [] },
+        'The saved data was written by a newer version of GCP Console Tint (9.9.9).',
+        null,
+      ],
+      [
+        // No migration step reshapes the pre-release flat settings: the 0.2.0 step refuses them.
+        'flat pre-release settings under a 0.1.0 stamp',
+        {
+          schemaVersion: '0.1.0',
+          projectRules: [
+            { id: 'r1', pattern: 'should-not-appear', settings: { topBarColor: '#334455', topBarPaletteId: null } },
+          ],
+        },
+        'Saved settings have 1 missing or invalid field.',
+        'projectRules[0].settings.topBar: expected an object',
+      ],
+      [
+        'a 0.4.x rule whose colour is not a string',
+        { schemaVersion: '0.4.1', theme: 'auto', projectRules: [legacyRule('should-not-appear', { topBar: 42 })] },
+        'Saved settings have 1 missing or invalid field.',
+        'projectRules[0].settings.topBar.color.custom: expected a color like #rrggbb',
+      ],
+    ])(
+      'shows the recovery screen instead of the rules for %s, and leaves storage alone',
+      async (_case, stored, sentence, detail) => {
+        await fakeBrowser.storage.local.set({ tintSettings: stored });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        render(<App settingsStore={new SettingsStoreImpl()} />);
+
+        const alert = await screen.findByRole('alert');
+        expect(alert.textContent).toContain('Couldn’t read saved settings');
+        expect(alert.textContent).toContain(sentence);
+        if (detail === null) expect(screen.queryByRole('region', { name: 'Error details' })).toBeNull();
+        else expect(screen.getByRole('region', { name: 'Error details' }).textContent).toBe(detail);
+        expect(screen.queryByText('should-not-appear')).toBeNull();
+        expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Import…' })).toBeNull();
+        expect(await getStoredSettings()).toEqual(stored);
       },
+    );
+
+    it('exports the stored value exactly as it is', async () => {
+      const user = userEvent.setup();
+      const stored = { schemaVersion: '0.4.1', theme: 'auto', projectRules: [legacyRule('alpha', { topBar: 42 })] };
+      await fakeBrowser.storage.local.set({ tintSettings: stored });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { createObjectURL, clicks } = stubDownloads();
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Export saved data' }));
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      const blob = createObjectURL.mock.calls[0]![0] as Blob;
+      expect(await blob.text()).toBe(JSON.stringify(stored, null, 2));
+      expect(clicks[0]!.download).toMatch(/^gcp-console-tint-unreadable-settings-\d{4}-\d{2}-\d{2}\.json$/);
+      // Revocation is deferred to the next tick.
+      await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1));
     });
 
-    render(<App settingsStore={new SettingsStoreImpl()} />);
-    await flush();
+    it('keeps the stored value when Reset is cancelled', async () => {
+      const user = userEvent.setup();
+      const stored = { schemaVersion: '0.0.9', projectRules: [] };
+      await fakeBrowser.storage.local.set({ tintSettings: stored });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('alert');
 
-    expect(screen.queryByText('should-not-appear')).toBeNull();
-    expect(getAllRuleRows()).toHaveLength(0);
-  });
+      const popover = await openDeleteConfirm(user, getResetButton());
+      await user.click(within(popover).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
-  it('reads stored data whose schemaVersion equals SCHEMA_MIN_VERSION on mount, but destructively: no migration step reshapes pre-release rules, so old flat-shape settings are ignored and every section defaults, while the rule itself survives', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        schemaVersion: '0.1.0',
-        projectRules: [
-          { id: 'r1', pattern: 'my-project', settings: { topBarColor: '#334455', topBarPaletteId: null } },
-        ],
-      },
+      expect(await getStoredSettings()).toEqual(stored);
+      expect(screen.getByText('Couldn’t read saved settings')).toBeTruthy();
     });
 
-    const user = userEvent.setup();
-    render(<App settingsStore={new SettingsStoreImpl()} />);
-    await screen.findByText('my-project');
-    await openRuleDetail(user, 'my-project');
+    it('Reset saves empty current-stamped settings, then shows the empty rule list with focus on Add rule', async () => {
+      const user = userEvent.setup();
+      await fakeBrowser.storage.local.set({
+        tintSettings: { schemaVersion: '0.4.1', theme: 'dark', projectRules: [legacyRule('alpha', { topBar: 42 })] },
+      });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(<App settingsStore={new SettingsStoreImpl()} />);
+      await screen.findByRole('alert');
 
-    // The rule (id/pattern) is kept, but its flat-shape settings don't match any key
-    // mergeProjectSettings looks for (it reads stored.topBar, not stored.topBarColor), so
-    // topBar falls back to ProjectSettings.DEFAULT entirely: the old hex is gone, and the
-    // trigger shows the default palette entry's name instead.
-    expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
-  });
+      await confirmDelete(user, getResetButton(), 'Reset to defaults');
 
-  it('reads stored data whose schemaVersion is newer than the current version as-is on mount', async () => {
-    // Newer-than-current data is trusted as-is (no migration step runs for it), so unlike the
-    // 0.1.0 fixtures above, this one must already be in the current nested shape.
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        schemaVersion: '9.9.9',
-        projectRules: [
-          {
-            id: 'r1',
-            pattern: 'my-project',
-            settings: { topBar: { color: { custom: solid('#334455'), paletteId: null } } },
-          },
-        ],
-      },
+      const addRule = await screen.findByRole('button', { name: 'Add rule' });
+      expect(await getStoredSettings()).toEqual({ schemaVersion: CURRENT_VERSION, theme: 'auto', projectRules: [] });
+      expect(getAllRuleRows()).toHaveLength(0);
+      expect(screen.queryByText('Couldn’t read saved settings')).toBeNull();
+      await waitFor(() => expect(document.activeElement).toBe(addRule));
     });
 
-    const user = userEvent.setup();
-    render(<App settingsStore={new SettingsStoreImpl()} />);
-    await screen.findByText('my-project');
-    await openRuleDetail(user, 'my-project');
+    it('stays on the recovery screen when Reset cannot be written', async () => {
+      const user = userEvent.setup();
+      const stored = { schemaVersion: '0.0.9', projectRules: [] };
+      await fakeBrowser.storage.local.set({ tintSettings: stored });
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const store = new SettingsStoreImpl();
+      const writeError = new Error('write failed');
+      vi.spyOn(store, 'save').mockRejectedValue(writeError);
+      render(<App settingsStore={store} />);
+      await screen.findByRole('alert');
 
-    expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('#334455');
-  });
+      await confirmDelete(user, getResetButton(), 'Reset to defaults');
 
-  it('discards stored data whose schemaVersion is missing, non-string, or below SCHEMA_MIN_VERSION on mount', async () => {
-    await fakeBrowser.storage.local.set({
-      tintSettings: {
-        schemaVersion: '0.0.9',
-        projectRules: [{ id: 'r1', pattern: 'should-not-appear', settings: { topBarColor: '#334455' } }],
-      },
+      expect(await screen.findByText('Couldn’t reset settings')).toBeTruthy();
+      expect(screen.getByText('Couldn’t read saved settings')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+      expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] settings reset failed', writeError);
+      expect(await getStoredSettings()).toEqual(stored);
     });
-
-    render(<App settingsStore={new SettingsStoreImpl()} />);
-    await flush();
-
-    expect(screen.queryByText('should-not-appear')).toBeNull();
-    expect(getAllRuleRows()).toHaveLength(0);
   });
 
   it('stamps the current version as schemaVersion whenever settings are saved', async () => {
@@ -1807,7 +1895,7 @@ describe('App', () => {
     const stored = await getStoredSettings();
     expect(stored.schemaVersion).toBe('0.5.5');
 
-    const reloaded = toDomain(stored);
+    const reloaded = toDomain(stored, '0.5.5');
     expect(reloaded.projectRules[0]!.settings.topBar.height.toPixels()).toBe(19);
   });
 
@@ -2835,6 +2923,9 @@ describe('App', () => {
       expect(await screen.findByText('Couldn’t load settings')).toBeTruthy();
       expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
       expect(screen.queryByRole('button', { name: 'Add rule' })).toBeNull();
+      // The storage API failing may be transient: no reset is offered for it, only a reload.
+      expect(screen.queryByRole('button', { name: 'Reset to defaults' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Export saved data' })).toBeNull();
       expect(consoleError).toHaveBeenCalledWith('[gcp-console-tint] settings load failed', expect.any(Error));
     });
 

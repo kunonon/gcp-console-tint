@@ -2,8 +2,17 @@ import assert from 'node:assert/strict';
 import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { isDeepStrictEqual } from 'node:util';
 import { Key } from 'webdriverio';
-import { projectSettings, rule, SCHEMA_VERSION, settings, solid, THEME_HINT_KEY } from './fixtures.mjs';
+import {
+  EFFECTIVE_VERSION,
+  projectSettings,
+  rule,
+  SCHEMA_VERSION,
+  settings,
+  solid,
+  THEME_HINT_KEY,
+} from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
 
 const MATCH_LABELS = { prefix: 'Starts with', suffix: 'Ends with', exact: 'Exact', regex: 'Regex' };
@@ -561,6 +570,28 @@ function readPopoverScroll(scrollTo) {
     firstControl: reachable(dialog.querySelector('button')),
     hueStrip: reachable(dialog.querySelector('.color-well .color-slider__track')),
   };
+}
+
+// Presses Export saved data on the recovery screen and checks that the downloaded file holds
+// `expected`. Earlier JSON downloads are removed first: a second export on the same day would be
+// saved beside the first under another name.
+async function exportsSavedData(h, expected) {
+  const browser = await panel(h);
+  for (const name of await readdir(h.downloadDir)) {
+    if (name.endsWith('.json')) await unlink(join(h.downloadDir, name));
+  }
+  await click(browser, 'button=Export saved data');
+  let exportedName;
+  await browser.waitUntil(
+    async () => {
+      exportedName = (await readdir(h.downloadDir)).find((name) =>
+        /^gcp-console-tint-unreadable-settings-\d{4}-\d{2}-\d{2}\.json$/.test(name),
+      );
+      return Boolean(exportedName);
+    },
+    { timeout: 10000, timeoutMsg: 'Export saved data did not produce a downloaded JSON file' },
+  );
+  assert.deepEqual(JSON.parse(await readFile(join(h.downloadDir, exportedName), 'utf8')), expected);
 }
 
 async function uploadJson(h, fileName, value) {
@@ -3058,6 +3089,53 @@ for (const browserName of browserTargets()) {
           );
         }
       }
+    });
+
+    test('shows the invalid fields of unreadable saved settings, exports them as they are, and resets to defaults on confirmation', async () => {
+      // Two issues of the same check (a field of the wrong type), so both paths are listed.
+      const seed = settings({
+        ...rule('broken', 'broken', 'exact', projectSettings({ topBar: { ...projectSettings().topBar, height: '4' } })),
+        pattern: 42,
+      });
+      await h.seedSettings(seed);
+      const browser = await panel(h);
+      const message = await alertText(browser, /Couldn’t read saved settings/);
+      assert.match(message, /Saved settings have 2 missing or invalid fields\./);
+      const detail = await (await browser.$('section[aria-label="Error details"]')).getText();
+      assert.match(detail, /^projectRules\[0\]\.pattern: Invalid input: expected string, received number$/m);
+      assert.match(
+        detail,
+        /^projectRules\[0\]\.settings\.topBar\.height: Invalid input: expected number, received string$/m,
+      );
+      assert.equal(await browser.$('button[aria-label="Add rule"]').isExisting(), false);
+      await staysStored(h, (value) => isDeepStrictEqual(value, seed), 'the recovery screen wrote to storage');
+
+      await exportsSavedData(h, seed);
+
+      await click(browser, 'button=Reset to defaults');
+      const confirmation = await dialog(browser);
+      await confirmation.$('button=Reset to defaults').click();
+      await waitStored(h, (value) =>
+        isDeepStrictEqual(value, { schemaVersion: EFFECTIVE_VERSION, theme: 'auto', projectRules: [] }),
+      );
+      await browser.$('button[aria-label="Add rule"]').waitForDisplayed();
+      await waitFocused(browser, 'Add rule', 'Reset did not move focus to Add rule');
+      assert.equal(await browser.$('[data-rule-row]').isExisting(), false);
+      // What Reset wrote is readable: a reload opens on the normal screen.
+      await h.reloadPanel();
+      await browser.$('button[aria-label="Add rule"]').waitForDisplayed();
+    });
+
+    test('explains saved data that is not settings or is newer, and exports a stored string as JSON', async () => {
+      await h.seedSettings('not-a-settings-record');
+      const browser = await panel(h);
+      await alertText(browser, /The saved data isn’t a GCP Console Tint settings record\./);
+      assert.equal(await browser.$('section[aria-label="Error details"]').isExisting(), false);
+      await exportsSavedData(h, 'not-a-settings-record');
+
+      await h.seedSettings({ ...settings(rule('future', 'future')), schemaVersion: '99.0.0' });
+      await alertText(browser, /newer version of GCP Console Tint \(99\.0\.0\)\. Update the extension/);
+      assert.equal(await browser.$('button[aria-label="Add rule"]').isExisting(), false);
     });
   });
 }
