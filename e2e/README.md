@@ -6,14 +6,14 @@ The WebdriverIO suite installs the built Chrome MV3 and Firefox MV2 extensions i
 docker compose --profile e2e run --rm --build e2e
 ```
 
-CI runs Chrome and Firefox in parallel with separate Compose project names, isolating their `node_modules`, `.wxt`, and `.output` volumes. Each CI container mounts the existing host pnpm store cache; local Compose behavior is unchanged. The default local command above remains serial. For parallel local runs, run these commands in separate terminals with different `--project-name` values:
+CI runs four end-to-end jobs, each on its own runner: Chrome and Firefox, each split into `ui.e2e.mjs` and the remaining spec files. Each CI container mounts the host pnpm store, restored from the Actions cache; local Compose behavior is unchanged. The default local command above remains serial. For parallel local runs, run these commands in separate terminals with different `--project-name` values, which isolate their `node_modules`, `.wxt`, and `.output` volumes:
 
 ```sh
 docker compose --project-name e2e-chrome --profile e2e run --rm --build -e E2E_BROWSER=chrome e2e
 docker compose --project-name e2e-firefox --profile e2e run --rm --build -e E2E_BROWSER=firefox e2e
 ```
 
-To run one browser, add `-e E2E_BROWSER=chrome` or `-e E2E_BROWSER=firefox` before `e2e`. If pnpm is available on the host, the optional launchers are `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox`; the Compose command requires no host pnpm installation. Failed harness runs retain screenshots, page captures, and startup diagnostics under `.e2e-artifacts/`. Successful runs remove their own run directory, leaving earlier failures untouched. When the container runs as root, artifact ownership is restored to the mounted checkout's UID/GID so Linux users can inspect and remove their diagnostics.
+To run one browser, add `-e E2E_BROWSER=chrome` or `-e E2E_BROWSER=firefox` before `e2e`. To run some spec files only, add `-e E2E_SPECS="e2e/smoke.e2e.mjs"` (space-separated paths); without it, every `e2e/*.e2e.mjs` file runs. If pnpm is available on the host, the optional launchers are `pnpm test:e2e`, `pnpm test:e2e:chrome`, and `pnpm test:e2e:firefox`; the Compose command requires no host pnpm installation. Failed harness runs retain screenshots, page captures, and startup diagnostics under `.e2e-artifacts/`. Successful runs remove their own run directory, leaving earlier failures untouched. When the container runs as root, artifact ownership is restored to the mounted checkout's UID/GID so Linux users can inspect and remove their diagnostics.
 
 ## Browser versions and downloads
 
