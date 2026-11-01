@@ -105,7 +105,7 @@ describe('runMigrations', () => {
       ['a rule that is not an object', { projectRules: ['x', null, 5] }],
       ['settings that is not an object', file('x')],
       ['null settings', file(null)],
-      ['the pre-0.3.0 flat settings (palette an array)', file({ palette: ['#111111'], topBarColor: '#222222' })],
+      ['the pre-release flat settings (palette an array)', file({ palette: ['#111111'], topBarColor: '#222222' })],
       ['entries that is not an array', file({ palette: { entries: '#111111' } })],
       ['an entry that is not an object', file({ palette: { entries: ['#111111', null] } })],
       ['a null palette', file({ palette: null })],
