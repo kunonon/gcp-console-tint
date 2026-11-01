@@ -111,6 +111,28 @@ async function dialog(browser) {
   return element;
 }
 
+// Opens the popover of the trigger named `label` from the top of the panel, so it opens below with
+// room to spare. `click` centres the trigger instead, and in Firefox's 347px viewport in CI that
+// asks for a half-pixel scroll, which Firefox rounds to one side and then the other around the
+// popover's mount. react-aria picks the roomier side again on every reposition, and does not
+// reposition on a document scroll: the popover opened below and flipped above on the first press,
+// or kept a max-height 1px short of the room below it until the press repositioned it.
+async function openFromTop(browser, label) {
+  const trigger = await browser.$(`button[aria-label="${label}"]`);
+  await trigger.waitForDisplayed();
+  const room = await browser.execute((element) => {
+    element.scrollIntoView({ block: 'start' });
+    const rect = element.getBoundingClientRect();
+    return { above: Math.round(rect.top), below: Math.round(window.innerHeight - rect.bottom) };
+  }, trigger);
+  assert.ok(
+    room.below - room.above >= 100,
+    `setup: the trigger should sit high in the panel, got ${JSON.stringify(room)}`,
+  );
+  await trigger.click();
+  return dialog(browser);
+}
+
 async function dialogIsClosed(browser) {
   const element = await browser.$('[role="dialog"]');
   return !(await element.isDisplayed());
@@ -2157,8 +2179,14 @@ for (const browserName of browserTargets()) {
         await openDetail(browser);
         for (const trigger of ['Platform Bar text color', 'Top bar color']) {
           await waitForPopoverClosed(browser);
-          await click(browser, `button[aria-label="${trigger}"]`);
-          await dialog(browser);
+          // The bar picker is measured again after a press on its switch, so it opens from the
+          // top of the panel; the text picker is only measured once.
+          if (trigger === 'Top bar color') {
+            await openFromTop(browser, trigger);
+          } else {
+            await click(browser, `button[aria-label="${trigger}"]`);
+            await dialog(browser);
+          }
 
           const top = await settled(browser, readPopoverScroll, `the capped ${trigger} popover`, 'start');
           assert.ok(
@@ -2287,23 +2315,7 @@ for (const browserName of browserTargets()) {
       try {
         await browser.setWindowSize(windowSize.width, 420);
         await openDetail(browser);
-        // At the top of the panel, so the popover opens below with room to spare. Where a click
-        // leaves it, the trigger sat 1px off the middle of Firefox's 347px viewport in CI, and
-        // react-aria picks the roomier side again on every reposition: the popover opened below
-        // and flipped above on the first press.
-        const trigger = await browser.$('button[aria-label="Top bar color"]');
-        await trigger.waitForDisplayed();
-        const room = await browser.execute((element) => {
-          element.scrollIntoView({ block: 'start' });
-          const rect = element.getBoundingClientRect();
-          return { above: Math.round(rect.top), below: Math.round(window.innerHeight - rect.bottom) };
-        }, trigger);
-        assert.ok(
-          room.below - room.above >= 100,
-          `setup: the trigger should sit high in the panel, got ${JSON.stringify(room)}`,
-        );
-        await trigger.click();
-        await dialog(browser);
+        await openFromTop(browser, 'Top bar color');
         await settled(browser, readColorPopover, 'the capped Top bar popover');
         // As far down as the switch stays whole in view: its top 1px under the top of the
         // scrollport, so a press on it does not scroll it into view. A mode whose content were
