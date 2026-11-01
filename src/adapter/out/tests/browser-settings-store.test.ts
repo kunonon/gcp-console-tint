@@ -80,35 +80,23 @@ describe('migrateStoredSettings', () => {
     });
   });
 
-  // The stored shape of a fill: a gradient is written as { stops } of { color, position }, beside
-  // the solid strings.
-  it('writes gradient fills back as stops objects', async () => {
-    const rule = (custom: unknown, entryColor: unknown) => ({
+  // The stored shape of a fill since 0.5.0: v0.4.1 stored the '#rrggbb' strings, and the write-back
+  // wraps them as { type: 'solid', color } while the text's custom stays a string. None of the
+  // colors is a default, so a fill reset by the reader would show.
+  it("writes v0.4.1's solid fills back as tagged solid objects", async () => {
+    const rule = (entryColor: unknown, topBarCustom: unknown, platformBarCustom: unknown) => ({
       id: '1',
       matchType: 'exact',
       pattern: 'my-app',
       settings: {
-        palette: { enabled: true, entries: [{ id: 'sunset', name: 'Sunset', color: entryColor }] },
-        topBar: { enabled: true, color: { paletteId: null, custom }, height: 4, stripes: false },
-        platformBar: { enabled: true, color: { paletteId: 'sunset', custom: '#ff6d00' }, stripes: true },
-        platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: true },
+        palette: { enabled: true, entries: [{ id: 'teal', name: 'Teal', color: entryColor }] },
+        topBar: { enabled: true, color: { paletteId: null, custom: topBarCustom }, height: 4, stripes: false },
+        platformBar: { enabled: true, color: { paletteId: 'teal', custom: platformBarCustom }, stripes: true },
+        platformBarText: { enabled: true, color: { paletteId: null, custom: '#123456' }, auto: true },
       },
     });
-    const gradient = {
-      stops: [
-        { color: '#ff6d00', position: 0 },
-        { color: '#1a73e8', position: 100 },
-      ],
-    };
-    const sunset = {
-      stops: [
-        { color: '#ff6d00', position: 0 },
-        { color: '#e91e63', position: 30 },
-        { color: '#3f51b5', position: 100 },
-      ],
-    };
     await fakeBrowser.storage.local.set({
-      tintSettings: { schemaVersion: '0.3.0', theme: 'dark', projectRules: [rule(gradient, sunset)] },
+      tintSettings: { schemaVersion: '0.4.1', theme: 'dark', projectRules: [rule('#009688', '#e91e63', '#3f51b5')] },
     });
 
     await migrateStoredSettings(RELEASE);
@@ -116,7 +104,13 @@ describe('migrateStoredSettings', () => {
     expect((await fakeBrowser.storage.local.get('tintSettings')).tintSettings).toEqual({
       schemaVersion: RELEASE,
       theme: 'dark',
-      projectRules: [rule(gradient, sunset)],
+      projectRules: [
+        rule(
+          { type: 'solid', color: '#009688' },
+          { type: 'solid', color: '#e91e63' },
+          { type: 'solid', color: '#3f51b5' },
+        ),
+      ],
     });
   });
 

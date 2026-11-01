@@ -14,10 +14,15 @@ import { parseSettingsFile } from '../settings-file';
 // purpose rather than imported, so the element-by-element walk is checked against Zod's own issue
 // order and wording. It is only ever run on plain arrays, never on the recording Proxies below
 // (it would read every element and spoil their counts).
-// The bars and the palette entries take a fill (a string or { stops }); the text keeps a string.
-const oracleFill = z.union(
-  [z.string(), z.object({ stops: z.array(z.object({ color: z.string(), position: z.number() })) })],
-  { error: 'expected a color string or a gradient object with a stops array of { color, position }' },
+// The bars and the palette entries take a fill ({ type: 'solid' } or { type: 'gradient' }); the text
+// keeps a string.
+const oracleFill = z.discriminatedUnion(
+  'type',
+  [
+    z.object({ type: z.literal('solid'), color: z.string() }),
+    z.object({ type: z.literal('gradient'), stops: z.array(z.object({ color: z.string(), position: z.number() })) }),
+  ],
+  { error: "expected { type: 'solid', color } or { type: 'gradient', stops: [{ color, position }, ...] }" },
 );
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
 const oracleFillSelection = z.object({ paletteId: z.string().nullable(), custom: oracleFill });
@@ -56,6 +61,11 @@ function oracleIssues(data: unknown): SettingsImportIssue[] {
 // biome-ignore lint/suspicious/noExplicitAny: the fixtures must be able to violate the shape
 type RawRule = any;
 
+// A fill in the file's shape. These fixtures reach validation through parseMigrated, past the real
+// migration steps, so they are written in the current (tagged) shape.
+const solid = (color: string) => ({ type: 'solid', color });
+const gradient = (stops: { color: string; position: number }[]) => ({ type: 'gradient', stops });
+
 // A rule exactly as the exporter writes ProjectSettings.DEFAULT, as a fresh object every call.
 function validRule(id: string): RawRule {
   return {
@@ -63,9 +73,9 @@ function validRule(id: string): RawRule {
     matchType: 'exact',
     pattern: 'my-app',
     settings: {
-      palette: { enabled: true, entries: [{ id: 'default', name: 'Primary', color: '#ff6d00' }] },
-      topBar: { enabled: true, color: { paletteId: 'default', custom: '#ff6d00' }, height: 4, stripes: false },
-      platformBar: { enabled: true, color: { paletteId: 'default', custom: '#ff6d00' }, stripes: false },
+      palette: { enabled: true, entries: [{ id: 'default', name: 'Primary', color: solid('#ff6d00') }] },
+      topBar: { enabled: true, color: { paletteId: 'default', custom: solid('#ff6d00') }, height: 4, stripes: false },
+      platformBar: { enabled: true, color: { paletteId: 'default', custom: solid('#ff6d00') }, stripes: false },
       platformBarText: { enabled: true, color: { paletteId: null, custom: '#ffffff' }, auto: false },
     },
   };
@@ -118,8 +128,8 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
     const last = validRule('last');
     last.settings.palette.enabled = 'yes';
     last.settings.palette.entries = [
-      { id: 1, name: 'a', color: '#000000' },
-      { id: 2, name: 'b', color: '#000000' },
+      { id: 1, name: 'a', color: solid('#000000') },
+      { id: 2, name: 'b', color: solid('#000000') },
     ];
     last.settings.topBar.height = '4';
     last.settings.topBar.stripes = 'no';
@@ -186,7 +196,7 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
 
   it('stops inside one rule with 150 faulty palette entries, keeping entries[0..99]', () => {
     const rule = validRule('only');
-    rule.settings.palette.entries = Array.from({ length: 150 }, () => ({ id: 1, name: 'n', color: '#000000' }));
+    rule.settings.palette.entries = Array.from({ length: 150 }, () => ({ id: 1, name: 'n', color: solid('#000000') }));
     const data = { theme: 'auto', projectRules: [rule] };
 
     const { failure } = invalidFieldsOf(data);
@@ -198,22 +208,23 @@ describe('structure stage: the 100 issues kept and the 101st that stops validati
     expect(failure.validationStopped).toBe(true);
   });
 
-  // The fill union collapses a bad stops array into one issue at the fill's own path.
-  it('reports 150 non-object stops in one entry as a single issue at its color', () => {
+  // Zod reports each stop that is not an object on its own, so one gradient can fill the issue
+  // list: the collector keeps stops[0..99] and stops at the 101st.
+  it('stops inside one gradient with 150 non-object stops, keeping stops[0..99]', () => {
     const rule = validRule('only');
-    rule.settings.palette.entries[0].color = { stops: Array.from({ length: 150 }, () => 1) };
+    rule.settings.palette.entries[0].color = { type: 'gradient', stops: Array.from({ length: 150 }, () => 1) };
     const data = { theme: 'auto', projectRules: [rule] };
 
     const { failure } = invalidFieldsOf(data);
 
-    expect(failure.issues).toEqual(oracleIssues(data));
-    expect(failure.issues).toEqual([
-      {
-        path: 'projectRules[0].settings.palette.entries[0].color',
-        message: 'expected a color string or a gradient object with a stops array of { color, position }',
-      },
-    ]);
-    expect('validationStopped' in failure).toBe(false);
+    expect(failure.issues).toEqual(oracleIssues(data).slice(0, 100));
+    expect(failure.issues).toEqual(
+      Array.from({ length: 100 }, (_, j) => ({
+        path: `projectRules[0].settings.palette.entries[0].color.stops[${j}]`,
+        message: 'Invalid input: expected object, received number',
+      })),
+    );
+    expect(failure.validationStopped).toBe(true);
   });
 });
 
@@ -230,7 +241,7 @@ describe('structure stage: elements are read once each, and none after the 101st
   });
 
   it('reads entries[0..100] once each when every entry of one rule is faulty (150 entries)', () => {
-    const entryItems = Array.from({ length: 150 }, () => ({ id: 1, name: 'n', color: '#000000' }));
+    const entryItems = Array.from({ length: 150 }, () => ({ id: 1, name: 'n', color: solid('#000000') }));
     const entries = recordingArray(entryItems);
     const rule = validRule('only');
     rule.settings.palette.entries = entries.proxy;
@@ -258,7 +269,7 @@ describe('structure stage: elements are read once each, and none after the 101st
 
   it('reads each of 150 valid palette entries exactly once', () => {
     const entries = recordingArray(
-      Array.from({ length: 150 }, (_, j) => ({ id: `entry-${j}`, name: 'n', color: '#000000' })),
+      Array.from({ length: 150 }, (_, j) => ({ id: `entry-${j}`, name: 'n', color: solid('#000000') })),
     );
     const rule = validRule('only');
     rule.settings.palette.entries = entries.proxy;
@@ -272,7 +283,7 @@ describe('structure stage: elements are read once each, and none after the 101st
   });
 
   it("does not read a rule's entries when an earlier field of that rule yields the 101st issue", () => {
-    const entries = recordingArray([{ id: 'e', name: 'n', color: '#000000' }]);
+    const entries = recordingArray([{ id: 'e', name: 'n', color: solid('#000000') }]);
     const last = { ...validRule('unused'), id: 1 };
     last.settings.palette.entries = entries.proxy;
 
@@ -360,7 +371,11 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
 
   it("D: 102 entries sharing one id stop at entries[101].id, without judging that entry's color", () => {
     const rule = validRule('only');
-    rule.settings.palette.entries = Array.from({ length: 102 }, () => ({ id: 'same', name: 'n', color: '#000000' }));
+    rule.settings.palette.entries = Array.from({ length: 102 }, () => ({
+      id: 'same',
+      name: 'n',
+      color: solid('#000000'),
+    }));
     clearSpies();
 
     const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
@@ -377,7 +392,11 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
 
   it('A: 150 entries with bad colors stop at entries[100].color', () => {
     const rule = validRule('only');
-    rule.settings.palette.entries = Array.from({ length: 150 }, (_, j) => ({ id: `e${j}`, name: 'n', color: 'bad' }));
+    rule.settings.palette.entries = Array.from({ length: 150 }, (_, j) => ({
+      id: `e${j}`,
+      name: 'n',
+      color: solid('bad'),
+    }));
     clearSpies();
 
     const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
@@ -385,7 +404,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     expect(calls()).toEqual([1, 101, 0]);
     expect(failure.issues).toEqual(
       Array.from({ length: 100 }, (_, j) => ({
-        path: `projectRules[0].settings.palette.entries[${j}].color`,
+        path: `projectRules[0].settings.palette.entries[${j}].color.color`,
         message: 'expected a color like #rrggbb',
       })),
     );
@@ -394,9 +413,9 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
 
   it('150 bad stop colors in one gradient stop at stops[100], before the stops count is judged', () => {
     const rule = validRule('only');
-    rule.settings.palette.entries[0].color = {
-      stops: Array.from({ length: 150 }, (_, j) => ({ color: 'bad', position: j })),
-    };
+    rule.settings.palette.entries[0].color = gradient(
+      Array.from({ length: 150 }, (_, j) => ({ color: 'bad', position: j })),
+    );
     clearSpies();
 
     const { failure } = invalidFieldsOf({ theme: 'auto', projectRules: [rule] });
@@ -416,12 +435,10 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     rule.settings.palette.entries = Array.from({ length: 101 }, (_, j) => ({
       id: `e${j}`,
       name: 'n',
-      color: {
-        stops: [
-          { color: 'bad', position: 0 },
-          { color: '#000000', position: 100 },
-        ],
-      },
+      color: gradient([
+        { color: 'bad', position: 0 },
+        { color: '#000000', position: 100 },
+      ]),
     }));
     clearSpies();
 
@@ -440,10 +457,14 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
 
   it('T: 100 bad entry colors then a bad height stop at the height, before the platform bar colors', () => {
     const rule = validRule('only');
-    rule.settings.palette.entries = Array.from({ length: 100 }, (_, j) => ({ id: `e${j}`, name: 'n', color: 'bad' }));
-    rule.settings.topBar.color.custom = '#00aa00';
+    rule.settings.palette.entries = Array.from({ length: 100 }, (_, j) => ({
+      id: `e${j}`,
+      name: 'n',
+      color: solid('bad'),
+    }));
+    rule.settings.topBar.color.custom = solid('#00aa00');
     rule.settings.topBar.height = 99;
-    rule.settings.platformBar.color.custom = '#0000aa';
+    rule.settings.platformBar.color.custom = solid('#0000aa');
     rule.settings.platformBarText.color.custom = '#0000bb';
     clearSpies();
 
@@ -454,7 +475,7 @@ describe('value stage: stops right at the judgment that yields the 101st issue',
     expect(fromHex.mock.calls.map(([hex]) => hex)).not.toContain('#0000bb');
     expect(failure.issues).toEqual(
       Array.from({ length: 100 }, (_, j) => ({
-        path: `projectRules[0].settings.palette.entries[${j}].color`,
+        path: `projectRules[0].settings.palette.entries[${j}].color.color`,
         message: 'expected a color like #rrggbb',
       })),
     );

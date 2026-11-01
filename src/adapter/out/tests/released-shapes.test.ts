@@ -29,13 +29,36 @@ const rules = [
   },
 ];
 
+// The rows above as toStored writes them today: since 0.5.0 the entries' and the bars' fills are
+// tagged objects, while the text's custom stays a string.
+const solid = (color: string) => ({ type: 'solid', color });
+const expected = [
+  {
+    id: 'r1',
+    matchType: 'prefix',
+    pattern: 'prod-',
+    settings: {
+      palette: {
+        enabled: false,
+        entries: [
+          { id: 'default', name: 'Primary', color: solid('#1a73e8') },
+          { id: 'e2', name: 'Alert', color: solid('#d93025') },
+        ],
+      },
+      topBar: { enabled: false, color: { paletteId: 'e2', custom: solid('#00ff00') }, height: 9, stripes: true },
+      platformBar: { enabled: false, color: { paletteId: null, custom: solid('#123456') }, stripes: true },
+      platformBarText: { enabled: false, color: { paletteId: 'default', custom: '#abcdef' }, auto: true },
+    },
+  },
+];
+
 describe('files written by past releases', () => {
   it.each([
     ['a v0.3.0-v0.4.1 export', { schemaVersion: '0.3.0', theme: 'dark', projectRules: rules }, 'dark'],
     ['a v0.2.x export', { schemaVersion: '0.1.0', projectRules: rules }, 'auto'],
   ])('imports %s keeping every value', (_label, file, theme) => {
     const settings = parseSettingsFile(JSON.stringify(file), CURRENT_SCHEMA_VERSION);
-    expect(toStored(settings, CURRENT_SCHEMA_VERSION)).toMatchObject({ theme, projectRules: rules });
+    expect(toStored(settings, CURRENT_SCHEMA_VERSION)).toMatchObject({ theme, projectRules: expected });
   });
 
   // migrateStoredSettings persists exactly toStored(toDomain(stored)) (browser-settings-store.ts).
@@ -43,6 +66,6 @@ describe('files written by past releases', () => {
     ['v0.4.1 storage', { schemaVersion: '0.4.1', theme: 'dark', projectRules: rules }, 'dark'],
     ['v0.2.1 storage', { schemaVersion: '0.2.1', projectRules: rules }, 'auto'],
   ])('reads %s keeping every value', (_label, data, theme) => {
-    expect(toStored(toDomain(data), CURRENT_SCHEMA_VERSION)).toMatchObject({ theme, projectRules: rules });
+    expect(toStored(toDomain(data), CURRENT_SCHEMA_VERSION)).toMatchObject({ theme, projectRules: expected });
   });
 });

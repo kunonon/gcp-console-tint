@@ -42,16 +42,25 @@ function isArray(value: unknown): value is readonly unknown[] {
 // Stage 1. `z.object` ignores unknown keys within the supported schema version range.
 // Stamps above this build's effective schema version ceiling are rejected before validation.
 //
-// A fill (palette entries and the bars' custom) is a '#rrggbb' string or
-// { stops: [{ color, position }, ...] }; only that shape is checked here, and the colors, the stop
-// count and the positions are judged in stage 2. The union reports one issue at the fill's own
-// path, not one per element, and Zod reads every element of `stops` here.
+// A fill (palette entries and the bars' custom) is a tagged object: { type: 'solid', color } or
+// { type: 'gradient', stops: [{ color, position }, ...] }. Only that shape is checked here, and the
+// colors, the stop count and the positions are judged in stage 2. A value that is not an object, or
+// whose type is missing or unknown, gets one issue with the message below; inside a known type each
+// wrong field gets its own. Zod reads every element of `stops` here and reports each element that
+// is not a { color, position } object on its own, until the collector stops at MAX_ISSUES.
 // ponytail: a stops array is read whole here, unlike entries; the domain caps real gradients at 8
-// and a hostile file costs memory, not issues (the union collapses to one). Walk it like entries
-// if that bound ever matters.
-const fillSchema = z.union(
-  [z.string(), z.object({ stops: z.array(z.object({ color: z.string(), position: z.number() })) })],
-  { error: 'expected a color string or a gradient object with a stops array of { color, position }' },
+// and a hostile file costs memory and up to MAX_ISSUES issues. Walk it like entries if that bound
+// ever matters.
+const fillSchema = z.discriminatedUnion(
+  'type',
+  [
+    z.object({ type: z.literal('solid'), color: z.string() }),
+    z.object({
+      type: z.literal('gradient'),
+      stops: z.array(z.object({ color: z.string(), position: z.number() })),
+    }),
+  ],
+  { error: "expected { type: 'solid', color } or { type: 'gradient', stops: [{ color, position }, ...] }" },
 );
 
 // JSON has no undefined: an unset palette reference is written as null.
@@ -89,7 +98,7 @@ const ruleShellSchema = z.object({
 // non-array: a real array would have every element read.
 const arrayDiagnosis = z.array(z.unknown());
 
-type FillFile = z.infer<typeof fillSchema>;
+export type FillFile = z.infer<typeof fillSchema>;
 type PaletteEntryFile = z.infer<typeof paletteEntrySchema>;
 type RuleFile = z.infer<typeof ruleShellSchema> & { settings: { palette: { entries: PaletteEntryFile[] } } };
 // A type alias, not an interface: toStored() returns it, and an interface (no implicit index signature)
@@ -216,9 +225,9 @@ function stopsIssue(path: string, problem: GradientStopsProblem): [path: string,
 // one pass. A rejected value is replaced by a placeholder here purely to keep building: the
 // returned rules are used only when no issue was collected. Values are judged in a fixed order
 // (the root theme first, then per rule: matchType, each palette entry's duplicate id, then its
-// color (each stop's color, then the stops' count and positions); topBar color (same) and height;
-// platformBar color; platformBarText color); the judgment that yields the 101st issue stops
-// validation on the spot, and no partial rules are returned.
+// fill (a solid's color, or each stop's color, then the stops' count and positions); topBar fill
+// (same) and height; platformBar fill; platformBarText color); the judgment that yields the 101st
+// issue stops validation on the spot, and no partial rules are returned.
 function toRules(file: SettingsFile): {
   theme: Theme;
   rules: ProjectRule[];
@@ -235,17 +244,25 @@ function toRules(file: SettingsFile): {
     return Color.BLACK;
   };
 
-  // Every stop's color is judged before the stops' shape, and both are reported: each bad color,
-  // then the first shape problem Gradient.stopsProblem finds (count, then each position in turn).
+  // A solid fill's color is judged at `${path}.color`. In a gradient every stop's color is judged
+  // before the stops' shape, and both are reported: each bad color, then the first shape problem
+  // Gradient.stopsProblem finds (count, then each position in turn).
   const fill = (value: FillFile, path: string): Fill => {
-    if (typeof value === 'string') return color(value, path);
-    const stops = value.stops.map((stop, i) => ({
-      color: color(stop.color, `${path}.stops[${i}].color`),
-      position: stop.position,
-    }));
-    const problem = Gradient.stopsProblem(stops);
-    if (problem) reject(...stopsIssue(path, problem));
-    return Gradient.fromStops(stops) ?? Color.BLACK;
+    switch (value.type) {
+      case 'solid':
+        return color(value.color, `${path}.color`);
+      case 'gradient': {
+        const stops = value.stops.map((stop, i) => ({
+          color: color(stop.color, `${path}.stops[${i}].color`),
+          position: stop.position,
+        }));
+        const problem = Gradient.stopsProblem(stops);
+        if (problem) reject(...stopsIssue(path, problem));
+        return Gradient.fromStops(stops) ?? Color.BLACK;
+      }
+      default:
+        return assertNever(value);
+    }
   };
 
   const themeValue = (value: string, path: string): Theme => {

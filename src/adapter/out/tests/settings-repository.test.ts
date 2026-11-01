@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Color } from '../../../domain/color';
 import { ColorSelection } from '../../../domain/color-selection';
 import { type Fill, Gradient } from '../../../domain/gradient';
-import { type Palette, PaletteEntry, PaletteEntryId } from '../../../domain/palette';
+import { Palette, PaletteEntry, PaletteEntryId } from '../../../domain/palette';
 import { MATCH_TYPES, ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import {
   type PlatformBarSettings,
@@ -34,8 +34,10 @@ const at = (...stops: [string, number][]): Gradient =>
   Gradient.fromStops(stops.map(([hex, position]) => ({ color: color(hex), position })))!;
 const gradient = (...values: string[]): Gradient =>
   at(...values.map((hex, i): [string, number] => [hex, Math.round((i * 100) / (values.length - 1))]));
-// A gradient in its stored shape.
+// Fills in their stored shape.
+const storedSolid = (color: unknown) => ({ type: 'solid', color });
 const storedStops = (...stops: [unknown, unknown][]) => ({
+  type: 'gradient',
   stops: stops.map(([color, position]) => ({ color, position })),
 });
 // A solid fill's hex; a gradient (or nothing) reads as undefined, so a solid assertion fails on it.
@@ -103,10 +105,11 @@ describe('toDomain', () => {
   });
 
   // Pre-release policy: rule-shape changes before the first release were destructive by design
-  // instead of being migrated, and no SCHEMA_MIGRATIONS step reshapes rules (the 0.3.0 step only
-  // adds the theme). Old-shaped rule fields are simply not recognized by this module's Zod
-  // schemas and every section falls back to its default.
-  describe('destructive pre-release read (no migration step reshapes rules)', () => {
+  // instead of being migrated, and no SCHEMA_MIGRATIONS step reshapes the flat pre-release rule
+  // settings (the 0.3.0 step only adds the theme, and the 0.5.0 step, which wraps the nested
+  // shape's fills, passes them through). Old-shaped rule fields are simply not recognized by this
+  // module's Zod schemas and every section falls back to its default.
+  describe('destructive pre-release read (no migration step reshapes the flat rule settings)', () => {
     it('reads a legacy flat 0.1.0 fixture destructively: rule id/matchType/pattern survive, but every ProjectSettings section falls back to defaults', () => {
       const flatSettings = {
         paletteEnabled: false,
@@ -141,7 +144,7 @@ describe('toDomain', () => {
       ]);
     });
 
-    it('merges nested-shaped settings directly (no step reshapes rules) at any valid schemaVersion, from the floor up through arbitrarily newer versions', () => {
+    it('merges nested-shaped settings directly at any valid schemaVersion, from the floor up through arbitrarily newer versions', () => {
       const atFloor = toDomain({
         schemaVersion: '0.1.0',
         projectRules: [{ id: '1', matchType: 'exact', pattern: 'x', settings: { platformBarText: { auto: true } } }],
@@ -151,7 +154,12 @@ describe('toDomain', () => {
       const wellAbove = toDomain({
         schemaVersion: '9.9.9',
         projectRules: [
-          { id: '1', matchType: 'exact', pattern: 'x', settings: { topBar: { color: { custom: '#00ff00' } } } },
+          {
+            id: '1',
+            matchType: 'exact',
+            pattern: 'x',
+            settings: { topBar: { color: { custom: storedSolid('#00ff00') } } },
+          },
         ],
       });
       expect(hexOf(wellAbove.projectRules[0]!.settings.topBar.color.custom)).toBe('#00ff00');
@@ -171,7 +179,7 @@ describe('toDomain', () => {
           id: '1',
           matchType: 'exact',
           pattern: 'x',
-          settings: { topBar: { color: { paletteId: null, custom: '#00ff00' } } },
+          settings: { topBar: { color: { paletteId: null, custom: storedSolid('#00ff00') } } },
         },
       ],
     };
@@ -233,7 +241,7 @@ describe('toDomain', () => {
           id: 'rule-1',
           matchType: 'exact',
           pattern: 'my-app',
-          settings: { topBar: { color: { custom: '#00ff00' } } },
+          settings: { topBar: { color: { custom: storedSolid('#00ff00') } } },
         },
         { id: 'rule-2', matchType: 'prefix', pattern: 'other-app', settings: { platformBar: { stripes: true } } },
       ],
@@ -439,7 +447,7 @@ describe('toDomain', () => {
       });
 
       it('keeps a valid entries array as-is', () => {
-        const customEntries = [{ id: 'custom', name: 'Custom', color: '#123123' }];
+        const customEntries = [{ id: 'custom', name: 'Custom', color: storedSolid('#123123') }];
         expect(loadWithSettings({ palette: { entries: customEntries } }).palette.entries).toEqual([
           PaletteEntry.recreate(PaletteEntryId.recreate('custom'), 'Custom', color('#123123')),
         ]);
@@ -457,7 +465,7 @@ describe('toDomain', () => {
       // positions in the array.
       it('drops non-record entries elements (null, string, number, array) while valid siblings survive', () => {
         const entries = loadWithSettings({
-          palette: { entries: [null, 'x', 42, [], { id: 'valid', name: 'Valid', color: '#123456' }] },
+          palette: { entries: [null, 'x', 42, [], { id: 'valid', name: 'Valid', color: storedSolid('#123456') }] },
         }).palette.entries;
 
         expect(entries).toEqual([PaletteEntry.recreate(PaletteEntryId.recreate('valid'), 'Valid', color('#123456'))]);
@@ -496,7 +504,7 @@ describe('toDomain', () => {
       });
 
       it('merges a partial color selection, keeping the default for the field not provided', () => {
-        expect(loadWithSettings({ topBar: { color: { custom: '#123456' } } }).topBar.color).toEqual(
+        expect(loadWithSettings({ topBar: { color: { custom: storedSolid('#123456') } } }).topBar.color).toEqual(
           new ColorSelection(DEFAULTS.topBar.color.paletteId, color('#123456')),
         );
       });
@@ -567,7 +575,7 @@ describe('toDomain', () => {
     // a field the old shape lacked relies on (see migrations.test.ts's synthetic-chain tests).
     it('never lets an explicit undefined field clobber its default (Zod .catch treats it like a missing key)', () => {
       const settings = loadWithSettings({
-        topBar: { enabled: undefined, height: 30, color: { paletteId: undefined, custom: '#fedcba' } },
+        topBar: { enabled: undefined, height: 30, color: { paletteId: undefined, custom: storedSolid('#fedcba') } },
       });
 
       expect(settings.topBar).toEqual({
@@ -618,7 +626,7 @@ describe('toDomain', () => {
         expect(loadWithSettings({ topBar: { enabled: false } }).topBar.height.toPixels()).toBe(DEFAULT_TOP_BAR_HEIGHT);
       });
 
-      it('recovers a string field to its default when the stored value is the wrong type', () => {
+      it('recovers a fill field to its default when the stored value is the wrong type', () => {
         expect(hexOf(loadWithSettings({ topBar: { color: { custom: 42 } } }).topBar.color.custom)).toBe(
           hexOf(DEFAULTS.topBar.color.custom),
         );
@@ -628,19 +636,19 @@ describe('toDomain', () => {
       // verbatim (CSS would silently ignore it); it now recovers to the default like any other
       // invalid value, and valid uppercase hex is normalized to lowercase.
       it('recovers an invalid (non-#rrggbb) color string to its default and normalizes uppercase hex', () => {
-        expect(hexOf(loadWithSettings({ topBar: { color: { custom: 'banana' } } }).topBar.color.custom)).toBe(
-          hexOf(DEFAULTS.topBar.color.custom),
-        );
+        expect(
+          hexOf(loadWithSettings({ topBar: { color: { custom: storedSolid('banana') } } }).topBar.color.custom),
+        ).toBe(hexOf(DEFAULTS.topBar.color.custom));
         expect(
           hexOf(
             loadWithSettings({
-              palette: { entries: [{ id: 'e1', name: 'X', color: 'banana' }] },
+              palette: { entries: [{ id: 'e1', name: 'X', color: storedSolid('banana') }] },
             }).palette.entries[0]!.color,
           ),
         ).toBe(DEFAULT_COLOR);
-        expect(hexOf(loadWithSettings({ topBar: { color: { custom: '#ABCDEF' } } }).topBar.color.custom)).toBe(
-          '#abcdef',
-        );
+        expect(
+          hexOf(loadWithSettings({ topBar: { color: { custom: storedSolid('#ABCDEF') } } }).topBar.color.custom),
+        ).toBe('#abcdef');
       });
 
       it('recovers a nested color.paletteId to its default when the stored value is the wrong type', () => {
@@ -657,7 +665,7 @@ describe('toDomain', () => {
             stripes: 1, // wrong type (number) -> default false
             color: {
               paletteId: 42, // wrong type (number) -> default 'default'
-              custom: '#123456', // valid -> survives
+              custom: storedSolid('#123456'), // valid -> survives
             },
           },
         });
@@ -693,7 +701,7 @@ describe('gradient fills', () => {
       .settings;
 
     expect(storedSettings.palette!.entries).toEqual([
-      { id: 'default', name: 'Primary', color: DEFAULT_COLOR },
+      { id: 'default', name: 'Primary', color: storedSolid(DEFAULT_COLOR) },
       { id: 'sunset', name: 'Sunset', color: storedStops(['#ff6d00', 0], ['#e91e63', 30], ['#3f51b5', 100]) },
     ]);
     expect(storedSettings.topBar!.color).toEqual({
@@ -719,7 +727,10 @@ describe('gradient fills', () => {
     ['a single stop', storedStops(['#123456', 0])],
     [
       'nine stops',
-      { stops: Array.from({ length: 9 }, (_, i) => ({ color: '#111111', position: i === 8 ? 100 : i * 10 })) },
+      {
+        type: 'gradient',
+        stops: Array.from({ length: 9 }, (_, i) => ({ color: '#111111', position: i === 8 ? 100 : i * 10 })),
+      },
     ],
     ['a bad color', storedStops(['#123456', 0], ['banana', 100])],
     ['a bad color among three', storedStops(['#111111', 0], ['banana', 50], ['#333333', 100])],
@@ -728,12 +739,35 @@ describe('gradient fills', () => {
     ['two stops at one position', storedStops(['#111111', 0], ['#222222', 50], ['#333333', 50], ['#444444', 100])],
     ['a first stop off the left end', storedStops(['#111111', 5], ['#222222', 100])],
     ['a last stop off the right end', storedStops(['#111111', 0], ['#222222', 95])],
-    ['a stop without a position', { stops: [{ color: '#111111', position: 0 }, { color: '#222222' }] }],
-    // The unreleased shape of development builds.
+    [
+      'a stop without a position',
+      { type: 'gradient', stops: [{ color: '#111111', position: 0 }, { color: '#222222' }] },
+    ],
+    // An early unreleased shape of development builds.
     ['the bare-colors shape', { stops: ['#123456', '#abcdef'] }],
-    ['a non-array stops', { stops: '#123456' }],
-    ['a non-object stop', { stops: [{ color: '#123456', position: 0 }, 1] }],
-    ['an object without stops', {}],
+    ['bare colors as stops under the tag', { type: 'gradient', stops: ['#123456', '#abcdef'] }],
+    ['a non-array stops', { type: 'gradient', stops: '#123456' }],
+    ['a non-object stop', { type: 'gradient', stops: [{ color: '#123456', position: 0 }, 1] }],
+    ['a gradient without stops', { type: 'gradient' }],
+    ['a solid with a bad color', storedSolid('banana')],
+    ['a solid without a color', { type: 'solid' }],
+    ['a solid with a numeric color', storedSolid(0x123456)],
+    // Untagged fills: 0.4.x's bare strings reach the reader only under a stamp the 0.5.0 step
+    // skipped (unreleased development builds), and so does the untagged { stops } object.
+    ['a bare color string', '#123456'],
+    [
+      'an untagged { stops } object',
+      {
+        stops: [
+          { color: '#123456', position: 0 },
+          { color: '#abcdef', position: 100 },
+        ],
+      },
+    ],
+    ['an unknown type', { type: 'pattern', color: '#123456' }],
+    ['a missing type', { color: '#123456' }],
+    ['a non-string type', { type: 1, color: '#123456' }],
+    ['an empty object', {}],
   ])('recovers %s to the fallback color', (_label, value) => {
     const settings = load({
       palette: { entries: [{ id: 'e1', name: 'X', color: value }] },
@@ -743,6 +777,60 @@ describe('gradient fills', () => {
     expect(hexOf(settings.palette.entries[0]!.color)).toBe(DEFAULT_COLOR);
     expect(hexOf(settings.topBar.color.custom)).toBe(DEFAULT_COLOR);
     expect(hexOf(settings.platformBar.color.custom)).toBe(DEFAULT_COLOR);
+  });
+
+  // Each kind of fill in every slot that takes one: a kind toStored writes but the reader drops
+  // would come back as the fallback color, not as itself.
+  it.each([
+    ['solid', color('#009688'), color('#e91e63'), color('#3f51b5')],
+    [
+      'gradient',
+      gradient('#009688', '#123456'),
+      at(['#e91e63', 0], ['#00ff00', 40], ['#3f51b5', 100]),
+      gradient('#000000', '#ffffff'),
+    ],
+  ])('reads back a %s fill in every fill slot as itself', (_kind, entryFill, topBarFill, platformBarFill) => {
+    const entryId = PaletteEntryId.recreate('e1');
+    const settings = projectSettings({
+      palette: DEFAULTS.palette.addEntry(PaletteEntry.recreate(entryId, 'Fill', entryFill)),
+      topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, topBarFill)),
+      platformBar: DEFAULTS.platformBar.changeColor(new ColorSelection(entryId, platformBarFill)),
+    });
+    const tint = new TintSettings([ProjectRule.recreate(ProjectRuleId.recreate('1'), 'exact', 'a', settings)], 'dark');
+
+    expect(toDomain(toStored(tint, CURRENT_SCHEMA_VERSION))).toEqual(tint);
+  });
+
+  // The 0.5.0 migration step wraps v0.4.1's '#rrggbb' strings, so they read as the solid colors they
+  // were, while the same strings under a 0.5.0 stamp are junk (see above).
+  it("reads v0.4.1's bare color strings as solid fills", () => {
+    const loaded = toDomain({
+      schemaVersion: '0.4.1',
+      theme: 'dark',
+      projectRules: [
+        {
+          id: '1',
+          matchType: 'exact',
+          pattern: 'a',
+          settings: {
+            palette: { enabled: true, entries: [{ id: 'e1', name: 'Teal', color: '#009688' }] },
+            topBar: { enabled: true, color: { paletteId: null, custom: '#e91e63' }, height: 4, stripes: false },
+            platformBar: { enabled: true, color: { paletteId: 'e1', custom: '#3f51b5' }, stripes: false },
+            platformBarText: { enabled: true, color: { paletteId: null, custom: '#123456' }, auto: false },
+          },
+        },
+      ],
+    });
+
+    const entryId = PaletteEntryId.recreate('e1');
+    expect(loaded.projectRules[0]!.settings).toEqual(
+      projectSettings({
+        palette: new Palette(true, [PaletteEntry.recreate(entryId, 'Teal', color('#009688'))]),
+        topBar: DEFAULTS.topBar.changeColor(new ColorSelection(undefined, color('#e91e63'))),
+        platformBar: DEFAULTS.platformBar.changeColor(new ColorSelection(entryId, color('#3f51b5'))),
+        platformBarText: DEFAULTS.platformBarText.changeColor(new ColorSelection(undefined, color('#123456'))),
+      }),
+    );
   });
 
   it('recovers a gradient in the text color to its default color', () => {

@@ -18,7 +18,7 @@ function setManifestVersion(version: string): void {
   (fakeBrowser.runtime as { getManifest: () => { version: string } }).getManifest = () => ({ version });
 }
 
-// The second rule's top bar carries a gradient, so the file round-trips a { stops } fill too.
+// The second rule's top bar carries a gradient, so the file round-trips a { type: 'gradient' } fill too.
 function sampleSettings(): TintSettings {
   const gradient = Gradient.fromStops([
     { color: Color.fromHex('#ff6d00')!, position: 0 },

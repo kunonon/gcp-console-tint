@@ -19,11 +19,16 @@ function compareVersions(a, b) {
 // until package.json catches up with a schema bump the stamp is the schema version.
 export const EFFECTIVE_VERSION = compareVersions(VERSION, SCHEMA_VERSION) < 0 ? SCHEMA_VERSION : VERSION;
 
+// Stored fills, as palette entries and the bars' custom colors hold them. The platform bar text's
+// custom color stays a plain '#rrggbb' string.
+export const solid = (color) => ({ type: 'solid', color });
+export const gradient = (stops) => ({ type: 'gradient', stops });
+
 export function projectSettings(overrides = {}) {
   return {
     palette: { enabled: false, entries: [] },
-    topBar: { enabled: false, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false },
-    platformBar: { enabled: false, color: { paletteId: null, custom: '#234567' }, stripes: false },
+    topBar: { enabled: false, color: { paletteId: null, custom: solid('#123456') }, height: 4, stripes: false },
+    platformBar: { enabled: false, color: { paletteId: null, custom: solid('#234567') }, stripes: false },
     platformBarText: { enabled: false, color: { paletteId: null, custom: '#345678' }, auto: false },
     ...overrides,
   };

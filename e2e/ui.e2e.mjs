@@ -3,7 +3,7 @@ import { readdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { Key } from 'webdriverio';
-import { projectSettings, rule, SCHEMA_VERSION, settings, THEME_HINT_KEY } from './fixtures.mjs';
+import { projectSettings, rule, SCHEMA_VERSION, settings, solid, THEME_HINT_KEY } from './fixtures.mjs';
 import { browserTargets, createHarness } from './harness.mjs';
 
 const MATCH_LABELS = { prefix: 'Starts with', suffix: 'Ends with', exact: 'Exact', regex: 'Regex' };
@@ -403,10 +403,12 @@ const modeOption = (group, name) =>
   `//*[@role="dialog"]//*[@role="radiogroup" and @aria-label="${group}"]//*[@role="radio" and normalize-space(.)="${name}"]`;
 
 // A stored gradient from [hex, position] pairs.
-const stopsOf = (...stops) => ({ stops: stops.map(([color, position]) => ({ color, position })) });
+const stopsOf = (...stops) => ({ type: 'gradient', stops: stops.map(([color, position]) => ({ color, position })) });
 // A stored gradient of these colours spread evenly from 0 to 100, as whole percents.
 const evenStops = (...colors) =>
   stopsOf(...colors.map((color, index) => [color, Math.round((index * 100) / (colors.length - 1))]));
+// A stored fill's '#rrggbb' if it is a solid, else undefined.
+const solidHex = (fill) => (fill?.type === 'solid' ? fill.color : undefined);
 
 // The computed opacity of each rule row's selection checkbox, in row order.
 async function ruleSelectOpacities(browser) {
@@ -445,14 +447,14 @@ function pickerSettings() {
         palette: {
           enabled: true,
           entries: [
-            { id: 'paper', name: 'Paper', color: '#ffffff' },
-            { id: 'ink', name: 'Ink', color: '#000000' },
-            { id: 'red', name: 'Red', color: '#ff0000' },
-            { id: 'blue', name: 'Blue', color: '#1a73e8' },
+            { id: 'paper', name: 'Paper', color: solid('#ffffff') },
+            { id: 'ink', name: 'Ink', color: solid('#000000') },
+            { id: 'red', name: 'Red', color: solid('#ff0000') },
+            { id: 'blue', name: 'Blue', color: solid('#1a73e8') },
           ],
         },
-        topBar: { enabled: true, color: { paletteId: 'red', custom: '#123456' }, height: 4, stripes: false },
-        platformBar: { enabled: true, color: { paletteId: null, custom: '#234567' }, stripes: false },
+        topBar: { enabled: true, color: { paletteId: 'red', custom: solid('#123456') }, height: 4, stripes: false },
+        platformBar: { enabled: true, color: { paletteId: null, custom: solid('#234567') }, stripes: false },
         platformBarText: { enabled: true, color: { paletteId: 'red', custom: '#345678' }, auto: false },
       }),
     ),
@@ -780,10 +782,10 @@ for (const browserName of browserTargets()) {
 
     test('reorders rules from the grip and ignores a drag that starts on the rule text', async () => {
       const exactSettings = projectSettings({
-        topBar: { enabled: true, color: { paletteId: null, custom: '#cc0000' }, height: 4, stripes: false },
+        topBar: { enabled: true, color: { paletteId: null, custom: solid('#cc0000') }, height: 4, stripes: false },
       });
       const prefixSettings = projectSettings({
-        topBar: { enabled: true, color: { paletteId: null, custom: '#00cc00' }, height: 4, stripes: false },
+        topBar: { enabled: true, color: { paletteId: null, custom: solid('#00cc00') }, height: 4, stripes: false },
       });
       await h.seedSettings(
         settings(
@@ -978,14 +980,19 @@ for (const browserName of browserTargets()) {
     test('edits a rule-scoped palette, surface colors, auto text, stripes, and bounded height', async () => {
       const otherPalette = {
         enabled: true,
-        entries: [{ id: 'other-color', name: 'Other', color: '#abcdef' }],
+        entries: [{ id: 'other-color', name: 'Other', color: solid('#abcdef') }],
       };
       const otherSettings = projectSettings({
         palette: otherPalette,
-        topBar: { enabled: true, color: { paletteId: 'other-color', custom: '#abcdef' }, height: 8, stripes: false },
+        topBar: {
+          enabled: true,
+          color: { paletteId: 'other-color', custom: solid('#abcdef') },
+          height: 8,
+          stripes: false,
+        },
       });
       const initialSettings = projectSettings({
-        topBar: { enabled: false, color: { paletteId: null, custom: '#123456' }, height: 7, stripes: false },
+        topBar: { enabled: false, color: { paletteId: null, custom: solid('#123456') }, height: 7, stripes: false },
       });
       await h.seedSettings(
         settings(
@@ -1005,7 +1012,10 @@ for (const browserName of browserTargets()) {
       await waitStored(h, (value) => value.projectRules?.[0]?.settings.palette.entries[0]?.name === 'Brand');
       await click(browser, 'button[aria-label="Brand color"]');
       await typeHex(browser, 'Hex', '#cc3366');
-      await waitStored(h, (value) => value.projectRules?.[0]?.settings.palette.entries[0]?.color === '#cc3366');
+      await waitStored(
+        h,
+        (value) => solidHex(value.projectRules?.[0]?.settings.palette.entries[0]?.color) === '#cc3366',
+      );
       await browser.keys('Escape');
       await browser.waitUntil(() => dialogIsClosed(browser), {
         timeout: 5000,
@@ -1235,8 +1245,8 @@ for (const browserName of browserTargets()) {
           `${surface} palette reference should clear`,
         );
       }
-      assert.equal(removed.projectRules[0].settings.topBar.color.custom, '#123456');
-      assert.equal(removed.projectRules[0].settings.platformBar.color.custom, '#234567');
+      assert.deepEqual(removed.projectRules[0].settings.topBar.color.custom, solid('#123456'));
+      assert.deepEqual(removed.projectRules[0].settings.platformBar.color.custom, solid('#234567'));
       assert.equal(removed.projectRules[0].settings.platformBarText.color.custom, '#223344');
       assert.equal(removed.projectRules[1].settings.palette.entries[0].name, 'Other');
       await h.reloadPanel();
@@ -1461,7 +1471,7 @@ for (const browserName of browserTargets()) {
     });
 
     test('keeps a leaving tab panel and a closing section mounted and inert until their exit has finished', async () => {
-      const topBar = { enabled: true, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false };
+      const topBar = { enabled: true, color: { paletteId: null, custom: solid('#123456') }, height: 4, stripes: false };
       await h.seedSettings(settings(rule('first', 'project-a', 'exact', projectSettings({ topBar }))));
       const browser = await panel(h);
       // A leaving node outlives the change that removed it only while its transitions run (style.css,
@@ -1545,8 +1555,13 @@ for (const browserName of browserTargets()) {
             'project-a',
             'exact',
             projectSettings({
-              palette: { enabled: true, entries: [{ id: 'red', name: 'Red', color: '#d50000' }] },
-              topBar: { enabled: true, color: { paletteId: 'red', custom: '#d50000' }, height: 4, stripes: false },
+              palette: { enabled: true, entries: [{ id: 'red', name: 'Red', color: solid('#d50000') }] },
+              topBar: {
+                enabled: true,
+                color: { paletteId: 'red', custom: solid('#d50000') },
+                height: 4,
+                stripes: false,
+              },
             }),
           ),
         ),
@@ -1816,7 +1831,7 @@ for (const browserName of browserTargets()) {
       const afterFace = await settled(browser, readColorPopover, 'the face thumb');
       const faceColor = await chipColor(browser, 'Red color');
       assert.notEqual(faceColor, '#ff0000', "the trigger's bead should follow a drag on the face");
-      await waitStored(h, (value) => redEntry(value)?.color === faceColor);
+      await waitStored(h, (value) => solidHex(redEntry(value)?.color) === faceColor);
       const [faceRed, faceGreen, faceBlue] = hexChannels(faceColor);
       assert.ok(
         faceGreen === faceBlue && faceRed > faceGreen && faceRed < 255,
@@ -1838,7 +1853,7 @@ for (const browserName of browserTargets()) {
       await dragThrough(browser, [start, { x: start.x + 45, y: start.y }, { x: opened.strip.left + 100, y: start.y }]);
       const afterHue = await settled(browser, readColorPopover, 'the hue thumb');
       const hueColor = await chipColor(browser, 'Red color');
-      await waitStored(h, (value) => redEntry(value)?.color === hueColor);
+      await waitStored(h, (value) => solidHex(redEntry(value)?.color) === hueColor);
       const [, hueGreen, hueBlue] = hexChannels(hueColor);
       assert.ok(
         hueColor !== faceColor && hueGreen !== hueBlue,
@@ -1852,7 +1867,7 @@ for (const browserName of browserTargets()) {
       assertWellCss(await browser.execute(readWellCss), 'after a drag on the hue thumb');
 
       await typeHex(browser, 'Hex', '#336699');
-      await waitStored(h, (value) => redEntry(value)?.color === '#336699');
+      await waitStored(h, (value) => solidHex(redEntry(value)?.color) === '#336699');
       const afterHex = await settled(browser, readColorPopover, 'the thumbs after a typed hex');
       assert.notDeepEqual(afterHex.faceThumb, afterHue.faceThumb, 'the face thumb should follow a typed hex');
       assert.equal(await chipColor(browser, 'Red color'), '#336699', "the trigger's bead should follow a typed hex");
@@ -1865,7 +1880,7 @@ for (const browserName of browserTargets()) {
       const browser = await panel(h);
       await openDetail(browser);
       const redColor = (value) =>
-        value.projectRules?.[0]?.settings.palette.entries.find((entry) => entry.id === 'red')?.color;
+        solidHex(value.projectRules?.[0]?.settings.palette.entries.find((entry) => entry.id === 'red')?.color);
       const closed = (label) =>
         browser.waitUntil(() => dialogIsClosed(browser), { timeout: 5000, timeoutMsg: `${label}: still open` });
       // Storage is written through an asynchronous chain, so "nothing was written" is a value that
@@ -2062,22 +2077,22 @@ for (const browserName of browserTargets()) {
       // Solid keeps the colour being edited, Stop 1's, and Gradient brings back the gradient that
       // Solid left. Solid gives the two rows' height to a taller face, so neither moves the box.
       await pressMode('Solid');
-      saved = await waitStored(h, (value) => typeof color(value)?.custom === 'string');
-      assert.equal(color(saved).custom, '#123456', "Solid should keep the picked stop's colour");
+      saved = await waitStored(h, (value) => color(value)?.custom.type === 'solid');
+      assert.deepEqual(color(saved).custom, solid('#123456'), "Solid should keep the picked stop's colour");
       assert.deepEqual(await where('pressing Solid'), opened, 'Solid should not move the popover or its switch');
       await pressMode('Gradient');
-      saved = await waitStored(h, (value) => typeof color(value)?.custom === 'object');
+      saved = await waitStored(h, (value) => color(value)?.custom.type === 'gradient');
       assert.deepEqual(color(saved).custom, kept, 'Gradient should bring back the gradient Solid left');
       assert.deepEqual(await where('pressing Gradient'), opened, 'Gradient should not move the popover or its switch');
 
       // The picker keeps the gradient Solid left, not the popover's content, so it outlives a close.
       await pressMode('Solid');
-      await waitStored(h, (value) => typeof color(value)?.custom === 'string');
+      await waitStored(h, (value) => color(value)?.custom.type === 'solid');
       await waitForPopoverClosed(browser);
       await click(browser, 'button[aria-label="Top bar color"]');
       await dialog(browser);
       await pressMode('Gradient');
-      saved = await waitStored(h, (value) => typeof color(value)?.custom === 'object');
+      saved = await waitStored(h, (value) => color(value)?.custom.type === 'gradient');
       assert.deepEqual(color(saved).custom, kept, 'Gradient should bring the gradient back after a reopen');
     });
 
@@ -2089,9 +2104,14 @@ for (const browserName of browserTargets()) {
             'project-a',
             'exact',
             projectSettings({
-              palette: { enabled: true, entries: [{ id: 'brand', name: 'Brand', color: '#cc3366' }] },
-              topBar: { enabled: true, color: { paletteId: null, custom: '#123456' }, height: 4, stripes: false },
-              platformBar: { enabled: true, color: { paletteId: 'brand', custom: '#234567' }, stripes: false },
+              palette: { enabled: true, entries: [{ id: 'brand', name: 'Brand', color: solid('#cc3366') }] },
+              topBar: {
+                enabled: true,
+                color: { paletteId: null, custom: solid('#123456') },
+                height: 4,
+                stripes: false,
+              },
+              platformBar: { enabled: true, color: { paletteId: 'brand', custom: solid('#234567') }, stripes: false },
               platformBarText: { enabled: true, color: { paletteId: 'brand', custom: '#345678' }, auto: false },
             }),
           ),
@@ -2124,8 +2144,12 @@ for (const browserName of browserTargets()) {
       assert.equal(await browser.$('button[aria-label="Top bar color"]').getText(), 'Gradient');
       // Solid keeps the colour on screen: the stop being edited.
       await click(browser, modeOption('Custom color type', 'Solid'));
-      saved = await waitStored(h, (value) => typeof surface(value, 'topBar')?.color.custom === 'string');
-      assert.equal(surface(saved, 'topBar').color.custom, '#1a73e8', 'Solid should keep the edited stop’s colour');
+      saved = await waitStored(h, (value) => surface(value, 'topBar')?.color.custom.type === 'solid');
+      assert.deepEqual(
+        surface(saved, 'topBar').color.custom,
+        solid('#1a73e8'),
+        'Solid should keep the edited stop’s colour',
+      );
       await click(browser, '[role="dialog"] button[aria-label="Brand"]');
       await waitStored(h, (value) => surface(value, 'topBar')?.color.paletteId === 'brand');
       await waitForPopoverClosed(browser);
@@ -2291,7 +2315,7 @@ for (const browserName of browserTargets()) {
             const opened = await settled(browser, readColorPopover, `${label} at ${height}px`);
             for (const name of ['Gradient', 'Solid']) {
               await pressInPlace(browser, await browser.$(modeOption(group, name)));
-              await waitStored(h, (value) => (typeof fill(value) === 'object') === (name === 'Gradient'));
+              await waitStored(h, (value) => fill(value)?.type === name.toLowerCase());
               const now = await settled(browser, readColorPopover, `${label} at ${height}px after ${name}`);
               assert.deepEqual(
                 box(now),
@@ -2332,7 +2356,7 @@ for (const browserName of browserTargets()) {
         const box = ({ popover, placement, mode, scrollTop }) => ({ popover, placement, mode, scrollTop });
         for (const name of ['Solid', 'Gradient']) {
           await pressInPlace(browser, await browser.$(modeOption('Custom color type', name)));
-          await waitStored(h, (value) => (typeof topBarFill(value)?.custom === 'string') === (name === 'Solid'));
+          await waitStored(h, (value) => topBarFill(value)?.custom.type === name.toLowerCase());
           const after = await settled(browser, readColorPopover, `the scrolled Top bar popover after ${name}`);
           assert.deepEqual(
             box(after),
@@ -2600,12 +2624,12 @@ for (const browserName of browserTargets()) {
           'same',
           'exact',
           projectSettings({
-            // Gradients in an entry and in a kept custom fill travel through the file as { stops },
-            // each stop with its colour and position.
+            // Gradients in an entry and in a kept custom fill travel through the file as
+            // { type: 'gradient', stops }, each stop with its colour and position.
             palette: {
               enabled: true,
               entries: [
-                { id: 'brand', name: 'Brand', color: '#cc3366' },
+                { id: 'brand', name: 'Brand', color: solid('#cc3366') },
                 {
                   id: 'sunrise',
                   name: 'Sunrise',
@@ -2621,7 +2645,7 @@ for (const browserName of browserTargets()) {
             },
             platformBar: {
               enabled: true,
-              color: { paletteId: 'sunrise', custom: '#234567' },
+              color: { paletteId: 'sunrise', custom: solid('#234567') },
               stripes: true,
             },
             platformBarText: { enabled: true, color: { paletteId: null, custom: '#345678' }, auto: true },
@@ -2725,7 +2749,7 @@ for (const browserName of browserTargets()) {
         'same',
         'exact',
         projectSettings({
-          topBar: { enabled: true, color: { paletteId: null, custom: '#aabbcc' }, height: 4, stripes: false },
+          topBar: { enabled: true, color: { paletteId: null, custom: solid('#aabbcc') }, height: 4, stripes: false },
         }),
       );
       const laterReplacement = rule(
@@ -2733,7 +2757,7 @@ for (const browserName of browserTargets()) {
         'same',
         'exact',
         projectSettings({
-          topBar: { enabled: true, color: { paletteId: null, custom: '#ddeeff' }, height: 9, stripes: true },
+          topBar: { enabled: true, color: { paletteId: null, custom: solid('#ddeeff') }, height: 9, stripes: true },
         }),
       );
       const incoming = settings(
@@ -2795,10 +2819,10 @@ for (const browserName of browserTargets()) {
         ['same', 'tail', 'same', 'new'],
       );
       assert.equal(imported.projectRules[0].id, 'keep');
-      assert.equal(imported.projectRules[0].settings.topBar.color.custom, '#aabbcc');
+      assert.deepEqual(imported.projectRules[0].settings.topBar.color.custom, solid('#aabbcc'));
       assert.equal(imported.projectRules[0].settings.topBar.height, 4);
       assert.equal(imported.projectRules[2].matchType, 'exact');
-      assert.equal(imported.projectRules[2].settings.topBar.color.custom, '#ddeeff');
+      assert.deepEqual(imported.projectRules[2].settings.topBar.color.custom, solid('#ddeeff'));
       assert.equal(imported.projectRules[2].settings.topBar.height, 9);
       assert.equal(imported.projectRules[2].settings.topBar.stripes, true);
       assert.notEqual(imported.projectRules[2].id, 'file-duplicate-id');
@@ -2817,8 +2841,8 @@ for (const browserName of browserTargets()) {
           'same',
           'exact',
           projectSettings({
-            topBar: { enabled: true, color: { paletteId: null, custom: '#aabbcc' }, height: 4, stripes: false },
-            platformBar: { enabled: true, color: { paletteId: null, custom: '#123456' }, stripes: true },
+            topBar: { enabled: true, color: { paletteId: null, custom: solid('#aabbcc') }, height: 4, stripes: false },
+            platformBar: { enabled: true, color: { paletteId: null, custom: solid('#123456') }, stripes: true },
           }),
         ),
         rule(
@@ -2826,7 +2850,7 @@ for (const browserName of browserTargets()) {
           'same',
           'exact',
           projectSettings({
-            topBar: { enabled: true, color: { paletteId: null, custom: '#ddeeff' }, height: 9, stripes: true },
+            topBar: { enabled: true, color: { paletteId: null, custom: solid('#ddeeff') }, height: 9, stripes: true },
             platformBarText: { enabled: true, color: { paletteId: null, custom: '#345678' }, auto: false },
           }),
         ),
@@ -2837,8 +2861,8 @@ for (const browserName of browserTargets()) {
           'same',
           'exact',
           projectSettings({
-            topBar: { enabled: true, color: { paletteId: null, custom: '#112233' }, height: 17, stripes: true },
-            platformBar: { enabled: true, color: { paletteId: null, custom: '#445566' }, stripes: false },
+            topBar: { enabled: true, color: { paletteId: null, custom: solid('#112233') }, height: 17, stripes: true },
+            platformBar: { enabled: true, color: { paletteId: null, custom: solid('#445566') }, stripes: false },
           }),
         ),
         rule(
@@ -2846,7 +2870,7 @@ for (const browserName of browserTargets()) {
           'same',
           'exact',
           projectSettings({
-            topBar: { enabled: true, color: { paletteId: null, custom: '#778899' }, height: 23, stripes: false },
+            topBar: { enabled: true, color: { paletteId: null, custom: solid('#778899') }, height: 23, stripes: false },
             platformBarText: { enabled: true, color: { paletteId: null, custom: '#abcdef' }, auto: false },
           }),
         ),
@@ -2875,8 +2899,8 @@ for (const browserName of browserTargets()) {
       const seeded = await waitStored(
         h,
         (value) =>
-          value.projectRules?.[0]?.settings.topBar.color.custom === '#112233' &&
-          value.projectRules[1].settings.topBar.color.custom === '#778899',
+          solidHex(value.projectRules?.[0]?.settings.topBar.color.custom) === '#112233' &&
+          solidHex(value.projectRules[1].settings.topBar.color.custom) === '#778899',
       );
       assert.deepEqual(seeded, changed);
       await selectTab(browser, 'Settings');
@@ -2896,9 +2920,9 @@ for (const browserName of browserTargets()) {
       const matchesBackup = (value) =>
         value.projectRules?.length === 2 &&
         value.projectRules[0].id === 'restore-first' &&
-        value.projectRules[0].settings.topBar.color.custom === '#aabbcc' &&
+        solidHex(value.projectRules[0].settings.topBar.color.custom) === '#aabbcc' &&
         value.projectRules[1].id === 'restore-second' &&
-        value.projectRules[1].settings.topBar.color.custom === '#ddeeff';
+        solidHex(value.projectRules[1].settings.topBar.color.custom) === '#ddeeff';
       const restored = await waitStored(h, matchesBackup);
       assert.deepEqual(restored, backup);
 
@@ -2946,7 +2970,7 @@ for (const browserName of browserTargets()) {
                 projectSettings({
                   topBar: {
                     enabled: false,
-                    color: { paletteId: null, custom: 'not-a-color' },
+                    color: { paletteId: null, custom: solid('not-a-color') },
                     height: 4,
                     stripes: false,
                   },
@@ -2955,7 +2979,7 @@ for (const browserName of browserTargets()) {
             ),
           ),
           message: /invalid-fields\.json has missing or invalid fields\./,
-          detail: /projectRules\[0\]\.settings\.topBar\.color\.custom: expected a color/,
+          detail: /projectRules\[0\]\.settings\.topBar\.color\.custom\.color: expected a color/,
         },
         {
           name: 'no-rules.json',

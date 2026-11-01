@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import contentScript from '../content';
 
-// A stored fill: a '#rrggbb' string or a gradient's { stops } object.
-type StoredFill = string | { stops: { color: string; position: number }[] };
+// A stored fill: { type: 'solid', color } or { type: 'gradient', stops }.
+type StoredFill = { type: 'solid'; color: string } | { type: 'gradient'; stops: { color: string; position: number }[] };
+
+const solid = (color: string): StoredFill => ({ type: 'solid', color });
 
 interface PaletteEntry {
   id: string;
@@ -332,7 +334,7 @@ describe('content script', () => {
 
   it('applies the Top bar stripe gradient when topBarStripes is enabled', async () => {
     await fakeBrowser.storage.local.set(
-      tintSettingsWithRule({ topBar: { stripes: true, color: { paletteId: null, custom: '#ffff00' } } }),
+      tintSettingsWithRule({ topBar: { stripes: true, color: { paletteId: null, custom: solid('#ffff00') } } }),
     );
     setTestProjectLocation();
 
@@ -357,7 +359,7 @@ describe('content script', () => {
 
   it('applies the Platform Bar stripe gradient to the CSS rule when platformBarStripes is enabled', async () => {
     await fakeBrowser.storage.local.set(
-      tintSettingsWithRule({ platformBar: { stripes: true, color: { paletteId: null, custom: '#000080' } } }),
+      tintSettingsWithRule({ platformBar: { stripes: true, color: { paletteId: null, custom: solid('#000080') } } }),
     );
     setTestProjectLocation();
 
@@ -378,8 +380,8 @@ describe('content script', () => {
   ])('aligns bright and dark stripe phases for mixed colors', async ({ topBarColor, platformBarColor }) => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        topBar: { stripes: true, color: { paletteId: null, custom: topBarColor } },
-        platformBar: { stripes: true, color: { paletteId: null, custom: platformBarColor } },
+        topBar: { stripes: true, color: { paletteId: null, custom: solid(topBarColor) } },
+        platformBar: { stripes: true, color: { paletteId: null, custom: solid(platformBarColor) } },
       }),
     );
     setTestProjectLocation();
@@ -413,7 +415,7 @@ describe('content script', () => {
   it('follows the resolved palette color for stripe tinting on both Top bar and Platform Bar', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        palette: { entries: [{ id: 'default', name: 'Primary', color: '#ffff00' }] },
+        palette: { entries: [{ id: 'default', name: 'Primary', color: solid('#ffff00') }] },
         topBar: { color: { paletteId: 'default' }, stripes: true },
         platformBar: { color: { paletteId: 'default' }, stripes: true },
       }),
@@ -432,9 +434,9 @@ describe('content script', () => {
   it('applies settings already stored before load, including palette reference resolution', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        palette: { entries: [{ id: 'default', name: 'Primary', color: '#123456' }] },
+        palette: { entries: [{ id: 'default', name: 'Primary', color: solid('#123456') }] },
         topBar: { color: { paletteId: 'default' } },
-        platformBar: { color: { paletteId: null, custom: '#000000' } },
+        platformBar: { color: { paletteId: null, custom: solid('#000000') } },
         platformBarText: { color: { paletteId: null, custom: '#abcdef' } },
       }),
     );
@@ -456,8 +458,8 @@ describe('content script', () => {
   it('resolves to the palette entry color when paletteId references an existing entry', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        palette: { entries: [{ id: 'default', name: 'Primary', color: '#111111' }] },
-        topBar: { color: { paletteId: 'default', custom: '#999999' } },
+        palette: { entries: [{ id: 'default', name: 'Primary', color: solid('#111111') }] },
+        topBar: { color: { paletteId: 'default', custom: solid('#999999') } },
       }),
     );
     setTestProjectLocation();
@@ -473,7 +475,7 @@ describe('content script', () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
         palette: { entries: [] },
-        topBar: { color: { paletteId: 'missing-id', custom: '#222222' } },
+        topBar: { color: { paletteId: 'missing-id', custom: solid('#222222') } },
       }),
     );
     setTestProjectLocation();
@@ -488,8 +490,8 @@ describe('content script', () => {
   it('falls back to the item own color when paletteEnabled is false, even with a valid reference', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        palette: { enabled: false, entries: [{ id: 'default', name: 'Primary', color: '#111111' }] },
-        topBar: { color: { paletteId: 'default', custom: '#333333' } },
+        palette: { enabled: false, entries: [{ id: 'default', name: 'Primary', color: solid('#111111') }] },
+        topBar: { color: { paletteId: 'default', custom: solid('#333333') } },
       }),
     );
     setTestProjectLocation();
@@ -558,8 +560,8 @@ describe('content script', () => {
 
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        palette: { entries: [{ id: 'default', name: 'Primary', color: '#ff6d00' }] },
-        topBar: { color: { paletteId: null, custom: '#00ff00' } },
+        palette: { entries: [{ id: 'default', name: 'Primary', color: solid('#ff6d00') }] },
+        topBar: { color: { paletteId: null, custom: solid('#00ff00') } },
       }),
     );
     await flush();
@@ -571,7 +573,7 @@ describe('content script', () => {
   it('computes an auto text color with sufficient contrast against a dark Platform Bar background', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        platformBar: { color: { paletteId: null, custom: '#000080' } },
+        platformBar: { color: { paletteId: null, custom: solid('#000080') } },
         platformBarText: { auto: true },
       }),
     );
@@ -587,7 +589,7 @@ describe('content script', () => {
   it('computes an auto text color with sufficient contrast against a bright Platform Bar background', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        platformBar: { color: { paletteId: null, custom: '#ffff00' } },
+        platformBar: { color: { paletteId: null, custom: solid('#ffff00') } },
         platformBarText: { auto: true },
       }),
     );
@@ -603,7 +605,7 @@ describe('content script', () => {
   it('auto text color follows the Platform Bar background resolved via a palette reference', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        palette: { entries: [{ id: 'default', name: 'Primary', color: '#000080' }] },
+        palette: { entries: [{ id: 'default', name: 'Primary', color: solid('#000080') }] },
         platformBar: { color: { paletteId: 'default' } },
         platformBarText: { auto: true },
       }),
@@ -620,7 +622,7 @@ describe('content script', () => {
   it('auto text color takes priority over a stored platformBarTextColor/paletteId', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        platformBar: { color: { custom: '#ffff00' } },
+        platformBar: { color: { custom: solid('#ffff00') } },
         platformBarText: { auto: true, color: { paletteId: null, custom: '#ff00ff' } },
       }),
     );
@@ -637,7 +639,7 @@ describe('content script', () => {
   it('computes the auto text color from platformBarColor even when platformBarEnabled is false (documented residual behavior)', async () => {
     await fakeBrowser.storage.local.set(
       tintSettingsWithRule({
-        platformBar: { enabled: false, color: { paletteId: null, custom: '#000080' } },
+        platformBar: { enabled: false, color: { paletteId: null, custom: solid('#000080') } },
         platformBarText: { auto: true },
       }),
     );
@@ -678,9 +680,10 @@ describe('content script', () => {
     expect(styleEl.textContent).toBe('');
   });
 
-  // SCHEMA_MIN_VERSION data goes through the 0.3.0 step, which only adds the theme; the rules
-  // are already in the current nested shape and apply unchanged.
-  it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION (data already in the current nested shape)', async () => {
+  // SCHEMA_MIN_VERSION data goes through the 0.3.0 step, which adds the theme, and the 0.5.0 step,
+  // which wraps the plain '#rrggbb' custom as { type: 'solid', color }; the rules are otherwise
+  // already in the current nested shape and apply.
+  it('applies stored data whose schemaVersion equals SCHEMA_MIN_VERSION (nested shape, plain-string fills)', async () => {
     await fakeBrowser.storage.local.set(
       tintSettings({
         schemaVersion: '0.1.0',
@@ -689,7 +692,10 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: TEST_PROJECT_PATTERN,
-            settings: { topBar: { color: { paletteId: null, custom: '#334455' } } },
+            // A 0.4.x fill: the plain string the 0.5.0 step wraps.
+            settings: {
+              topBar: { color: { paletteId: null, custom: '#334455' } },
+            } as unknown as ProjectSettingsOverrides,
           },
         ],
       }),
@@ -703,8 +709,8 @@ describe('content script', () => {
     expect(hexOrRgb('#334455')).toContain(bar.style.backgroundColor);
   });
 
-  // Pre-release: no SCHEMA_MIGRATIONS step reshapes rules (the 0.3.0 step only adds the theme).
-  // Old flat-shaped settings (the pre-nested-schema shape) stored at schemaVersion 0.1.0 are read
+  // Pre-release: no SCHEMA_MIGRATIONS step reshapes flat settings (the 0.3.0 step only adds the
+  // theme, the 0.5.0 step only wraps the nested fills). Old flat-shaped settings (the pre-nested-schema shape) stored at schemaVersion 0.1.0 are read
   // destructively -- none of the old flat keys match the Zod schemas' expected nested shape, so
   // every surface falls back to its default rather than picking up the stored custom color.
   it('ignores old flat-shaped settings at schemaVersion 0.1.0 since no migration reshapes them; the default color applies instead', async () => {
@@ -742,7 +748,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: TEST_PROJECT_PATTERN,
-            settings: { topBar: { color: { paletteId: null, custom: '#334455' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#334455') } } },
           },
         ],
       }),
@@ -791,7 +797,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
         ],
       }),
@@ -813,13 +819,13 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
           {
             id: '2',
             matchType: 'regex',
             pattern: 'project',
-            settings: { topBar: { color: { paletteId: null, custom: '#333333' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#333333') } } },
           },
         ],
       }),
@@ -842,7 +848,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
         ],
       }),
@@ -865,7 +871,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
         ],
       }),
@@ -888,7 +894,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
         ],
       }),
@@ -916,7 +922,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
         ],
       }),
@@ -944,7 +950,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
         ],
       }),
@@ -974,8 +980,8 @@ describe('content script', () => {
             matchType: 'regex',
             pattern: '^project-a$',
             settings: {
-              palette: { entries: [{ id: 'p', name: 'A Palette', color: '#aaaaaa' }] },
-              topBar: { color: { paletteId: 'p', custom: '#cccccc' } },
+              palette: { entries: [{ id: 'p', name: 'A Palette', color: solid('#aaaaaa') }] },
+              topBar: { color: { paletteId: 'p', custom: solid('#cccccc') } },
             },
           },
           {
@@ -983,8 +989,8 @@ describe('content script', () => {
             matchType: 'regex',
             pattern: '^project-b$',
             settings: {
-              palette: { entries: [{ id: 'p', name: 'B Palette', color: '#bbbbbb' }] },
-              topBar: { color: { paletteId: 'p', custom: '#dddddd' } },
+              palette: { entries: [{ id: 'p', name: 'B Palette', color: solid('#bbbbbb') }] },
+              topBar: { color: { paletteId: 'p', custom: solid('#dddddd') } },
             },
           },
         ],
@@ -1013,7 +1019,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'exact',
             pattern: 'test-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#654321' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#654321') } } },
           },
         ],
       }),
@@ -1034,7 +1040,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'exact',
             pattern: 'test-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#654321' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#654321') } } },
           },
         ],
       }),
@@ -1071,7 +1077,7 @@ describe('content script', () => {
             id: '1',
             matchType: 'regex',
             pattern: 'my-project',
-            settings: { topBar: { color: { paletteId: null, custom: '#222222' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#222222') } } },
           },
         ],
       }),
@@ -1093,7 +1099,7 @@ describe('content script', () => {
   describe('storage.onChanged defensive branches', () => {
     it('ignores changes reported for a storage area other than "local"', async () => {
       await fakeBrowser.storage.local.set(
-        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
       );
       setTestProjectLocation();
 
@@ -1104,7 +1110,7 @@ describe('content script', () => {
 
       // A change in `sync` storage must not trigger a re-apply of `local`'s tintSettings.
       await fakeBrowser.storage.sync.set(
-        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#999999' } } }),
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#999999') } } }),
       );
       await flush();
 
@@ -1113,7 +1119,7 @@ describe('content script', () => {
 
     it('ignores changes to unrelated keys in local storage', async () => {
       await fakeBrowser.storage.local.set(
-        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
       );
       setTestProjectLocation();
 
@@ -1130,7 +1136,7 @@ describe('content script', () => {
 
     it('does not reapply (keeps the last applied state) when the tintSettings key is removed from storage', async () => {
       await fakeBrowser.storage.local.set(
-        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
       );
       setTestProjectLocation();
 
@@ -1154,7 +1160,7 @@ describe('content script', () => {
       expect(window.matchMedia).toBeUndefined();
 
       await fakeBrowser.storage.local.set(
-        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
       );
       setTestProjectLocation();
 
@@ -1168,7 +1174,7 @@ describe('content script', () => {
 
     it('applies the color and height transitions to the bar element when motion is not reduced', async () => {
       await fakeBrowser.storage.local.set(
-        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
       );
       setTestProjectLocation();
 
@@ -1181,7 +1187,7 @@ describe('content script', () => {
 
     it('adds transition declarations to the generated Platform Bar and text CSS rules', async () => {
       await fakeBrowser.storage.local.set(
-        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
+        tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
       );
       setTestProjectLocation();
 
@@ -1202,7 +1208,7 @@ describe('content script', () => {
         vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
 
         await fakeBrowser.storage.local.set(
-          tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: '#111111' } } }),
+          tintSettingsWithRule({ topBar: { color: { paletteId: null, custom: solid('#111111') } } }),
         );
         setTestProjectLocation();
 
@@ -1309,8 +1315,8 @@ describe('content script', () => {
 async function switchFromOrangeToBlue() {
   document.body.innerHTML = '<div id="ocb-platform-bar"></div>';
   const bars = (color: string) => ({
-    topBar: { color: { paletteId: null, custom: color } },
-    platformBar: { color: { paletteId: null, custom: color } },
+    topBar: { color: { paletteId: null, custom: solid(color) } },
+    platformBar: { color: { paletteId: null, custom: solid(color) } },
   });
   await fakeBrowser.storage.local.set(
     tintSettings({
@@ -1327,7 +1333,8 @@ async function switchFromOrangeToBlue() {
 }
 
 describe('gradient fills', () => {
-  const SUNSET = {
+  const SUNSET: StoredFill = {
+    type: 'gradient',
     stops: [
       { color: '#ff6d00', position: 0 },
       { color: '#1a73e8', position: 100 },
@@ -1415,7 +1422,7 @@ describe('gradient fills', () => {
             id: 's',
             matchType: 'exact',
             pattern: 'navy',
-            settings: { topBar: { color: { paletteId: null, custom: '#000080' } } },
+            settings: { topBar: { color: { paletteId: null, custom: solid('#000080') } } },
           },
         ],
       }),
@@ -1438,7 +1445,10 @@ describe('gradient fills', () => {
   ])('picks Auto text $text for the worst stop of $stops', async ({ stops, text }) => {
     const { styleEl } = await apply({
       platformBar: {
-        color: { paletteId: null, custom: { stops: stops.map((color, i) => ({ color, position: i * 100 })) } },
+        color: {
+          paletteId: null,
+          custom: { type: 'gradient', stops: stops.map((color, i) => ({ color, position: i * 100 })) },
+        },
       },
       platformBarText: { auto: true },
     });
