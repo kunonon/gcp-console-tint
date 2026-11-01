@@ -100,6 +100,7 @@ const docTop = (element: HTMLElement) => element.getBoundingClientRect().top + w
 export const reorderDuration = (row: HTMLElement) => {
   const token = getComputedStyle(row).getPropertyValue('--motion-reorder').trim();
   const duration = Number.parseFloat(token) * (token.endsWith('ms') ? 1 : 1000);
+  // biome-ignore lint/complexity/useMathMinMax: no token parses to NaN, which Math.max would pass through
   return duration > 0 ? duration : 0;
 };
 
