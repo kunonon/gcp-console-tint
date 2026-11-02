@@ -682,7 +682,6 @@ export async function createHarness(browserName, { reducedMotion = false } = {})
             },
             unaffectedColor: computed('#unaffected-content')?.color ?? null,
             unaffectedButtonColor: computed('#navigate-project')?.color ?? null,
-            bodyText: document.body.innerText,
           };
         });
       },
