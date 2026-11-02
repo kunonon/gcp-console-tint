@@ -19,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    name: Lint, typecheck, test, build
+  checks:
+    name: Lint, typecheck, unit test, build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -70,41 +70,93 @@ jobs:
           - name: Build (Chrome + Firefox)
             run: pnpm build && pnpm build:firefox
 
-      # Separate Compose projects isolate the shared node_modules, .wxt, and .output volumes.
-      - parallel:
-          - name: Browser extension end-to-end (Chrome)
-            id: e2e_chrome
-            timeout-minutes: 30
-            run: |
-              pnpm_store_path=$(pnpm store path --silent)
-              docker compose --project-name e2e-chrome-${{ github.run_id }}-${{ github.run_attempt }} \
-                --profile e2e run --rm --build \
-                --volume "$(dirname "$pnpm_store_path"):/pnpm-store" \
-                -e pnpm_config_store_dir=/pnpm-store \
-                -e E2E_BROWSER=chrome \
-                -e E2E_CHROME_VERSION=154.0.8037.92 e2e
+  # Each browser and spec group runs on its own runner, alongside `checks` rather than after
+  # it: the container installs and builds on its own, so nothing here waits for that job.
+  # ui.e2e.mjs takes longer than every other spec file together (about 1.2x in Chrome and
+  # 1.9x in Firefox), so it gets a job of its own; `other` runs the remaining files,
+  # including any added later.
+  e2e:
+    name: E2E (${{ matrix.browser }}, ${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
+        suite: [ui, other]
+    env:
+      E2E_CHROME_VERSION: 154.0.8037.92
+      E2E_FIREFOX_VERSION: stable_157.0
+      GECKODRIVER_VERSION: 0.37.1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-          - name: Browser extension end-to-end (Firefox)
-            id: e2e_firefox
-            timeout-minutes: 30
-            run: |
-              pnpm_store_path=$(pnpm store path --silent)
-              docker compose --project-name e2e-firefox-${{ github.run_id }}-${{ github.run_attempt }} \
-                --profile e2e run --rm --build \
-                --volume "$(dirname "$pnpm_store_path"):/pnpm-store" \
-                -e pnpm_config_store_dir=/pnpm-store \
-                -e E2E_BROWSER=firefox \
-                -e E2E_FIREFOX_VERSION=stable_157.0 \
-                -e GECKODRIVER_VERSION=0.37.1 e2e
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Fills the host pnpm store on a cache miss; the container below installs from it.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Browser extension end-to-end
+        id: e2e
+        timeout-minutes: 30
+        run: |
+          if [ "${{ matrix.suite }}" = ui ]; then
+            specs=e2e/ui.e2e.mjs
+          else
+            specs=$(ls e2e/*.e2e.mjs | grep -vx e2e/ui.e2e.mjs | xargs)
+            # An empty E2E_SPECS would run every file, ui.e2e.mjs included.
+            [ -n "$specs" ] || { echo "::error::No spec files besides e2e/ui.e2e.mjs; drop the other suite."; exit 1; }
+          fi
+          echo "Spec files: $specs"
+          pnpm_store_path=$(pnpm store path --silent)
+          docker compose --profile e2e run --rm --build \
+            --volume "$(dirname "$pnpm_store_path"):/pnpm-store" \
+            -e pnpm_config_store_dir=/pnpm-store \
+            -e E2E_BROWSER=${{ matrix.browser }} \
+            -e E2E_SPECS="$specs" \
+            -e E2E_CHROME_VERSION="$E2E_CHROME_VERSION" \
+            -e E2E_FIREFOX_VERSION="$E2E_FIREFOX_VERSION" \
+            -e GECKODRIVER_VERSION="$GECKODRIVER_VERSION" e2e
 
       - name: Upload end-to-end diagnostics
-        if: always() && (steps.e2e_chrome.outcome == 'failure' || steps.e2e_firefox.outcome == 'failure')
+        if: always() && steps.e2e.outcome == 'failure'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-diagnostics-${{ github.run_id }}
+          name: e2e-diagnostics-${{ matrix.browser }}-${{ matrix.suite }}-${{ github.run_id }}
           path: |
             .e2e-artifacts/*/*/screenshots/**
             .e2e-artifacts/*/*/startup/**
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+
+  # The branch rulesets on develop and main require this check (by name) instead of each job
+  # above, so it must pass only when every one of them has. always() keeps it from being
+  # skipped (a skipped required check counts as passing) when a job it needs fails or the run
+  # is cancelled. Add any new job to both `needs` and the test below.
+  ci:
+    name: All CI jobs
+    needs: [checks, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI job to pass
+        env:
+          CHECKS: ${{ needs.checks.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          echo "checks: $CHECKS, e2e: $E2E"
+          if [ "$CHECKS" != success ] || [ "$E2E" != success ]; then
+            echo "::error::Not every CI job succeeded (checks: $CHECKS, e2e: $E2E)."
+            exit 1
+          fi

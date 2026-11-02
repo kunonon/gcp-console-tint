@@ -27,3 +27,14 @@ jobs:
             echo "::error::package.json is still ${version}, which is already released as v${version}. Merge a version bump PR into develop before releasing."
             exit 1
           fi
+          # A schema step's `to` is the first release that ships its shape (src/adapter/out/migrations.ts),
+          # so the release that carries a new CURRENT_SCHEMA_VERSION must be numbered at least that high.
+          schema="$(sed -n "s/^export const CURRENT_SCHEMA_VERSION = '\([0-9.]*\)';$/\1/p" src/adapter/out/migrations.ts)"
+          if [ -z "$schema" ]; then
+            echo "::error::Could not read CURRENT_SCHEMA_VERSION from src/adapter/out/migrations.ts."
+            exit 1
+          fi
+          if [ "$(printf '%s\n' "$schema" "$version" | sort -V | head -n 1)" != "$schema" ]; then
+            echo "::error::package.json is ${version}, below CURRENT_SCHEMA_VERSION ${schema}. Merge a version bump PR to at least ${schema} into develop before releasing."
+            exit 1
+          fi

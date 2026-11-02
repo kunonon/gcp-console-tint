@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
   "files": {
     "includes": [
       "**",
@@ -8,7 +8,8 @@
       "!**/.playwright-mcp",
       "!**/.e2e-artifacts",
       "!**/coverage",
-      "!**/.pnpm-store"
+      "!**/.pnpm-store",
+      "!**/pnpm-lock.yaml"
     ]
   },
   "formatter": {
@@ -30,6 +31,11 @@
       "trailingCommas": "all"
     }
   },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    }
+  },
   "linter": {
     "enabled": true,
     "domains": {
@@ -49,19 +55,12 @@
   },
   "overrides": [
     {
-      "includes": ["src/adapter/in/entrypoints/background.ts"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noExplicitAny": "off"
-          }
-        }
-      }
-    },
-    {
       "includes": ["**/*.test.ts", "**/*.test.tsx"],
       "linter": {
         "rules": {
+          "correctness": {
+            "noComponentHookFactories": "off"
+          },
           "style": {
             "noNonNullAssertion": "off"
           }

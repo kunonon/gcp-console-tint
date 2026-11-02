@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Color } from '../color';
 import { ColorSelection } from '../color-selection';
+import { type Fill, fillEquals, Gradient } from '../gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from '../palette';
 import type { MatchType } from '../project-rule';
 import { isMatchType, MATCH_TYPES, ProjectRule, ProjectRuleId } from '../project-rule';
@@ -17,6 +18,13 @@ const DEFAULTS = ProjectSettings.DEFAULT;
 
 // Every test color here is a real '#rrggbb' value: Color has no other way in.
 const color = (value: string): Color => Color.fromHex(value)!;
+// The colors spread evenly over the bar, ends at 0 and 100.
+const gradient = (...values: string[]): Gradient =>
+  Gradient.fromStops(
+    values.map((hex, i) => ({ color: color(hex), position: Math.round((i * 100) / (values.length - 1)) })),
+  )!;
+// A solid fill's hex; a gradient (or nothing) reads as undefined, so a solid assertion fails on it.
+const hexOf = (fill: Fill | undefined): string | undefined => (fill instanceof Color ? fill.toHex() : undefined);
 
 // Section-by-section builder for expected ProjectSettings values; sections not overridden come
 // from ProjectSettings.DEFAULT.
@@ -42,19 +50,101 @@ describe('Palette.resolve', () => {
   const custom = color('#999999');
 
   it('resolves to the palette entry color when enabled and paletteId references an existing entry', () => {
-    expect(palette.resolve(new ColorSelection(entryId, custom)).toHex()).toBe('#111111');
+    expect(hexOf(palette.resolve(new ColorSelection(entryId, custom)))).toBe('#111111');
   });
 
   it('falls back to custom when paletteId does not reference any entry (dangling reference)', () => {
-    expect(palette.resolve(new ColorSelection(PaletteEntryId.recreate('missing'), custom)).toHex()).toBe('#999999');
+    expect(hexOf(palette.resolve(new ColorSelection(PaletteEntryId.recreate('missing'), custom)))).toBe('#999999');
   });
 
   it('falls back to custom when paletteId is undefined', () => {
-    expect(palette.resolve(new ColorSelection(undefined, custom)).toHex()).toBe('#999999');
+    expect(hexOf(palette.resolve(new ColorSelection(undefined, custom)))).toBe('#999999');
   });
 
   it('falls back to custom when the palette is disabled, even with a valid paletteId reference', () => {
-    expect(palette.disable().resolve(new ColorSelection(entryId, custom)).toHex()).toBe('#999999');
+    expect(hexOf(palette.disable().resolve(new ColorSelection(entryId, custom)))).toBe('#999999');
+  });
+});
+
+describe('gradient fills', () => {
+  const solidId = PaletteEntryId.recreate('solid');
+  const gradientId = PaletteEntryId.recreate('sunset');
+  const sunset = gradient('#ff6d00', '#e91e63', '#3f51b5');
+  const palette = new Palette(true, [
+    PaletteEntry.recreate(solidId, 'Solid', color('#111111')),
+    PaletteEntry.recreate(gradientId, 'Sunset', sunset),
+  ]);
+  const custom = color('#999999');
+
+  it('resolve returns a gradient entry as is', () => {
+    expect(palette.resolve(new ColorSelection(gradientId, custom))).toBe(sunset);
+  });
+
+  it('resolve returns a gradient custom fill', () => {
+    const fill = gradient('#000000', '#ffffff');
+    expect(palette.resolve(new ColorSelection(undefined, fill))).toBe(fill);
+  });
+
+  describe('resolveSolid', () => {
+    it('returns a solid entry', () => {
+      expect(palette.resolveSolid(new ColorSelection(solidId, custom)).toHex()).toBe('#111111');
+    });
+
+    it('falls back to custom while the referenced entry is a gradient', () => {
+      expect(palette.resolveSolid(new ColorSelection(gradientId, custom)).toHex()).toBe('#999999');
+    });
+
+    it('falls back to custom for a disabled palette', () => {
+      expect(palette.disable().resolveSolid(new ColorSelection(solidId, custom)).toHex()).toBe('#999999');
+    });
+
+    it('falls back to custom for a dangling reference', () => {
+      expect(palette.resolveSolid(new ColorSelection(PaletteEntryId.recreate('missing'), custom)).toHex()).toBe(
+        '#999999',
+      );
+    });
+
+    it('follows the entry again once it is solid', () => {
+      const selection = new ColorSelection(gradientId, custom);
+      const solidAgain = palette.changeEntryColor(gradientId, color('#222222'));
+      expect(solidAgain.resolveSolid(selection).toHex()).toBe('#222222');
+    });
+  });
+
+  it('changeEntryColor turns a solid entry into a gradient', () => {
+    const changed = palette.changeEntryColor(solidId, sunset);
+    expect(changed.resolve(new ColorSelection(solidId, custom))).toBe(sunset);
+  });
+
+  it('setCustomColor takes a gradient and drops the palette reference', () => {
+    const selection = new ColorSelection<Fill>(solidId, custom).setCustomColor(sunset);
+    expect(selection.paletteId).toBeUndefined();
+    expect(selection.custom).toBe(sunset);
+  });
+
+  it('removePaletteEntry clears the references of all three surfaces to that entry', () => {
+    const settings = projectSettings({
+      palette,
+      topBar: DEFAULTS.topBar.changeColor(new ColorSelection(gradientId, sunset)),
+      platformBar: DEFAULTS.platformBar.changeColor(new ColorSelection(gradientId, custom)),
+      platformBarText: DEFAULTS.platformBarText.changeColor(new ColorSelection(gradientId, custom)),
+    });
+
+    const removed = settings.removePaletteEntry(gradientId);
+
+    expect(removed.palette.entries.map((entry) => entry.id.toString())).toEqual(['solid']);
+    expect(removed.topBar.color.paletteId).toBeUndefined();
+    expect(fillEquals(removed.topBar.color.custom, sunset)).toBe(true);
+    expect(removed.platformBar.color.paletteId).toBeUndefined();
+    expect(removed.platformBarText.color.paletteId).toBeUndefined();
+  });
+
+  it('keeps the default bars on the solid default entry', () => {
+    expect(DEFAULTS.topBar.color.paletteId?.toString()).toBe('default');
+    expect(hexOf(DEFAULTS.topBar.color.custom)).toBe('#ff6d00');
+    expect(hexOf(DEFAULTS.platformBar.color.custom)).toBe('#ff6d00');
+    expect(hexOf(DEFAULTS.palette.entries[0]?.color)).toBe('#ff6d00');
+    expect(DEFAULTS.platformBarText.color.custom.toHex()).toBe('#ffffff');
   });
 });
 
@@ -101,7 +191,9 @@ describe('TintSettings theme', () => {
     ['addRule', (settings) => settings.addRule(rule('3', 'added'))],
     ['removeRule', (settings) => settings.removeRule(ProjectRuleId.recreate('1'))],
     ['duplicateRule', (settings) => settings.duplicateRule(ProjectRuleId.recreate('1'))],
-    ['moveRule', (settings) => settings.moveRule(0, 1)],
+    ['duplicateRules', (settings) => settings.duplicateRules([ProjectRuleId.recreate('1')])],
+    ['removeRules', (settings) => settings.removeRules([ProjectRuleId.recreate('1')])],
+    ['moveRules', (settings) => settings.moveRules([0], 1)],
     ['updateRule', (settings) => settings.updateRule(ProjectRuleId.recreate('1'), (r) => r.changePattern('x'))],
     ['mergeRules', (settings) => settings.mergeRules([rule('3', 'merged')])],
   ])('%s keeps the theme', (_label, change) => {
@@ -111,6 +203,100 @@ describe('TintSettings theme', () => {
 
     expect(changed).not.toBe(original);
     expect(changed.theme).toBe('dark');
+  });
+});
+
+describe('TintSettings.moveRules', () => {
+  const rule = (id: string): ProjectRule => ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', id, DEFAULTS);
+  const ids = (settings: TintSettings) => settings.projectRules.map((r) => r.id.toString());
+  const original = new TintSettings(['a', 'b', 'c', 'd', 'e'].map(rule), 'dark');
+
+  it.each([
+    { name: 'moves a single rule down', from: [0], to: 2, expected: ['b', 'c', 'a', 'd', 'e'] },
+    { name: 'moves a single rule up', from: [3], to: 1, expected: ['a', 'd', 'b', 'c', 'e'] },
+    {
+      name: 'gathers non-contiguous rules into one block',
+      from: [0, 2, 4],
+      to: 1,
+      expected: ['b', 'a', 'c', 'e', 'd'],
+    },
+    {
+      name: 'keeps list order whatever order the indices come in',
+      from: [4, 1],
+      to: 0,
+      expected: ['b', 'e', 'a', 'c', 'd'],
+    },
+    { name: 'moves a block to the start', from: [2, 3], to: 0, expected: ['c', 'd', 'a', 'b', 'e'] },
+    { name: 'moves a block to the end', from: [0, 1], to: 3, expected: ['c', 'd', 'e', 'a', 'b'] },
+    { name: 'ignores indices outside the list', from: [-1, 1, 5, 9], to: 4, expected: ['a', 'c', 'd', 'e', 'b'] },
+  ])('$name', ({ from, to, expected }) => {
+    const moved = original.moveRules(from, to);
+
+    expect(ids(moved)).toEqual(expected);
+    expect(moved.theme).toBe('dark');
+    expect(ids(original)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it.each([
+    { name: 'no indices', from: [] },
+    { name: 'only indices outside the list', from: [-1, 5] },
+  ])('returns the same instance with $name', ({ from }) => {
+    expect(original.moveRules(from, 0)).toBe(original);
+  });
+});
+
+describe('TintSettings.duplicateRules', () => {
+  const rule = (id: string): ProjectRule => ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', id, DEFAULTS);
+  const patterns = (settings: TintSettings) => settings.projectRules.map((r) => r.pattern);
+  const original = new TintSettings(['a', 'b', 'c', 'd'].map(rule), 'dark');
+
+  it('puts a copy of every listed rule right after its original, in one change', () => {
+    const duplicated = original.duplicateRules([ProjectRuleId.recreate('c'), ProjectRuleId.recreate('a')]);
+
+    expect(patterns(duplicated)).toEqual(['a', 'a', 'b', 'c', 'c', 'd']);
+    expect(patterns(original)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('gives each copy a new id and keeps the originals as they are', () => {
+    const duplicated = original.duplicateRules([ProjectRuleId.recreate('b')]);
+    const [, b, copy] = duplicated.projectRules;
+
+    expect(b).toBe(original.projectRules[1]);
+    expect(copy?.id.equals(ProjectRuleId.recreate('b'))).toBe(false);
+    expect(copy?.matchType).toBe('exact');
+    expect(new Set(duplicated.projectRules.map((r) => r.id.toString())).size).toBe(5);
+  });
+
+  it('ignores ids that match no rule, and returns the same instance when none match', () => {
+    expect(patterns(original.duplicateRules([ProjectRuleId.recreate('x'), ProjectRuleId.recreate('d')]))).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'd',
+    ]);
+    expect(original.duplicateRules([ProjectRuleId.recreate('x')])).toBe(original);
+    expect(original.duplicateRules([])).toBe(original);
+  });
+});
+
+describe('TintSettings.removeRules', () => {
+  const rule = (id: string): ProjectRule => ProjectRule.recreate(ProjectRuleId.recreate(id), 'exact', id, DEFAULTS);
+  const ids = (settings: TintSettings) => settings.projectRules.map((r) => r.id.toString());
+  const original = new TintSettings(['a', 'b', 'c', 'd'].map(rule), 'dark');
+
+  it('removes every listed rule in one change, keeping the others in order', () => {
+    const removed = original.removeRules([ProjectRuleId.recreate('c'), ProjectRuleId.recreate('a')]);
+
+    expect(ids(removed)).toEqual(['b', 'd']);
+    expect(ids(original)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('ignores ids that match no rule', () => {
+    const removed = original.removeRules([ProjectRuleId.recreate('x'), ProjectRuleId.recreate('b')]);
+
+    expect(ids(removed)).toEqual(['a', 'c', 'd']);
+    expect(original.removeRules([ProjectRuleId.recreate('x')]).equals(original)).toBe(true);
   });
 });
 
@@ -232,7 +418,7 @@ describe('TintSettings.mergeRules', () => {
     const merged = original.mergeRules(incoming);
 
     expect(merged.projectRules).toHaveLength(2);
-    expect(merged.projectRules.map((r) => r.settings.topBar.color.custom.toHex())).toEqual(['#ff0000', '#0000ff']);
+    expect(merged.projectRules.map((r) => hexOf(r.settings.topBar.color.custom))).toEqual(['#ff0000', '#0000ff']);
     expect(merged.projectRules[0]!.id.equals(original.projectRules[0]!.id)).toBe(true);
     expect(merged.projectRules[1]!.id.equals(original.projectRules[1]!.id)).toBe(true);
   });
@@ -266,8 +452,8 @@ describe('TintSettings.mergeRules', () => {
 
     expect(merged.projectRules).toHaveLength(2);
     expect(merged.projectRules[0]!.id.equals(originalRule.id)).toBe(true);
-    expect(merged.projectRules[0]!.settings.topBar.color.custom.toHex()).toBe('#ff0000');
-    expect(merged.projectRules[1]!.settings.topBar.color.custom.toHex()).toBe('#0000ff');
+    expect(hexOf(merged.projectRules[0]!.settings.topBar.color.custom)).toBe('#ff0000');
+    expect(hexOf(merged.projectRules[1]!.settings.topBar.color.custom)).toBe('#0000ff');
     expect(merged.projectRules[1]!.id.equals(incoming[1]!.id)).toBe(false);
   });
 
@@ -286,7 +472,7 @@ describe('TintSettings.mergeRules', () => {
     expect(merged.projectRules).toHaveLength(3);
     expect(merged.projectRules[0]!.id.equals(originals[0]!.id)).toBe(true);
     expect(merged.projectRules[1]!.id.equals(originals[1]!.id)).toBe(true);
-    expect(merged.projectRules[2]!.settings.topBar.color.custom.toHex()).toBe('#00ff00');
+    expect(hexOf(merged.projectRules[2]!.settings.topBar.color.custom)).toBe('#00ff00');
     expect(merged.projectRules[2]!.id.equals(incoming[2]!.id)).toBe(false);
   });
 
@@ -310,7 +496,7 @@ describe('TintSettings.mergeRules', () => {
     const selectedSecondOnly = new TintSettings(originals, 'auto').replacementTargets([incoming[1]!]);
     expect(selectedSecondOnly).toEqual([0]);
     const selectedMerge = original.mergeRules([incoming[1]!]);
-    expect(selectedMerge.projectRules[0]!.settings.topBar.color.custom.toHex()).toBe('#0000ff');
+    expect(hexOf(selectedMerge.projectRules[0]!.settings.topBar.color.custom)).toBe('#0000ff');
     expect(selectedMerge.projectRules[0]!.id.equals(originals[0]!.id)).toBe(true);
     expect(selectedMerge.projectRules[1]!.id.equals(originals[1]!.id)).toBe(true);
   });
@@ -368,13 +554,13 @@ describe('TintSettings.resolveProjectSettings', () => {
   it('gives priority to the earlier rule when multiple rules of different matchTypes match the same projectId', () => {
     const settings = withRules(rule('first', 'exact', 'my-app', '#f11111'), rule('second', 'prefix', 'my', '#522222'));
 
-    expect(settings.resolveProjectSettings('my-app')?.topBar.color.custom.toHex()).toBe('#f11111');
+    expect(hexOf(settings.resolveProjectSettings('my-app')?.topBar.color.custom)).toBe('#f11111');
   });
 
   describe('matchType "prefix"', () => {
     it('matches when the projectId starts with the pattern', () => {
       const settings = withRules(rule('1', 'prefix', 'my-app', '#b0b0b0'));
-      expect(settings.resolveProjectSettings('my-app-prod')?.topBar.color.custom.toHex()).toBe('#b0b0b0');
+      expect(hexOf(settings.resolveProjectSettings('my-app-prod')?.topBar.color.custom)).toBe('#b0b0b0');
     });
 
     it('does not match when the projectId does not start with the pattern', () => {
@@ -384,7 +570,7 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('treats a pattern containing regex metacharacters as a literal string', () => {
       const openParen = withRules(rule('1', 'prefix', '(', '#b0b0b0'));
-      expect(openParen.resolveProjectSettings('(abc')?.topBar.color.custom.toHex()).toBe('#b0b0b0');
+      expect(hexOf(openParen.resolveProjectSettings('(abc')?.topBar.color.custom)).toBe('#b0b0b0');
 
       const dot = withRules(rule('1', 'prefix', 'a.c', '#b0b0b0'));
       expect(dot.resolveProjectSettings('abc')).toBeUndefined();
@@ -392,14 +578,14 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('treats an empty pattern as matching any projectId', () => {
       const settings = withRules(rule('1', 'prefix', '', '#b0b0b0'));
-      expect(settings.resolveProjectSettings('literally-anything')?.topBar.color.custom.toHex()).toBe('#b0b0b0');
+      expect(hexOf(settings.resolveProjectSettings('literally-anything')?.topBar.color.custom)).toBe('#b0b0b0');
     });
   });
 
   describe('matchType "suffix"', () => {
     it('matches when the projectId ends with the pattern', () => {
       const settings = withRules(rule('1', 'suffix', '-prod', '#5a5a5a'));
-      expect(settings.resolveProjectSettings('my-app-prod')?.topBar.color.custom.toHex()).toBe('#5a5a5a');
+      expect(hexOf(settings.resolveProjectSettings('my-app-prod')?.topBar.color.custom)).toBe('#5a5a5a');
     });
 
     it('does not match when the projectId does not end with the pattern', () => {
@@ -409,7 +595,7 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('treats a pattern containing regex metacharacters as a literal string', () => {
       const closeParen = withRules(rule('1', 'suffix', ')', '#5a5a5a'));
-      expect(closeParen.resolveProjectSettings('abc)')?.topBar.color.custom.toHex()).toBe('#5a5a5a');
+      expect(hexOf(closeParen.resolveProjectSettings('abc)')?.topBar.color.custom)).toBe('#5a5a5a');
 
       const dot = withRules(rule('1', 'suffix', 'a.c', '#5a5a5a'));
       expect(dot.resolveProjectSettings('abc')).toBeUndefined();
@@ -417,14 +603,14 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('treats an empty pattern as matching any projectId', () => {
       const settings = withRules(rule('1', 'suffix', '', '#5a5a5a'));
-      expect(settings.resolveProjectSettings('literally-anything')?.topBar.color.custom.toHex()).toBe('#5a5a5a');
+      expect(hexOf(settings.resolveProjectSettings('literally-anything')?.topBar.color.custom)).toBe('#5a5a5a');
     });
   });
 
   describe('matchType "exact"', () => {
     it('matches only when the projectId equals the pattern exactly', () => {
       const settings = withRules(rule('1', 'exact', 'my-app', '#e0e0e0'));
-      expect(settings.resolveProjectSettings('my-app')?.topBar.color.custom.toHex()).toBe('#e0e0e0');
+      expect(hexOf(settings.resolveProjectSettings('my-app')?.topBar.color.custom)).toBe('#e0e0e0');
     });
 
     it('does not match a projectId that merely contains the pattern as a substring', () => {
@@ -447,12 +633,12 @@ describe('TintSettings.resolveProjectSettings', () => {
 
     it('matches when the pattern itself covers the entire projectId (e.g. via a trailing .*)', () => {
       const settings = withRules(rule('1', 'regex', '^test-project.*', '#0e0e0e'));
-      expect(settings.resolveProjectSettings('test-project-123')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
+      expect(hexOf(settings.resolveProjectSettings('test-project-123')?.topBar.color.custom)).toBe('#0e0e0e');
     });
 
     it('continues to work for patterns already anchored with ^...$', () => {
       const settings = withRules(rule('1', 'regex', '^abc$', '#0e0e0e'));
-      expect(settings.resolveProjectSettings('abc')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
+      expect(hexOf(settings.resolveProjectSettings('abc')?.topBar.color.custom)).toBe('#0e0e0e');
       expect(settings.resolveProjectSettings('abcd')).toBeUndefined();
     });
 
@@ -461,15 +647,15 @@ describe('TintSettings.resolveProjectSettings', () => {
     // themselves (which would let e.g. "bbb" alone escape the leading `^`).
     it('keeps top-level alternation scoped inside the full-match wrapper', () => {
       const settings = withRules(rule('1', 'regex', 'aaa|bbb', '#0e0e0e'));
-      expect(settings.resolveProjectSettings('aaa')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
-      expect(settings.resolveProjectSettings('bbb')?.topBar.color.custom.toHex()).toBe('#0e0e0e');
+      expect(hexOf(settings.resolveProjectSettings('aaa')?.topBar.color.custom)).toBe('#0e0e0e');
+      expect(hexOf(settings.resolveProjectSettings('bbb')?.topBar.color.custom)).toBe('#0e0e0e');
       expect(settings.resolveProjectSettings('xaaa')).toBeUndefined();
     });
 
     it('skips a rule with an invalid regex pattern and evaluates the next rule', () => {
       const settings = withRules(rule('invalid', 'regex', '(', '#111111'), rule('valid', 'regex', 'my-app', '#222222'));
 
-      expect(settings.resolveProjectSettings('my-app')?.topBar.color.custom.toHex()).toBe('#222222');
+      expect(hexOf(settings.resolveProjectSettings('my-app')?.topBar.color.custom)).toBe('#222222');
     });
 
     it('returns undefined when every rule has an invalid regex pattern (no fallback project)', () => {

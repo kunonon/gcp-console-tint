@@ -1,8 +1,9 @@
-// Palette: a project's named color entries plus the enabled flag.
+// Palette: a project's named color entries (solid colors or gradients) plus the enabled flag.
 import { Entity } from './base/entity';
 import { ValueObject } from './base/value-object';
-import type { Color } from './color';
+import { Color } from './color';
 import type { ColorSelection } from './color-selection';
+import type { Fill } from './gradient';
 
 // Identity of a PaletteEntry. The raw string is private so this type stays nominally distinct
 // from other ids; only the boundaries (settings repository, React keys) read it via toString().
@@ -35,7 +36,7 @@ export class PaletteEntry extends Entity<PaletteEntry> {
   private constructor(
     readonly id: PaletteEntryId,
     readonly name: string,
-    readonly color: Color,
+    readonly color: Fill,
   ) {
     super();
   }
@@ -46,13 +47,13 @@ export class PaletteEntry extends Entity<PaletteEntry> {
   }
 
   // A brand-new entry under a fresh identity.
-  static create(name: string, color: Color): PaletteEntry {
+  static create(name: string, color: Fill): PaletteEntry {
     return new PaletteEntry(PaletteEntryId.create(), name, color);
   }
 
   // Rebuilds an entry under an existing identity: persisted entries (settings repository) and
   // the default entry with its literal id (ProjectSettings.DEFAULT).
-  static recreate(id: PaletteEntryId, name: string, color: Color): PaletteEntry {
+  static recreate(id: PaletteEntryId, name: string, color: Fill): PaletteEntry {
     return new PaletteEntry(id, name, color);
   }
 
@@ -60,7 +61,7 @@ export class PaletteEntry extends Entity<PaletteEntry> {
     return new PaletteEntry(this.id, name, this.color);
   }
 
-  changeColor(color: Color): PaletteEntry {
+  changeColor(color: Fill): PaletteEntry {
     return new PaletteEntry(this.id, this.name, color);
   }
 }
@@ -86,16 +87,19 @@ export class Palette extends ValueObject<Palette> {
     );
   }
 
-  // Resolves a surface's effective color: the referenced palette entry when the palette is
-  // enabled and the reference resolves, otherwise the surface's own custom color.
-  resolve(selection: ColorSelection): Color {
-    // Hoisted: TypeScript does not keep the property narrowing inside the find() callback.
-    const paletteId = selection.paletteId;
-    if (this.enabled && paletteId) {
-      const entry = this.entries.find((e) => e.id.equals(paletteId));
-      if (entry) return entry.color;
-    }
-    return selection.custom;
+  // Resolves a bar's effective fill: the referenced palette entry when the palette is enabled
+  // and the reference resolves, otherwise the bar's own custom fill.
+  resolve(selection: ColorSelection): Fill {
+    return this.referencedEntry(selection)?.color ?? selection.custom;
+  }
+
+  // Resolves the platform bar text's effective color, which must stay solid: the referenced
+  // entry counts only while it is a Color, otherwise the text's own custom color applies. The
+  // reference itself is kept, as for a disabled palette or a dangling id, so the text follows the
+  // entry again once it is solid.
+  resolveSolid(selection: ColorSelection<Color>): Color {
+    const color = this.referencedEntry(selection)?.color;
+    return color instanceof Color ? color : selection.custom;
   }
 
   enable(): Palette {
@@ -114,7 +118,7 @@ export class Palette extends ValueObject<Palette> {
     return this.mapEntries(id, (entry) => entry.rename(name));
   }
 
-  changeEntryColor(id: PaletteEntryId, color: Color): Palette {
+  changeEntryColor(id: PaletteEntryId, color: Fill): Palette {
     return this.mapEntries(id, (entry) => entry.changeColor(color));
   }
 
@@ -125,6 +129,13 @@ export class Palette extends ValueObject<Palette> {
       this.enabled,
       this.entries.filter((entry) => !entry.id.equals(id)),
     );
+  }
+
+  private referencedEntry(selection: ColorSelection): PaletteEntry | undefined {
+    // Hoisted: TypeScript does not keep the property narrowing inside the find() callback.
+    const paletteId = selection.paletteId;
+    if (!this.enabled || !paletteId) return undefined;
+    return this.entries.find((e) => e.id.equals(paletteId));
   }
 
   private mapEntries(id: PaletteEntryId, update: (entry: PaletteEntry) => PaletteEntry): Palette {

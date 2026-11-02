@@ -15,7 +15,9 @@ interface ColorEditorProps {
   /** Among alternatives (the surface pickers), whether this colour is the one in use: rings
    * the hex control. Leave undefined where there are no alternatives. */
   active?: boolean;
-  /** A press on the hex control while it is not the choice: pick this colour as it is. */
+  /** A primary press on the hex control, whether or not it is the choice: the caller decides
+   * whether that picks this colour as it is (a reference the palette no longer honours is dropped
+   * by a press on the control that already wears the ring). */
   onActivate?: () => void;
   /** Enter in the hex input while it shows the current value: the user is done. */
   onDone?: () => void;
@@ -104,7 +106,7 @@ export default function ColorEditor({ hexLabel, value, onChange, active, onActiv
           active ? 'ring-2 ring-focus ring-offset-2 ring-offset-overlay' : ''
         }`}
         onPointerDown={(e) => {
-          if (e.button === 0 && !active) onActivate?.();
+          if (e.button === 0) onActivate?.();
         }}
       >
         <span

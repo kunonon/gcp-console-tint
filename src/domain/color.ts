@@ -28,16 +28,19 @@ export class Color extends ValueObject<Color> {
     return this.hex === other.hex;
   }
 
+  // WCAG contrast ratio between this color and `other`: (lighter + offset) / (darker + offset),
+  // from 1 (identical luminance) to 21 (black on white). The offset keeps the ratio finite
+  // against pure black.
+  contrastRatio(other: Color): number {
+    const contrastOffset = 0.05;
+    const a = this.relativeLuminance();
+    const b = other.relativeLuminance();
+    return (Math.max(a, b) + contrastOffset) / (Math.min(a, b) + contrastOffset);
+  }
+
   // Picks black or white, whichever has the higher WCAG contrast ratio against this color.
   contrastingTextColor(): Color {
-    // WCAG contrast ratio: (lighter + offset) / (darker + offset); the offset keeps the ratio
-    // finite against pure black.
-    const contrastOffset = 0.05;
-    const candidateLuminance = { white: 1, black: 0 };
-    const luminance = this.relativeLuminance();
-    const contrastWithWhite = (candidateLuminance.white + contrastOffset) / (luminance + contrastOffset);
-    const contrastWithBlack = (luminance + contrastOffset) / (candidateLuminance.black + contrastOffset);
-    return contrastWithBlack >= contrastWithWhite ? Color.BLACK : Color.WHITE;
+    return this.contrastRatio(Color.BLACK) >= this.contrastRatio(Color.WHITE) ? Color.BLACK : Color.WHITE;
   }
 
   // WCAG relative luminance (0 = black, 1 = white).

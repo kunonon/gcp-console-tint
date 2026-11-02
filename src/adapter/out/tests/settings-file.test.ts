@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { Color } from '../../../domain/color';
 import { ColorSelection } from '../../../domain/color-selection';
+import { fillEquals, Gradient } from '../../../domain/gradient';
 import { ProjectRule, ProjectRuleId } from '../../../domain/project-rule';
 import { ProjectSettings } from '../../../domain/project-settings';
 import { TintSettings } from '../../../domain/tint-settings';
 import { SettingsImportError, type SettingsImportIssue } from '../../../port/settings-store';
 import { CURRENT_SCHEMA_VERSION, type SchemaMigration } from '../migrations';
-import { parseSettingsFile } from '../settings-file';
+import { parseSettingsFile, readSettingsValue } from '../settings-file';
 import { toStored } from '../settings-repository';
 
 // Runs `fn`, returning whatever it throws. Fails the test (via a plain thrown Error) if `fn`
@@ -211,14 +212,14 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
     ],
     [
       'a color name instead of a hex value',
-      (rule: RawRule) => (rule.settings.topBar.color.custom = 'red'),
-      'projectRules[0].settings.topBar.color.custom',
+      (rule: RawRule) => (rule.settings.topBar.color.custom = { type: 'solid', color: 'red' }),
+      'projectRules[0].settings.topBar.color.custom.color',
       'expected a color like #rrggbb',
     ],
     [
       'a truncated hex color on a palette entry',
-      (rule: RawRule) => (rule.settings.palette.entries[0].color = '#12345'),
-      'projectRules[0].settings.palette.entries[0].color',
+      (rule: RawRule) => (rule.settings.palette.entries[0].color = { type: 'solid', color: '#12345' }),
+      'projectRules[0].settings.palette.entries[0].color.color',
       'expected a color like #rrggbb',
     ],
     [
@@ -247,16 +248,16 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
     const text = fileWithRule((rule) => {
       rule.matchType = 'glob';
       rule.settings.topBar.height = 99;
-      rule.settings.topBar.color.custom = 'red';
-      rule.settings.palette.entries[0].color = 'nope';
+      rule.settings.topBar.color.custom = { type: 'solid', color: 'red' };
+      rule.settings.palette.entries[0].color = { type: 'solid', color: 'nope' };
       rule.settings.platformBarText.color.custom = '#12345';
     });
 
     expect(paths(thrownBy(() => parse(text))).sort()).toEqual([
       'projectRules[0].matchType',
-      'projectRules[0].settings.palette.entries[0].color',
+      'projectRules[0].settings.palette.entries[0].color.color',
       'projectRules[0].settings.platformBarText.color.custom',
-      'projectRules[0].settings.topBar.color.custom',
+      'projectRules[0].settings.topBar.color.custom.color',
       'projectRules[0].settings.topBar.height',
     ]);
   });
@@ -315,7 +316,7 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
 
     const topBar = parsed.projectRules[0]!.settings.topBar;
     expect(topBar.color.paletteId?.toString()).toBe('gone');
-    expect(parsed.projectRules[0]!.settings.palette.resolve(topBar.color).equals(topBar.color.custom)).toBe(true);
+    expect(fillEquals(parsed.projectRules[0]!.settings.palette.resolve(topBar.color), topBar.color.custom)).toBe(true);
   });
 
   it('accepts a null paletteId as "no palette reference"', () => {
@@ -335,8 +336,235 @@ describe('parseSettingsFile: value issues (structurally fine, but the domain ref
   });
 });
 
+describe('parseSettingsFile: gradient fills', () => {
+  const FILL_MESSAGE = "expected { type: 'solid', color } or { type: 'gradient', stops: [{ color, position }, ...] }";
+  const ENTRY = 'projectRules[0].settings.palette.entries[0].color';
+  const TOP_BAR = 'projectRules[0].settings.topBar.color.custom';
+  const PLATFORM_BAR = 'projectRules[0].settings.platformBar.color.custom';
+  const TEXT = 'projectRules[0].settings.platformBarText.color.custom';
+  const gradient = (...stops: [string, number][]) =>
+    Gradient.fromStops(stops.map(([hex, position]) => ({ color: Color.fromHex(hex)!, position })))!;
+  // A gradient in the file's shape.
+  const stored = (...stops: [unknown, unknown][]) => ({
+    type: 'gradient',
+    stops: stops.map(([color, position]) => ({ color, position })),
+  });
+
+  it('imports gradients in a palette entry and both bars', () => {
+    const parsed = parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = stored(['#ff6d00', 0], ['#e91e63', 30], ['#3f51b5', 100]);
+        rule.settings.topBar.color = { paletteId: null, custom: stored(['#FF6D00', 0], ['#1a73e8', 100]) };
+        // Eight stops, the most, some a percent apart.
+        rule.settings.platformBar.color.custom = stored(
+          ['#000000', 0],
+          ['#ffffff', 1],
+          ['#000000', 2],
+          ['#ffffff', 40],
+          ['#000000', 41],
+          ['#ffffff', 97],
+          ['#000000', 99],
+          ['#ffffff', 100],
+        );
+      }),
+    );
+
+    const settings = parsed.projectRules[0]!.settings;
+    expect(
+      fillEquals(settings.palette.entries[0]!.color, gradient(['#ff6d00', 0], ['#e91e63', 30], ['#3f51b5', 100])),
+    ).toBe(true);
+    expect(fillEquals(settings.topBar.color.custom, gradient(['#ff6d00', 0], ['#1a73e8', 100]))).toBe(true);
+    expect(settings.platformBar.color.custom).toBeInstanceOf(Gradient);
+    expect((settings.platformBar.color.custom as Gradient).stops.map((stop) => stop.position)).toEqual([
+      0, 1, 2, 40, 41, 97, 99, 100,
+    ]);
+  });
+
+  // Stage 1: a value that is not an object, or whose type is missing or unknown, is one issue with
+  // the fill message, at the fill's own path or at its `.type`. Inside a known type, each wrong
+  // field is reported at its own path in Zod's wording, every stop that is not an object included.
+  it.each([
+    ['a number', 5, [['', FILL_MESSAGE]]],
+    ['null', null, [['', FILL_MESSAGE]]],
+    // The shape files stamped below 0.5.0 hold; at 0.5.0 it is no longer a fill.
+    ['a bare color string', '#123456', [['', FILL_MESSAGE]]],
+    ['an untagged { stops } object', { stops: [{ color: '#123456', position: 0 }] }, [['.type', FILL_MESSAGE]]],
+    ['an unknown type', { type: 'pattern', color: '#123456' }, [['.type', FILL_MESSAGE]]],
+    ['a missing type', { color: '#123456' }, [['.type', FILL_MESSAGE]]],
+    ['an empty object', {}, [['.type', FILL_MESSAGE]]],
+    ['a solid without a color', { type: 'solid' }, [['.color', 'Invalid input: expected string, received undefined']]],
+    [
+      'a solid with a numeric color',
+      { type: 'solid', color: 0x123456 },
+      [['.color', 'Invalid input: expected string, received number']],
+    ],
+    [
+      'a gradient without stops',
+      { type: 'gradient' },
+      [['.stops', 'Invalid input: expected array, received undefined']],
+    ],
+    [
+      'a non-array stops',
+      { type: 'gradient', stops: 'x' },
+      [['.stops', 'Invalid input: expected array, received string']],
+    ],
+    [
+      'stops that are bare colors (an early unreleased shape)',
+      { type: 'gradient', stops: ['#000000', '#ffffff'] },
+      [
+        ['.stops[0]', 'Invalid input: expected object, received string'],
+        ['.stops[1]', 'Invalid input: expected object, received string'],
+      ],
+    ],
+    [
+      'a stop without a position',
+      { type: 'gradient', stops: [{ color: '#000000' }] },
+      [['.stops[0].position', 'Invalid input: expected number, received undefined']],
+    ],
+    [
+      'a stop with a non-string color',
+      { type: 'gradient', stops: [{ color: 1, position: 0 }] },
+      [['.stops[0].color', 'Invalid input: expected string, received number']],
+    ],
+    [
+      'a stop with a string position',
+      { type: 'gradient', stops: [{ color: '#000000', position: '0' }] },
+      [['.stops[0].position', 'Invalid input: expected number, received string']],
+    ],
+  ])('refuses %s as a fill at the entry and bar paths', (_label, value, expected) => {
+    const file = JSON.parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = value;
+        rule.settings.topBar.color.custom = value;
+        rule.settings.platformBar.color.custom = value;
+      }),
+    );
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual(
+      [ENTRY, TOP_BAR, PLATFORM_BAR].flatMap((path) =>
+        expected.map(([suffix, message]) => ({ path: `${path}${suffix}`, message })),
+      ),
+    );
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  it('refuses a missing bar custom with the fill message', () => {
+    const file = JSON.parse(fileWithRule((rule) => delete rule.settings.topBar.color.custom));
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([{ path: TOP_BAR, message: FILL_MESSAGE }]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  it('refuses a gradient in the text color, which stays a plain string', () => {
+    const file = JSON.parse(
+      fileWithRule((rule) => (rule.settings.platformBarText.color.custom = stored(['#000000', 0], ['#ffffff', 100]))),
+    );
+
+    const issues = issuesOf(thrownBy(() => parse(JSON.stringify(file))));
+
+    expect(issues).toEqual([{ path: TEXT, message: 'Invalid input: expected string, received object' }]);
+    expect(issues).toEqual(oracleIssues(file));
+  });
+
+  // Stage 2: every stop's color is judged by Color.fromHex, then the stops' shape by
+  // Gradient.stopsProblem, whose first problem is reported at the path it points to.
+  it('reports each bad color and then the first shape problem, in judgment order', () => {
+    const text = fileWithRule((rule) => {
+      rule.settings.palette.entries[0].color = stored(['#000000', 0], ['#111111', 50], ['red', 100]);
+      rule.settings.topBar.color.custom = stored(['#12345', 0]);
+      rule.settings.platformBar.color.custom = stored(['red', 0], ['#000000', 50]);
+    });
+
+    expect(issuesOf(thrownBy(() => parse(text)))).toEqual([
+      { path: `${ENTRY}.stops[2].color`, message: 'expected a color like #rrggbb' },
+      { path: `${TOP_BAR}.stops[0].color`, message: 'expected a color like #rrggbb' },
+      { path: `${TOP_BAR}.stops`, message: 'expected 2 to 8 stops' },
+      { path: `${PLATFORM_BAR}.stops[0].color`, message: 'expected a color like #rrggbb' },
+      { path: `${PLATFORM_BAR}.stops[1].position`, message: 'expected 100: the last stop sits at the right end' },
+    ]);
+  });
+
+  it.each([
+    ['no stops', stored(), '.stops', 'expected 2 to 8 stops'],
+    [
+      'nine stops',
+      stored(...Array.from({ length: 9 }, (_, i): [string, number] => ['#000000', i === 8 ? 100 : i])),
+      '.stops',
+      'expected 2 to 8 stops',
+    ],
+    [
+      'a fractional position',
+      stored(['#000000', 0], ['#111111', 49.5], ['#222222', 100]),
+      '.stops[1].position',
+      'expected a whole number from 0 to 100',
+    ],
+    [
+      'a position past the right end',
+      stored(['#000000', 0], ['#111111', 101], ['#222222', 100]),
+      '.stops[1].position',
+      'expected a whole number from 0 to 100',
+    ],
+    [
+      'a first stop off the left end',
+      stored(['#000000', 5], ['#111111', 100]),
+      '.stops[0].position',
+      'expected 0: the first stop sits at the left end',
+    ],
+    [
+      'a last stop off the right end',
+      stored(['#000000', 0], ['#111111', 50], ['#222222', 95]),
+      '.stops[2].position',
+      'expected 100: the last stop sits at the right end',
+    ],
+    [
+      'two stops at one position',
+      stored(['#000000', 0], ['#111111', 40], ['#222222', 40], ['#333333', 100]),
+      '.stops[2].position',
+      "expected more than the previous stop's position (40)",
+    ],
+    [
+      'a stop before the previous one',
+      stored(['#000000', 0], ['#111111', 60], ['#222222', 30], ['#333333', 100]),
+      '.stops[2].position',
+      "expected more than the previous stop's position (60)",
+    ],
+  ])('refuses %s at the path of the problem', (_label, value, suffix, message) => {
+    expect(
+      issuesOf(thrownBy(() => parse(fileWithRule((rule) => (rule.settings.topBar.color.custom = value))))),
+    ).toEqual([{ path: `${TOP_BAR}${suffix}`, message }]);
+  });
+
+  // The extension's own export writes this, so refusing it would break export-import round trips;
+  // the text falls back to its custom color while the entry is a gradient (Palette.resolveSolid).
+  it('imports a text reference to a gradient entry', () => {
+    const parsed = parse(
+      fileWithRule((rule) => {
+        rule.settings.palette.entries[0].color = stored(['#000000', 0], ['#ffffff', 100]);
+        rule.settings.platformBarText.color = { paletteId: 'default', custom: '#123456' };
+      }),
+    );
+
+    const settings = parsed.projectRules[0]!.settings;
+    expect(settings.platformBarText.color.paletteId?.toString()).toBe('default');
+    expect(settings.palette.resolveSolid(settings.platformBarText.color).toHex()).toBe('#123456');
+  });
+});
+
 describe('parseSettingsFile: versions and migrations', () => {
   const stamped = (schemaVersion: string): string => JSON.stringify({ ...validFile(), schemaVersion });
+  // validFile as 0.4.x and earlier wrote it: the entries' and the bars' fills are '#rrggbb' strings.
+  const legacyFile = (schemaVersion: string): string => {
+    const file = validFile();
+    const settings = (file.projectRules as RawRule[])[0].settings;
+    for (const entry of settings.palette.entries) entry.color = entry.color.color;
+    settings.topBar.color.custom = settings.topBar.color.custom.color;
+    settings.platformBar.color.custom = settings.platformBar.color.custom.color;
+    return JSON.stringify({ ...file, schemaVersion });
+  };
 
   it.each([
     ['an empty first component', '.1.0'],
@@ -350,8 +578,42 @@ describe('parseSettingsFile: versions and migrations', () => {
     });
   });
 
+  // Both stamps sort below 0.5.0, so the file holds 0.4.x's '#rrggbb' fills for the 0.5.0 step to wrap.
   it.each(['0.1', '0.1.0.0'])('keeps accepting numeric version stamps with this component count (%s)', (version) => {
-    expect(parseSettingsFile(stamped(version), CURRENT_SCHEMA_VERSION).projectRules).toHaveLength(1);
+    expect(parseSettingsFile(legacyFile(version), CURRENT_SCHEMA_VERSION).projectRules).toHaveLength(1);
+  });
+
+  // 0.1.x saved any finite height and painted it rounded; the 0.2.0 step reads it the same way.
+  it('imports a 0.1.x file with a fractional height as the rounded height', () => {
+    const file = JSON.parse(legacyFile('0.1.3'));
+    file.projectRules[0].settings.topBar.height = 2.5;
+
+    const settings = parseSettingsFile(JSON.stringify(file), CURRENT_SCHEMA_VERSION);
+
+    expect(settings.projectRules[0]!.settings.topBar.height.toPixels()).toBe(3);
+  });
+
+  // A step's own refusal keeps its paths: it is not wrapped as migration-failed.
+  it("reports every fill the 0.5.0 step cannot wrap in one invalid-fields refusal, in the step's words", () => {
+    const file = JSON.parse(legacyFile('0.4.1'));
+    file.projectRules[0].settings.topBar.color.custom = 42;
+    file.projectRules[0].settings.palette.entries[0].color = null;
+
+    expect(failureOf(thrownBy(() => parse(JSON.stringify(file))))).toEqual({
+      reason: 'invalid-fields',
+      issues: [
+        { path: 'projectRules[0].settings.palette.entries[0].color', message: 'expected a color like #rrggbb' },
+        { path: 'projectRules[0].settings.topBar.color.custom', message: 'expected a color like #rrggbb' },
+      ],
+    });
+  });
+
+  it('refuses a tagged fill under a pre-0.5.0 stamp, which no release wrote', () => {
+    expect(paths(thrownBy(() => parse(stamped('0.4.1'))))).toEqual([
+      'projectRules[0].settings.palette.entries[0].color',
+      'projectRules[0].settings.topBar.color.custom',
+      'projectRules[0].settings.platformBar.color.custom',
+    ]);
   });
 
   it('refuses a file stamped newer than what this build can have written (newer-version)', () => {
@@ -361,18 +623,9 @@ describe('parseSettingsFile: versions and migrations', () => {
     });
   });
 
-  // The real registry's 0.3.0 step adds theme 'auto' to files written before the theme existed.
-  it('imports a 0.2.1 file without theme, which the 0.3.0 migration step completes with auto', () => {
-    const { theme: _theme, ...file } = validFile();
-
-    expect(parseSettingsFile(JSON.stringify({ ...file, schemaVersion: '0.2.1' }), CURRENT_SCHEMA_VERSION).theme).toBe(
-      'auto',
-    );
-  });
-
   it('accepts a stamp equal to the current version, and one between the schema version and it', () => {
-    expect(parseSettingsFile(stamped('0.3.5'), '0.3.5').projectRules).toHaveLength(1);
-    expect(parseSettingsFile(stamped('0.3.2'), '0.3.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.5.5'), '0.5.5').projectRules).toHaveLength(1);
+    expect(parseSettingsFile(stamped('0.5.2'), '0.5.5').projectRules).toHaveLength(1);
   });
 
   // A fake shape change: 0.2.0 renames topBar.heightPx to topBar.height. Files written before it
@@ -426,7 +679,18 @@ describe('parseSettingsFile: versions and migrations', () => {
 // The order oracle for the structure stage: the whole-file schema the import used to run in one
 // call, restated here on purpose rather than imported, so the element-by-element walk is checked
 // against Zod's own issue order and wording, not against itself.
+// The bars and the palette entries take a fill ({ type: 'solid' } or { type: 'gradient' }); the text
+// keeps a string.
+const oracleFill = z.discriminatedUnion(
+  'type',
+  [
+    z.object({ type: z.literal('solid'), color: z.string() }),
+    z.object({ type: z.literal('gradient'), stops: z.array(z.object({ color: z.string(), position: z.number() })) }),
+  ],
+  { error: "expected { type: 'solid', color } or { type: 'gradient', stops: [{ color, position }, ...] }" },
+);
 const oracleSelection = z.object({ paletteId: z.string().nullable(), custom: z.string() });
+const oracleFillSelection = z.object({ paletteId: z.string().nullable(), custom: oracleFill });
 const oracleSchema = z.object({
   theme: z.string(),
   projectRules: z.array(
@@ -437,10 +701,15 @@ const oracleSchema = z.object({
       settings: z.object({
         palette: z.object({
           enabled: z.boolean(),
-          entries: z.array(z.object({ id: z.string(), name: z.string(), color: z.string() })),
+          entries: z.array(z.object({ id: z.string(), name: z.string(), color: oracleFill })),
         }),
-        topBar: z.object({ enabled: z.boolean(), color: oracleSelection, height: z.number(), stripes: z.boolean() }),
-        platformBar: z.object({ enabled: z.boolean(), color: oracleSelection, stripes: z.boolean() }),
+        topBar: z.object({
+          enabled: z.boolean(),
+          color: oracleFillSelection,
+          height: z.number(),
+          stripes: z.boolean(),
+        }),
+        platformBar: z.object({ enabled: z.boolean(), color: oracleFillSelection, stripes: z.boolean() }),
         platformBarText: z.object({ enabled: z.boolean(), color: oracleSelection, auto: z.boolean() }),
       }),
     }),
@@ -604,24 +873,24 @@ describe('parseSettingsFile: issue order across rules, independent of key order'
     const first = (file.projectRules as RawRule[])[0];
     const second = JSON.parse(JSON.stringify(first)) as RawRule;
     first.settings.topBar.height = 0;
-    first.settings.topBar.color.custom = 'red';
+    first.settings.topBar.color.custom = { type: 'solid', color: 'red' };
     first.settings.palette.entries.push({ ...first.settings.palette.entries[0] });
-    first.settings.palette.entries[0].color = 'nope';
+    first.settings.palette.entries[0].color = { type: 'solid', color: 'nope' };
     first.matchType = 'glob';
     first.somethingNew = true;
     second.id = 'rule-2';
     second.settings.platformBarText.color.custom = '#12345';
-    second.settings.platformBar.color.custom = 'blue';
+    second.settings.platformBar.color.custom = { type: 'solid', color: 'blue' };
     second.settings.topBar.somethingNew = true;
     (file.projectRules as RawRule[]).push(second);
 
     expect(issuesOf(thrownBy(() => parseMigrated(reverseKeys(file))))).toEqual([
       { path: 'projectRules[0].matchType', message: 'expected one of prefix, suffix, exact, regex' },
-      { path: 'projectRules[0].settings.palette.entries[0].color', message: 'expected a color like #rrggbb' },
+      { path: 'projectRules[0].settings.palette.entries[0].color.color', message: 'expected a color like #rrggbb' },
       { path: 'projectRules[0].settings.palette.entries[1].id', message: 'duplicate palette entry id' },
-      { path: 'projectRules[0].settings.topBar.color.custom', message: 'expected a color like #rrggbb' },
+      { path: 'projectRules[0].settings.topBar.color.custom.color', message: 'expected a color like #rrggbb' },
       { path: 'projectRules[0].settings.topBar.height', message: 'expected an integer from 1 to 40' },
-      { path: 'projectRules[1].settings.platformBar.color.custom', message: 'expected a color like #rrggbb' },
+      { path: 'projectRules[1].settings.platformBar.color.custom.color', message: 'expected a color like #rrggbb' },
       { path: 'projectRules[1].settings.platformBarText.color.custom', message: 'expected a color like #rrggbb' },
     ]);
   });
@@ -749,5 +1018,56 @@ describe('parseSettingsFile: migration failures', () => {
   ])('keeps %s after a successful migration', (_label, text, failure) => {
     // Restamped at 0.1.0 so the injected identity step (to 0.1.1) runs under a 0.1.1 ceiling.
     expect(failureOf(thrownBy(() => parseSettingsFile(text(), '0.1.1', [identity])))).toEqual(failure);
+  });
+
+  it("keeps a step's own SettingsImportError as the refusal, not migration-failed", () => {
+    const refusal = new SettingsImportError({
+      reason: 'invalid-fields',
+      issues: [{ path: 'projectRules', message: 'x' }],
+    });
+
+    expect(thrownBy(() => parseSettingsFile(stampedFile('0.1.0'), '0.1.2', [identity, throwingStep(refusal)]))).toBe(
+      refusal,
+    );
+  });
+});
+
+// The value-level reader storage shares with the import: everything but JSON.parse and no-rules.
+describe('readSettingsValue', () => {
+  it('reads zero rules, which only the import refuses', () => {
+    const value = { schemaVersion: CURRENT_SCHEMA_VERSION, theme: 'dark', projectRules: [] };
+
+    expect(readSettingsValue(value, CURRENT_SCHEMA_VERSION)).toEqual(new TintSettings([], 'dark'));
+    expect(failureOf(thrownBy(() => parse(JSON.stringify(value))))).toEqual({ reason: 'no-rules' });
+  });
+
+  it('reads the same settings as the import of the same value', () => {
+    const value = validFile();
+
+    expect(readSettingsValue(value, CURRENT_SCHEMA_VERSION)).toEqual(parse(JSON.stringify(value)));
+  });
+
+  // A string is a value, not text to parse: it is not a settings record.
+  it.each([
+    ['a JSON string', JSON.stringify(validFile())],
+    ['null', null],
+    ['undefined', undefined],
+  ])('refuses %s as not-settings', (_label, value) => {
+    expect(failureOf(thrownBy(() => readSettingsValue(value, CURRENT_SCHEMA_VERSION)))).toEqual({
+      reason: 'not-settings',
+    });
+  });
+
+  it('does not mutate the value it reads', () => {
+    const value: Record<string, unknown> = { ...validFile(), schemaVersion: '0.4.1' };
+    const settings = (value.projectRules as RawRule[])[0].settings;
+    settings.topBar.color.custom = '#123456';
+    settings.platformBar.color.custom = '#654321';
+    for (const entry of settings.palette.entries) entry.color = entry.color.color;
+    const before = structuredClone(value);
+
+    readSettingsValue(value, CURRENT_SCHEMA_VERSION);
+
+    expect(value).toEqual(before);
   });
 });

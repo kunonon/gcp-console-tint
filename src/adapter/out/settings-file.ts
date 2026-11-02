@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Color } from '../../domain/color';
 import { ColorSelection } from '../../domain/color-selection';
+import { type Fill, Gradient, type GradientStopsProblem } from '../../domain/gradient';
 import { Palette, PaletteEntry, PaletteEntryId } from '../../domain/palette';
 import { isMatchType, MATCH_TYPES, type MatchType, ProjectRule, ProjectRuleId } from '../../domain/project-rule';
 import {
@@ -12,35 +13,63 @@ import {
 import { isTheme, THEMES, type Theme, TintSettings } from '../../domain/tint-settings';
 import { TopBarHeight } from '../../domain/top-bar-height';
 import { SettingsImportError, type SettingsImportIssue } from '../../port/settings-store';
-import { runMigrations, SCHEMA_MIGRATIONS, SCHEMA_MIN_VERSION, type SchemaMigration } from './migrations';
+import { assertNever } from '../../utils/assert';
+import { MAX_ISSUES, runMigrations, SCHEMA_MIGRATIONS, SCHEMA_MIN_VERSION, type SchemaMigration } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
 
-// The import format: the same JSON shape settings-repository's toStored() writes, read back
-// STRICTLY. Where toDomain() repairs corrupt storage field by field, an imported file is the
-// user's own input: every field the exporter writes must be there with the right type and a
-// usable value, and anything else is refused with the reason and the offending paths, so the
-// user can fix the file instead of silently getting defaults back.
+// The stored and import format: the same JSON shape settings-repository's toStored() writes, read
+// back STRICTLY (readSettingsValue). Storage and the import share every check; the import alone
+// parses text and refuses a file with no rules. Every field the exporter writes must be there
+// with the right type and a usable value, and anything else is refused with the reason and the
+// offending paths, so the user is told what is wrong instead of silently getting defaults back.
 //
 // The two validation stages are deliberately split:
 //   1. STRUCTURE (checkStructure, with the Zod schemas below) — required keys and JSON types only. No enums, ranges
 //      or formats live here; that would put the domain's rules in the adapter.
 //   2. VALUES (toRules) — every value is handed to the domain factory that owns it
-//      (isTheme, Color.fromHex, TopBarHeight.fromPixels, isMatchType), and a rejection becomes
-//      an issue.
+//      (isTheme, Color.fromHex, Gradient.stopsProblem, TopBarHeight.fromPixels, isMatchType), and a
+//      rejection becomes an issue.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// Array.isArray narrows to any[]; this keeps the elements unknown so each one is checked before use.
+function isArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
 // Stage 1. `z.object` ignores unknown keys within the supported schema version range.
 // Stamps above this build's effective schema version ceiling are rejected before validation.
-const colorSelectionSchema = z.object({
-  // JSON has no undefined: an unset palette reference is written as null.
-  paletteId: z.string().nullable(),
-  custom: z.string(),
-});
+//
+// A fill (palette entries and the bars' custom) is a tagged object: { type: 'solid', color } or
+// { type: 'gradient', stops: [{ color, position }, ...] }. Only that shape is checked here, and the
+// colors, the stop count and the positions are judged in stage 2. A value that is not an object, or
+// whose type is missing or unknown, gets one issue with the message below; inside a known type each
+// wrong field gets its own. Zod reads every element of `stops` here and reports each element that
+// is not a { color, position } object on its own, until the collector stops at MAX_ISSUES.
+// ponytail: a stops array is read whole here, unlike entries; the domain caps real gradients at 8
+// and a hostile file costs memory and up to MAX_ISSUES issues. Walk it like entries if that bound
+// ever matters.
+const fillSchema = z.discriminatedUnion(
+  'type',
+  [
+    z.object({ type: z.literal('solid'), color: z.string() }),
+    z.object({
+      type: z.literal('gradient'),
+      stops: z.array(z.object({ color: z.string(), position: z.number() })),
+    }),
+  ],
+  { error: "expected { type: 'solid', color } or { type: 'gradient', stops: [{ color, position }, ...] }" },
+);
 
-const paletteEntrySchema = z.object({ id: z.string(), name: z.string(), color: z.string() });
+// JSON has no undefined: an unset palette reference is written as null.
+const paletteIdSchema = z.string().nullable();
+const fillSelectionSchema = z.object({ paletteId: paletteIdSchema, custom: fillSchema });
+// The platform bar text is painted with CSS `color`, so its custom stays a plain string.
+const colorSelectionSchema = z.object({ paletteId: paletteIdSchema, custom: z.string() });
+
+const paletteEntrySchema = z.object({ id: z.string(), name: z.string(), color: fillSchema });
 
 // The root's scalar fields; projectRules is walked separately (see checkStructure).
 const rootSchema = z.object({ theme: z.string() });
@@ -56,11 +85,11 @@ const ruleShellSchema = z.object({
     palette: z.object({ enabled: z.boolean() }),
     topBar: z.object({
       enabled: z.boolean(),
-      color: colorSelectionSchema,
+      color: fillSelectionSchema,
       height: z.number(),
       stripes: z.boolean(),
     }),
-    platformBar: z.object({ enabled: z.boolean(), color: colorSelectionSchema, stripes: z.boolean() }),
+    platformBar: z.object({ enabled: z.boolean(), color: fillSelectionSchema, stripes: z.boolean() }),
     platformBarText: z.object({ enabled: z.boolean(), color: colorSelectionSchema, auto: z.boolean() }),
   }),
 });
@@ -69,19 +98,20 @@ const ruleShellSchema = z.object({
 // non-array: a real array would have every element read.
 const arrayDiagnosis = z.array(z.unknown());
 
+export type FillFile = z.infer<typeof fillSchema>;
 type PaletteEntryFile = z.infer<typeof paletteEntrySchema>;
 type RuleFile = z.infer<typeof ruleShellSchema> & { settings: { palette: { entries: PaletteEntryFile[] } } };
-interface SettingsFile {
+// A type alias, not an interface: toStored() returns it, and an interface (no implicit index signature)
+// would not be assignable to the Record<string, unknown> its callers may hold it as.
+export type SettingsFile = {
   theme: string;
   projectRules: RuleFile[];
-}
+};
 
-// Each stage keeps at most this many issues, so a file that is wrong everywhere is neither
-// walked nor reported in full.
-const MAX_ISSUES = 100;
-
-// Thrown by an issue collector instead of keeping the issue past MAX_ISSUES, and caught only by
-// the stage that owns that collector, so validation stops on the spot.
+// Each stage keeps at most MAX_ISSUES issues (shared with the migration steps), so a file that is
+// wrong everywhere is neither walked nor reported in full. This is thrown by an issue collector
+// instead of keeping the issue past MAX_ISSUES, and caught only by the stage that owns that
+// collector, so validation stops on the spot.
 class ValidationStopped {}
 
 function issueCollector(issues: SettingsImportIssue[]) {
@@ -123,7 +153,7 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
   rejectAll([], root.error?.issues);
   const theme = root.data?.theme ?? '';
   const projectRules = data.projectRules;
-  if (!Array.isArray(projectRules)) {
+  if (!isArray(projectRules)) {
     rejectAll(['projectRules'], arrayDiagnosis.safeParse(projectRules).error?.issues);
     return { theme, projectRules: [] };
   }
@@ -147,7 +177,7 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
     if (isRecord(palette)) {
       const entriesAt = [...at, 'settings', 'palette', 'entries'];
       const rawEntries = palette.entries;
-      if (Array.isArray(rawEntries)) {
+      if (isArray(rawEntries)) {
         entries = [];
         for (let entryIndex = 0; entryIndex < rawEntries.length; entryIndex++) {
           const entry = paletteEntrySchema.safeParse(rawEntries[entryIndex]);
@@ -168,13 +198,34 @@ function checkStructure(data: unknown, reject: (path: string, message: string) =
   return { theme, projectRules: rules };
 }
 
+// The import's wording for why a gradient's stops were refused, at the path the problem points
+// to. The rules themselves are the domain's (Gradient.stopsProblem); only the words live here.
+function stopsIssue(path: string, problem: GradientStopsProblem): [path: string, message: string] {
+  const at = (index: number) => `${path}.stops[${index}].position`;
+  switch (problem.kind) {
+    case 'count':
+      return [`${path}.stops`, `expected ${Gradient.MIN_STOPS} to ${Gradient.MAX_STOPS} stops`];
+    case 'position':
+      return [at(problem.index), `expected a whole number from ${Gradient.MIN_POSITION} to ${Gradient.MAX_POSITION}`];
+    case 'first':
+      return [at(problem.index), `expected ${Gradient.MIN_POSITION}: the first stop sits at the left end`];
+    case 'last':
+      return [at(problem.index), `expected ${Gradient.MAX_POSITION}: the last stop sits at the right end`];
+    case 'order':
+      return [at(problem.index), `expected more than the previous stop's position (${problem.previous})`];
+    default:
+      return assertNever(problem);
+  }
+}
+
 // Stage 2. Builds the domain objects, asking the domain to judge every value and collecting the
 // rejections instead of throwing at the first one, so a file reports everything wrong with it in
 // one pass. A rejected value is replaced by a placeholder here purely to keep building: the
 // returned rules are used only when no issue was collected. Values are judged in a fixed order
-// (the root theme first, then per rule: matchType, each palette entry's duplicate id then color,
-// topBar color and height, platformBar color, platformBarText color); the judgment that yields
-// the 101st issue stops validation on the spot, and no partial rules are returned.
+// (the root theme first, then per rule: matchType, each palette entry's duplicate id, then its
+// fill (a solid's color, or each stop's color, then the stops' count and positions); topBar fill
+// (same) and height; platformBar fill; platformBarText color); the judgment that yields the 101st
+// issue stops validation on the spot, and no partial rules are returned.
 function toRules(file: SettingsFile): {
   theme: Theme;
   rules: ProjectRule[];
@@ -189,6 +240,27 @@ function toRules(file: SettingsFile): {
     if (parsed) return parsed;
     reject(path, 'expected a color like #rrggbb');
     return Color.BLACK;
+  };
+
+  // A solid fill's color is judged at `${path}.color`. In a gradient every stop's color is judged
+  // before the stops' shape, and both are reported: each bad color, then the first shape problem
+  // Gradient.stopsProblem finds (count, then each position in turn).
+  const fill = (value: FillFile, path: string): Fill => {
+    switch (value.type) {
+      case 'solid':
+        return color(value.color, `${path}.color`);
+      case 'gradient': {
+        const stops = value.stops.map((stop, i) => ({
+          color: color(stop.color, `${path}.stops[${i}].color`),
+          position: stop.position,
+        }));
+        const problem = Gradient.stopsProblem(stops);
+        if (problem) reject(...stopsIssue(path, problem));
+        return Gradient.fromStops(stops) ?? Color.BLACK;
+      }
+      default:
+        return assertNever(value);
+    }
   };
 
   const themeValue = (value: string, path: string): Theme => {
@@ -214,11 +286,18 @@ function toRules(file: SettingsFile): {
   // so there is no value rule to apply here. A paletteId naming no entry of the rule's own
   // palette is NOT an issue either: the domain treats a dangling reference as legal and falls
   // back to the custom color (see Palette.resolve). Palette-local id uniqueness is checked
-  // below as an import-file constraint, without changing domain ids or storage recovery.
-  const selection = (value: { paletteId: string | null; custom: string }, path: string): ColorSelection =>
+  // below as a constraint of the stored format, without changing domain ids. A text
+  // reference to a gradient entry is legal for the same reason (see Palette.resolveSolid), and it
+  // is what this extension's own export writes. `custom` is judged by the surface's own parser:
+  // the bars take `fill`, the text `color`.
+  const selection = <F, C extends Fill>(
+    value: { paletteId: string | null; custom: F },
+    path: string,
+    custom: (value: F, path: string) => C,
+  ): ColorSelection<C> =>
     new ColorSelection(
       value.paletteId === null ? undefined : PaletteEntryId.recreate(value.paletteId),
-      color(value.custom, `${path}.custom`),
+      custom(value.custom, `${path}.custom`),
     );
 
   let theme: Theme;
@@ -244,24 +323,24 @@ function toRules(file: SettingsFile): {
               return PaletteEntry.recreate(
                 PaletteEntryId.recreate(entry.id),
                 entry.name,
-                color(entry.color, `${entryAt}.color`),
+                fill(entry.color, `${entryAt}.color`),
               );
             }),
           ),
           new TopBarSettings(
             topBar.enabled,
-            selection(topBar.color, `${settingsAt}.topBar.color`),
+            selection(topBar.color, `${settingsAt}.topBar.color`, fill),
             height(topBar.height, `${settingsAt}.topBar.height`),
             topBar.stripes,
           ),
           new PlatformBarSettings(
             platformBar.enabled,
-            selection(platformBar.color, `${settingsAt}.platformBar.color`),
+            selection(platformBar.color, `${settingsAt}.platformBar.color`, fill),
             platformBar.stripes,
           ),
           new PlatformBarTextSettings(
             platformBarText.enabled,
-            selection(platformBarText.color, `${settingsAt}.platformBarText.color`),
+            selection(platformBarText.color, `${settingsAt}.platformBarText.color`, color),
             platformBarText.auto,
           ),
         ),
@@ -280,31 +359,20 @@ function invalidFields(issues: readonly SettingsImportIssue[], validationStopped
   );
 }
 
-// Parses an imported settings file's text into current-shape settings, throwing
-// SettingsImportError on anything the user needs to be told about: bad JSON, the wrong kind of
-// file, a version predating every readable shape or postdating this build, a file whose
-// migration to the current shape fails, fields that are missing/wrongly typed/unusable, or no
-// rules at all.
-//
-// The file's theme is validated like every other field and carried on the result, but the
-// Import modal only merges the rules: importing never changes the user's own theme.
+// Reads a stored or imported settings value into current-shape settings, throwing
+// SettingsImportError on anything that cannot be read whole: not a settings record, a version
+// predating every readable shape or postdating this build, a migration step that refuses the data
+// or fails, or fields that are missing/wrongly typed/unusable. Zero rules is a valid result here.
 //
 // `currentVersion` is this build's effective schema version ceiling (the running extension
-// version floored at CURRENT_SCHEMA_VERSION). It bounds legacy release-stamped files; stamps
+// version floored at CURRENT_SCHEMA_VERSION). It bounds legacy release-stamped data; stamps
 // below SCHEMA_MIN_VERSION are also refused. `steps` is injectable for tests; production uses
 // the registry.
-export function parseSettingsFile(
-  text: string,
+export function readSettingsValue(
+  value: unknown,
   currentVersion: string,
   steps: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
 ): TintSettings {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (error) {
-    throw new SettingsImportError({ reason: 'invalid-json' }, { cause: error });
-  }
-
   if (!isRecord(value)) {
     throw new SettingsImportError({ reason: 'not-settings' });
   }
@@ -322,10 +390,11 @@ export function parseSettingsFile(
     throw new SettingsImportError({ reason: 'newer-version', version: schemaVersion });
   }
 
-  // Folded forward to the current shape first, so an older file is judged against the shape it
-  // migrates into rather than the one it was written in. Only steps newer than the file's own
-  // stamp run (see runMigrations), so a file already in a later shape is not migrated twice.
-  // Only a throw from the migration itself is migration-failed, reported against the file's own
+  // Folded forward to the current shape first, so older data is judged against the shape it
+  // migrates into rather than the one it was written in. Only steps newer than the data's own
+  // stamp run (see runMigrations), so data already in a later shape is not migrated twice.
+  // A step's own refusal (invalid-fields, with the paths it could not interpret) is kept as is.
+  // Any other throw from the migration is migration-failed, reported against the data's own
   // stamp (the step that threw is an internal detail the user cannot act on); every check after
   // the migration keeps its own reason, and an unexpected error from one of those checks
   // propagates unchanged.
@@ -333,10 +402,11 @@ export function parseSettingsFile(
   try {
     ({ data } = runMigrations(value, schemaVersion, steps));
   } catch (error) {
+    if (error instanceof SettingsImportError) throw error;
     throw new SettingsImportError({ reason: 'migration-failed', version: schemaVersion }, { cause: error });
   }
 
-  // Only a structurally complete file reaches the value stage: it builds from Zod's parsed data.
+  // Only a structurally complete value reaches the value stage: it builds from Zod's parsed data.
   const structureIssues: SettingsImportIssue[] = [];
   let file: SettingsFile;
   try {
@@ -349,8 +419,29 @@ export function parseSettingsFile(
 
   const { theme, rules, issues, validationStopped } = toRules(file);
   if (issues.length > 0) throw invalidFields(issues, validationStopped);
-  if (rules.length === 0) {
+  return new TintSettings(rules, theme);
+}
+
+// Parses an imported settings file's text into current-shape settings, throwing
+// SettingsImportError on anything the user needs to be told about: bad JSON, everything
+// readSettingsValue refuses, or no rules at all.
+//
+// The file's theme is validated like every other field and carried on the result, but the
+// Import modal only merges the rules: importing never changes the user's own theme.
+export function parseSettingsFile(
+  text: string,
+  currentVersion: string,
+  steps: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
+): TintSettings {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new SettingsImportError({ reason: 'invalid-json' }, { cause: error });
+  }
+  const settings = readSettingsValue(value, currentVersion, steps);
+  if (settings.projectRules.length === 0) {
     throw new SettingsImportError({ reason: 'no-rules' });
   }
-  return new TintSettings(rules, theme);
+  return settings;
 }

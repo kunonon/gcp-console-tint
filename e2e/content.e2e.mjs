@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { setTimeout as pause } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { EFFECTIVE_VERSION, projectSettings, rule, settings } from './fixtures.mjs';
+import { EFFECTIVE_VERSION, gradient, projectSettings, rule, settings, solid } from './fixtures.mjs';
 import { browserTargets, createHarness, openTab } from './harness.mjs';
 
 function topBar(color, height = 7, stripes = false) {
@@ -15,6 +15,132 @@ function platformBar(color, stripes = false) {
 
 function textColor(color) {
   return { enabled: true, color: { paletteId: null, custom: color }, auto: false };
+}
+
+// The bars paint one fixed image whose colors are registered custom properties: a painted knot
+// (stop) at every whole percent, 101 in all, that mixes from the knot on screen at a switch (from)
+// to the fill's own (to) as --gcp-console-tint-fade runs from 0 to 1, and a stripe pair, which
+// transitions.
+const KNOT_COUNT = 101;
+const knotNames = (kind) => Array.from({ length: KNOT_COUNT }, (_, k) => `--gcp-console-tint-${kind}-${k}`);
+const TO = knotNames('to');
+const FROM = knotNames('from');
+const STOPS = knotNames('stop');
+const STRIPES = ['--gcp-console-tint-stripe-light', '--gcp-console-tint-stripe-dark'];
+const FADE = '--gcp-console-tint-fade';
+// The target knots and the stripe pair: what a bar shows once its fade is over.
+const SETTLED_PROPERTIES = [...TO, ...STRIPES];
+const COLOR_TRANSITION_NAMES = ['background-color', ...STRIPES];
+// background-color steps to the first knot after the knots' 300ms fade, so the previous color stays
+// underneath while they fade in.
+const COLOR_TRANSITIONS = ['background-color 0s linear 300ms', ...STRIPES.map((name) => `${name} 300ms ease`)].join(
+  ', ',
+);
+const FILL_IMAGE = `repeating-linear-gradient(-45deg, var(--gcp-console-tint-stripe-light) 0 8px, var(--gcp-console-tint-stripe-dark) 8px 16px), linear-gradient(in srgb to right, ${STOPS.map((name) => `var(${name})`).join(', ')})`;
+const stopMix = (k) => `color-mix(in oklch shorter hue, var(${FROM[k]}), var(${TO[k]}) calc(var(${FADE}, 1) * 100%))`;
+const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+
+// Stored gradients' stops (gradient() wraps them): whole percents, the ends at 0 and 100.
+const SUNRISE = [
+  { color: '#ff6d00', position: 0 },
+  { color: '#1a73e8', position: 100 },
+];
+// Eight stops at uneven positions. Neighbouring colors are close (at most 6 per channel between
+// knots at rest), since the seam test's bound on neighbouring knots mid-fade has to sit above
+// the gradient's own slope.
+const EIGHT_STOPS = ['#ff6d00', '#e8a33d', '#a8b545', '#5fae6e', '#3fa9a5', '#4b8fd6', '#8a6fd6', '#c05aa8'].map(
+  (color, i) => ({ color, position: [0, 12, 23, 41, 55, 71, 86, 100][i] }),
+);
+
+// A gradient's target knots as 8-bit sRGB channels, knot k at k%, as Gradient.colorAt computes
+// them: linear in sRGB between the neighbouring stops, each channel rounded, so a knot on a stop is
+// that stop's color exactly.
+function gradientKnots(stops) {
+  const channels = (hex) => [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+  return Array.from({ length: KNOT_COUNT }, (_, k) => {
+    const after = stops.findIndex((stop) => stop.position >= k);
+    const to = stops[after];
+    const from = stops[after - 1] ?? to;
+    const [start, end] = [channels(from.color), channels(to.color)];
+    return start.map((value, i) =>
+      to.position === k
+        ? end[i]
+        : Math.round(value + ((end[i] - value) * (k - from.position)) / (to.position - from.position)),
+    );
+  });
+}
+// The same knots as the bars' computed 'rgb(r, g, b)' and as the rule's '#rrggbb'.
+const rgbKnots = (stops) => gradientKnots(stops).map((rgb) => `rgb(${rgb.join(', ')})`);
+const hexKnots = (stops) =>
+  gradientKnots(stops).map((rgb) => `#${rgb.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`);
+
+// The start of the computed background-image, the same in Chrome and Firefox: the stripe stops gain
+// explicit positions, and the stripe layer comes first, so it is drawn over the gradient, which
+// serializes its interpolation after the direction. Stripes that are off are a transparent layer.
+// The knots themselves follow as oklch() colors whose digits differ between engines, so they are
+// checked through the target knots instead.
+function imageStart(light = TRANSPARENT, dark = TRANSPARENT) {
+  return `repeating-linear-gradient(-45deg, ${light} 0px, ${light} 8px, ${dark} 8px, ${dark} 16px), linear-gradient(to right in srgb, `;
+}
+
+// A painted knot, 'oklch(L C H)' or 'oklab(L a b)', as 8-bit sRGB channels (Björn Ottosson's
+// inverse), or null for anything else. A 'none' hue makes NaN channels, which match nothing.
+function paintedRgb(value) {
+  const match = /^(oklch|oklab)\(([^\s)]+) ([^\s)]+) ([^\s)]+)\)$/.exec(value ?? '');
+  if (!match) return null;
+  const [lightness, x, y] = match.slice(2).map(Number);
+  const radians = (y * Math.PI) / 180;
+  const [a, b] = match[1] === 'oklch' ? [x * Math.cos(radians), x * Math.sin(radians)] : [x, y];
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].map((v) => Math.round(255 * Math.min(1, Math.max(0, v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055))));
+}
+
+// Whether every painted knot is its target 'rgb(r, g, b)' within one step per channel: the mix at
+// rest round-trips each target through Oklab or OKLCH, and a knot the engine refused would be
+// transparent, a grey that lost its hue tinted.
+function paintsKnots(bar, knots) {
+  return (
+    bar.painted?.length === knots.length &&
+    bar.painted.every((value, k) => {
+      const rgb = paintedRgb(value);
+      const target = knots[k]?.match(/\d+/g)?.map(Number) ?? [];
+      return rgb?.every((channel, i) => Math.abs(channel - (target[i] ?? Number.NaN)) <= 1) ?? false;
+    })
+  );
+}
+
+// A bar (a snapshotConsole() bar) has settled on a fill when its target knots are the fill's, its
+// fade is over, its painted knots are the targets, and it paints the stripe layer over the knots'
+// gradient.
+function settledOn(bar, knots, light = TRANSPARENT, dark = TRANSPARENT) {
+  return (
+    isDeepStrictEqual(bar.fill, knots) &&
+    bar.fade === '1' &&
+    paintsKnots(bar, knots) &&
+    Boolean(bar.backgroundImage?.startsWith(imageStart(light, dark)))
+  );
+}
+
+function assertSettled(bar, knots, light = TRANSPARENT, dark = TRANSPARENT, label = 'the bar') {
+  assert.deepEqual(bar.fill, knots, `${label} target knots`);
+  assert.equal(bar.fade, '1', `${label} fade`);
+  assert.ok(paintsKnots(bar, knots), `${label} painted knots: ${bar.painted}`);
+  assert.ok(bar.backgroundImage?.startsWith(imageStart(light, dark)), `${label} image: ${bar.backgroundImage}`);
+}
+
+// The image always has two layers under one specified attachment, position and size, which an
+// engine may list once or once per layer (Chrome lists all three per layer, Firefox only the size).
+function everyLayer(value, expected, label) {
+  assert.ok(
+    value.split(',').every((layer) => layer.trim() === expected),
+    `${label} should be ${expected} on every layer, got ${value}`,
+  );
 }
 
 async function setStored(h, value, extra = {}) {
@@ -47,12 +173,67 @@ async function snapshotWhen(h, predicate, message, handle = h.mockHandle) {
   return h.snapshotConsole(handle);
 }
 
+// Moves the console to `path` and catches the switch's own fade on the next frames, one entry per
+// bar (the top bar first, null if it started no fade): the fade is paused at each of `times`, ms
+// into its 300ms, where the fade property and the painted knots `names` are read, then finished.
+async function catchFade(h, path, times, names) {
+  await h.browser.switchToWindow(h.mockHandle);
+  return h.browser.execute(
+    async (nextPath, pauses, knots) => {
+      history.pushState({}, '', nextPath);
+      const bars = [
+        [...document.documentElement.children].find(
+          (element) => element.tagName === 'DIV' && element.style.zIndex === '2147483647',
+        ),
+        document.querySelector('#ocb-platform-bar'),
+      ];
+      const fadeOf = (bar) => bar?.getAnimations().find((animation) => !(animation instanceof CSSTransition));
+      const deadline = performance.now() + 2000;
+      while (!bars.every(fadeOf) && performance.now() < deadline) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      return bars.map((bar) => {
+        const fade = fadeOf(bar);
+        if (!fade) return null;
+        fade.pause();
+        const states = pauses.map((time) => {
+          fade.currentTime = time;
+          const style = getComputedStyle(bar);
+          return {
+            fade: style.getPropertyValue('--gcp-console-tint-fade'),
+            knots: knots.map((name) => style.getPropertyValue(name)),
+          };
+        });
+        fade.finish();
+        return states;
+      });
+    },
+    path,
+    times,
+    names,
+  );
+}
+
 async function assertStable(read, assertSample, message, duration = 450) {
   const deadline = Date.now() + duration;
   do {
     assertSample(await read(), message);
     if (Date.now() < deadline) await pause(100);
   } while (Date.now() < deadline);
+}
+
+// A console page with nothing painted: the top bar is in the document, so the content script ran,
+// but hidden, and the mock platform bar keeps its own color.
+function untinted(value) {
+  return (
+    value.topBar.exists && value.topBar.display === 'none' && value.platformBar.backgroundColor === 'rgb(238, 238, 238)'
+  );
+}
+
+function assertUntinted(value, message) {
+  assert.equal(value.topBar.exists, true, message);
+  assert.equal(value.topBar.display, 'none', message);
+  assert.equal(value.platformBar.backgroundColor, 'rgb(238, 238, 238)', message);
 }
 
 async function waitSettings(h, predicate, message) {
@@ -72,7 +253,7 @@ async function pushHistoryUrl(h, path) {
 async function colorStyle(h) {
   const { browser } = h;
   await browser.switchToWindow(h.mockHandle);
-  return browser.execute(() => {
+  return browser.execute((names) => {
     const overlay = [...document.documentElement.children].find(
       (element) =>
         element.tagName === 'DIV' && element.style.position === 'fixed' && element.style.zIndex === '2147483647',
@@ -88,6 +269,7 @@ async function colorStyle(h) {
       overlayTransitionProperty: overlayStyle?.transitionProperty ?? null,
       overlayTransitionDuration: overlayStyle?.transitionDuration ?? null,
       overlayTransitionTimingFunction: overlayStyle?.transitionTimingFunction ?? null,
+      overlayTransitionDelay: overlayStyle?.transitionDelay ?? null,
       overlayPosition: overlay?.style.position ?? null,
       overlayTop: overlay?.style.top ?? null,
       overlayLeft: overlay?.style.left ?? null,
@@ -101,14 +283,17 @@ async function colorStyle(h) {
       platformTransitionProperty: platformStyle?.transitionProperty ?? null,
       platformTransitionDuration: platformStyle?.transitionDuration ?? null,
       platformTransitionTimingFunction: platformStyle?.transitionTimingFunction ?? null,
+      platformTransitionDelay: platformStyle?.transitionDelay ?? null,
       textTransitionProperty: textStyle?.transitionProperty ?? null,
       textTransitionDuration: textStyle?.transitionDuration ?? null,
       textTransitionTimingFunction: textStyle?.transitionTimingFunction ?? null,
       platformBackgroundAttachment: platformStyle?.backgroundAttachment ?? null,
       platformBackgroundPosition: platformStyle?.backgroundPosition ?? null,
       platformBackgroundSize: platformStyle?.backgroundSize ?? null,
+      overlayFill: overlayStyle ? names.map((name) => overlayStyle.getPropertyValue(name)) : null,
+      platformFill: platformStyle ? names.map((name) => platformStyle.getPropertyValue(name)) : null,
     };
-  });
+  }, SETTLED_PROPERTIES);
 }
 
 for (const browserName of browserTargets()) {
@@ -151,10 +336,10 @@ for (const browserName of browserTargets()) {
 
     test('applies prefix, suffix, exact, and full-match regex rules in priority order', async () => {
       const colors = {
-        prefix: projectSettings({ topBar: topBar('#cc0000') }),
-        suffix: projectSettings({ topBar: topBar('#00aa00') }),
-        exact: projectSettings({ topBar: topBar('#0000cc') }),
-        regex: projectSettings({ topBar: topBar('#aa00aa') }),
+        prefix: projectSettings({ topBar: topBar(solid('#cc0000')) }),
+        suffix: projectSettings({ topBar: topBar(solid('#00aa00')) }),
+        exact: projectSettings({ topBar: topBar(solid('#0000cc')) }),
+        regex: projectSettings({ topBar: topBar(solid('#aa00aa')) }),
       };
       await setStored(
         h,
@@ -162,9 +347,9 @@ for (const browserName of browserTargets()) {
           rule('prefix', 'team-', 'prefix', colors.prefix),
           rule('suffix', '-prod', 'suffix', colors.suffix),
           rule('exact', 'exact-id', 'exact', colors.exact),
-          rule('exact-path', 'team/prod', 'exact', projectSettings({ topBar: topBar('#ffaa00') })),
+          rule('exact-path', 'team/prod', 'exact', projectSettings({ topBar: topBar(solid('#ffaa00')) })),
           rule('regex', 'svc[0-9]+|dev[0-9]+', 'regex', colors.regex),
-          rule('invalid-regex', '[', 'regex', projectSettings({ topBar: topBar('#ff00ff') })),
+          rule('invalid-regex', '[', 'regex', projectSettings({ topBar: topBar(solid('#ff00ff')) })),
         ),
       );
 
@@ -207,8 +392,8 @@ for (const browserName of browserTargets()) {
             'alpha',
             'exact',
             projectSettings({
-              topBar: topBar('#cc0000'),
-              platformBar: platformBar('#00aa00'),
+              topBar: topBar(solid('#cc0000')),
+              platformBar: platformBar(solid('#00aa00')),
             }),
           ),
         ),
@@ -326,8 +511,8 @@ for (const browserName of browserTargets()) {
             'alpha',
             'exact',
             projectSettings({
-              topBar: topBar('#123456', 11),
-              platformBar: platformBar('#00aa00'),
+              topBar: topBar(solid('#123456'), 11),
+              platformBar: platformBar(solid('#00aa00')),
               platformBarText: textColor('#ab12cd'),
             }),
           ),
@@ -351,8 +536,8 @@ for (const browserName of browserTargets()) {
             'alpha',
             'exact',
             projectSettings({
-              topBar: { ...topBar('#123456', 11), enabled: topEnabled },
-              platformBar: { ...platformBar('#00aa00'), enabled: platformEnabled },
+              topBar: { ...topBar(solid('#123456'), 11), enabled: topEnabled },
+              platformBar: { ...platformBar(solid('#00aa00')), enabled: platformEnabled },
               platformBarText: { ...textColor('#ab12cd'), enabled: textEnabled },
             }),
           ),
@@ -377,20 +562,20 @@ for (const browserName of browserTargets()) {
 
     test('resolves palette references in rule scope, falls back for disabled or dangling entries, and updates all targeted text descendants', async () => {
       const first = projectSettings({
-        palette: { enabled: true, entries: [{ id: 'shared', name: 'Alpha', color: '#00aa00' }] },
-        topBar: { enabled: true, color: { paletteId: 'shared', custom: '#111111' }, height: 8, stripes: true },
-        platformBar: { enabled: true, color: { paletteId: 'missing', custom: '#cc3300' }, stripes: true },
+        palette: { enabled: true, entries: [{ id: 'shared', name: 'Alpha', color: solid('#00aa00') }] },
+        topBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#111111') }, height: 8, stripes: true },
+        platformBar: { enabled: true, color: { paletteId: 'missing', custom: solid('#cc3300') }, stripes: true },
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#1122cc' }, auto: false },
       });
       const second = projectSettings({
-        palette: { enabled: true, entries: [{ id: 'shared', name: 'Beta', color: '#0000cc' }] },
-        topBar: { enabled: true, color: { paletteId: 'shared', custom: '#113355' }, height: 9, stripes: false },
-        platformBar: { enabled: true, color: { paletteId: 'shared', custom: '#224466' }, stripes: false },
+        palette: { enabled: true, entries: [{ id: 'shared', name: 'Beta', color: solid('#0000cc') }] },
+        topBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#113355') }, height: 9, stripes: false },
+        platformBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#224466') }, stripes: false },
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#228844' }, auto: false },
       });
       const third = projectSettings({
-        palette: { enabled: false, entries: [{ id: 'shared', name: 'Disabled', color: '#ffffff' }] },
-        topBar: { enabled: true, color: { paletteId: 'shared', custom: '#abcdef' }, height: 10, stripes: false },
+        palette: { enabled: false, entries: [{ id: 'shared', name: 'Disabled', color: solid('#ffffff') }] },
+        topBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#abcdef') }, height: 10, stripes: false },
       });
       await setStored(
         h,
@@ -401,22 +586,29 @@ for (const browserName of browserTargets()) {
         ),
       );
 
+      // Striped solids: 101 equal knots under the stripe pair the contrast rule picks, black
+      // stripes on #00aa00 (black text contrast 6.7 beats white 3.1) and white ones on #cc3300
+      // (white 5.2 beats black 4.0).
+      const alphaTop = [Array(KNOT_COUNT).fill('rgb(0, 170, 0)'), TRANSPARENT, 'rgba(0, 0, 0, 0.3)'];
+      const alphaPlatform = [Array(KNOT_COUNT).fill('rgb(204, 51, 0)'), 'rgba(255, 255, 255, 0.3)', TRANSPARENT];
       await h.openConsole('alpha');
       let snapshot = await snapshotWhen(
         h,
         (value) =>
           value.topBar.backgroundColor === 'rgb(0, 170, 0)' &&
           value.platformBar.backgroundColor === 'rgb(204, 51, 0)' &&
+          settledOn(value.topBar, ...alphaTop) &&
+          settledOn(value.platformBar, ...alphaPlatform) &&
           Object.values(value.platformBar.textColors).every((color) => color === 'rgb(17, 34, 204)'),
-        'palette and text colors did not settle for alpha',
+        'palette, stripe and text colors did not settle for alpha',
       );
       const css = await colorStyle(h);
       assert.equal(
         await h.browser.execute(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches),
         h.reducedMotion,
       );
-      assert.match(snapshot.topBar.backgroundImage, /gradient/);
-      assert.match(snapshot.platformBar.backgroundImage, /gradient/);
+      assertSettled(snapshot.topBar, ...alphaTop, 'the top bar');
+      assertSettled(snapshot.platformBar, ...alphaPlatform, 'the platform bar');
       assert.equal(css.overlayBackgroundAttachment, 'fixed');
       assert.equal(css.overlayBackgroundPosition, '0px 0px');
       assert.equal(css.overlayBackgroundSize, 'auto');
@@ -427,13 +619,38 @@ for (const browserName of browserTargets()) {
       assert.equal(css.overlayZIndex, '2147483647');
       assert.equal(css.overlayPointerEvents, 'none');
       if (!h.reducedMotion) {
+        const colorCount = COLOR_TRANSITION_NAMES.length;
+        // background-color is a step delayed by the knots' fade; everything else starts at once.
+        const fadeCount = colorCount - 1;
         assert.deepEqual(
-          [css.overlayTransitionProperty, css.overlayTransitionDuration, css.overlayTransitionTimingFunction],
-          ['background-color, height', '0.3s, 0.2s', 'ease, ease'],
+          [
+            css.overlayTransitionProperty,
+            css.overlayTransitionDuration,
+            css.overlayTransitionTimingFunction,
+            css.overlayTransitionDelay,
+          ],
+          [
+            [...COLOR_TRANSITION_NAMES, 'height'].join(', '),
+            ['0s', ...Array(fadeCount).fill('0.3s'), '0.2s'].join(', '),
+            ['linear', ...Array(fadeCount + 1).fill('ease')].join(', '),
+            ['0.3s', ...Array(fadeCount + 1).fill('0s')].join(', '),
+          ],
         );
+        // The platform bar transitions the stripe pair too, not only background-color; its knots fade
+        // through the fade property instead.
         assert.deepEqual(
-          [css.platformTransitionProperty, css.platformTransitionDuration, css.platformTransitionTimingFunction],
-          ['background-color', '0.3s', 'ease'],
+          [
+            css.platformTransitionProperty,
+            css.platformTransitionDuration,
+            css.platformTransitionTimingFunction,
+            css.platformTransitionDelay,
+          ],
+          [
+            COLOR_TRANSITION_NAMES.join(', '),
+            ['0s', ...Array(fadeCount).fill('0.3s')].join(', '),
+            ['linear', ...Array(fadeCount).fill('ease')].join(', '),
+            ['0.3s', ...Array(fadeCount).fill('0s')].join(', '),
+          ],
         );
         assert.deepEqual(
           [css.textTransitionProperty, css.textTransitionDuration, css.textTransitionTimingFunction],
@@ -441,16 +658,16 @@ for (const browserName of browserTargets()) {
         );
         assert.match(
           css.platformTransition,
-          /#ocb-platform-bar\s*\{[^}]*transition: background-color 300ms ease !important;/,
+          new RegExp(`#ocb-platform-bar\\s*\\{[^}]*${RegExp.escape(`transition: ${COLOR_TRANSITIONS} !important;`)}`),
         );
         assert.match(
           css.platformTransition,
           /\.cfc-platform-bar-left \*, \.cfc-platform-bar-right \*, \.pcc-platform-bar-button \*\s*\{[^}]*transition: color 300ms ease !important;/,
         );
       }
-      assert.equal(css.platformBackgroundAttachment, 'fixed');
-      assert.equal(css.platformBackgroundPosition, '0px 0px');
-      assert.equal(css.platformBackgroundSize, 'auto');
+      everyLayer(css.platformBackgroundAttachment, 'fixed', 'the platform bar attachment');
+      everyLayer(css.platformBackgroundPosition, '0px 0px', 'the platform bar position');
+      everyLayer(css.platformBackgroundSize, 'auto', 'the platform bar size');
 
       await h.browser.execute(() => {
         const left = document.querySelector('.cfc-platform-bar-left');
@@ -481,15 +698,22 @@ for (const browserName of browserTargets()) {
           value.href.includes('project=beta') &&
           value.topBar.backgroundColor === 'rgb(0, 0, 204)' &&
           value.platformBar.backgroundColor === 'rgb(0, 0, 204)' &&
-          value.topBar.backgroundImage === 'none' &&
-          value.platformBar.backgroundImage === 'none' &&
+          settledOn(value.topBar, Array(KNOT_COUNT).fill('rgb(0, 0, 204)')) &&
+          settledOn(value.platformBar, Array(KNOT_COUNT).fill('rgb(0, 0, 204)')) &&
           Object.values(value.platformBar.textColors).every((color) => color === 'rgb(34, 136, 68)'),
         'rule-scoped palette did not settle for beta',
       );
       assert.equal(snapshot.topBar.backgroundColor, 'rgb(0, 0, 204)', 'same palette id resolves within the beta rule');
       assert.equal(snapshot.platformBar.backgroundColor, 'rgb(0, 0, 204)');
-      assert.equal(snapshot.topBar.backgroundImage, 'none');
-      assert.equal(snapshot.platformBar.backgroundImage, 'none');
+      // A solid without stripes is 101 equal knots under a transparent stripe layer.
+      assertSettled(snapshot.topBar, Array(KNOT_COUNT).fill('rgb(0, 0, 204)'), TRANSPARENT, TRANSPARENT, 'the top bar');
+      assertSettled(
+        snapshot.platformBar,
+        Array(KNOT_COUNT).fill('rgb(0, 0, 204)'),
+        TRANSPARENT,
+        TRANSPARENT,
+        'the platform bar',
+      );
       assert.deepEqual(Object.values(snapshot.platformBar.textColors), Array(3).fill('rgb(34, 136, 68)'));
 
       await h.openConsole('disabled');
@@ -507,15 +731,15 @@ for (const browserName of browserTargets()) {
 
     test('selects black or white auto text for light and dark backgrounds', async () => {
       const dark = projectSettings({
-        platformBar: platformBar('#111111'),
+        platformBar: platformBar(solid('#111111')),
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
       });
       const light = projectSettings({
-        platformBar: platformBar('#f8f8f8'),
+        platformBar: platformBar(solid('#f8f8f8')),
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
       });
       const gray = projectSettings({
-        platformBar: platformBar('#777777'),
+        platformBar: platformBar(solid('#777777')),
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
       });
       await setStored(
@@ -541,17 +765,354 @@ for (const browserName of browserTargets()) {
       }
     });
 
+    test('paints gradient fills on both bars, alone and under stripes', async () => {
+      const sunrise = gradient(SUNRISE);
+      const gradientSettings = (stripes, platformBarText) =>
+        projectSettings({
+          palette: { enabled: true, entries: [{ id: 'sunrise', name: 'Sunrise', color: sunrise }] },
+          topBar: { enabled: true, color: { paletteId: null, custom: sunrise }, height: 7, stripes },
+          platformBar: { enabled: true, color: { paletteId: 'sunrise', custom: solid('#cc3300') }, stripes },
+          platformBarText,
+        });
+      await setStored(
+        h,
+        settings(
+          // Auto text over the gradient: black, which either stop alone would also pick, so this
+          // checks that auto text follows a gradient fill; unit tests pin the worst-stop choice.
+          rule(
+            'plain',
+            'plain',
+            'exact',
+            gradientSettings(false, { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true }),
+          ),
+          // A text color that references the gradient entry paints its own custom color instead.
+          rule(
+            'striped',
+            'striped',
+            'exact',
+            gradientSettings(true, { enabled: true, color: { paletteId: 'sunrise', custom: '#1122cc' }, auto: false }),
+          ),
+          // A solid to switch to from the gradient: every knot has to move to the one color.
+          rule(
+            'solid',
+            'solid',
+            'exact',
+            projectSettings({ topBar: topBar(solid('#0000cc')), platformBar: platformBar(solid('#0000cc')) }),
+          ),
+        ),
+      );
+      // Sunrise at every whole percent, linear in sRGB between the two stops.
+      const knots = rgbKnots(SUNRISE);
+      const striped = [knots, TRANSPARENT, 'rgba(0, 0, 0, 0.3)'];
+
+      await h.openConsole('plain');
+      let snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.topBar.backgroundColor === 'rgb(255, 109, 0)' &&
+          value.platformBar.backgroundColor === 'rgb(255, 109, 0)' &&
+          settledOn(value.topBar, knots) &&
+          settledOn(value.platformBar, knots) &&
+          Object.values(value.platformBar.textColors).every((color) => color === 'rgb(0, 0, 0)'),
+        'gradient fills and auto text did not settle for plain',
+      );
+      // The color underneath is the first stop, as before gradients.
+      assert.equal(snapshot.topBar.backgroundColor, 'rgb(255, 109, 0)');
+      assert.equal(snapshot.platformBar.backgroundColor, 'rgb(255, 109, 0)');
+      assertSettled(snapshot.topBar, knots, TRANSPARENT, TRANSPARENT, 'the top bar');
+      assertSettled(snapshot.platformBar, knots, TRANSPARENT, TRANSPARENT, 'the platform bar');
+      assert.deepEqual(Object.values(snapshot.platformBar.textColors), Array(3).fill('rgb(0, 0, 0)'));
+      let css = await colorStyle(h);
+      // The rule's own text is engine-independent: the target knots, the knots the fade started
+      // from, each painted knot's mix of the two, the transparent stripe pair, the image template and
+      // the fixed viewport box, so both bars show the same color at the same x. The first tint fades
+      // in from the knots' transparent initial value.
+      const knotHexes = hexKnots(SUNRISE);
+      assert.ok(
+        css.platformTransition.includes(
+          `#ocb-platform-bar { background-color: #ff6d00 !important; ${TO.map((name, k) => `${name}: ${knotHexes[k]} !important;`).join(' ')} ${FROM.map((name) => `${name}: ${TRANSPARENT} !important;`).join(' ')} ${STOPS.map((name, k) => `${name}: ${stopMix(k)} !important;`).join(' ')} --gcp-console-tint-stripe-light: transparent !important; --gcp-console-tint-stripe-dark: transparent !important; background-image: ${FILL_IMAGE} !important; background-attachment: fixed !important; background-position: 0 0 !important; background-size: auto !important;`,
+        ),
+        `unexpected platform bar rule: ${css.platformTransition}`,
+      );
+      // Never declared: a declaration would beat the animation and freeze the fade.
+      assert.ok(!css.platformTransition.includes(`${FADE}:`), 'the fade property is declared');
+      assert.deepEqual(css.overlayFill, [...knots, TRANSPARENT, TRANSPARENT]);
+      assert.deepEqual(css.platformFill, [...knots, TRANSPARENT, TRANSPARENT]);
+      assert.equal(css.overlayBackgroundAttachment, 'fixed');
+      everyLayer(css.platformBackgroundAttachment, 'fixed', 'the platform bar attachment');
+      everyLayer(css.platformBackgroundPosition, '0px 0px', 'the platform bar position');
+      everyLayer(css.platformBackgroundSize, 'auto', 'the platform bar size');
+
+      await pushHistoryUrl(h, '/?project=striped');
+      snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=striped') &&
+          settledOn(value.topBar, ...striped) &&
+          settledOn(value.platformBar, ...striped) &&
+          Object.values(value.platformBar.textColors).every((color) => color === 'rgb(17, 34, 204)'),
+        'striped gradient fills and the referenced text color did not settle for striped',
+      );
+      assertSettled(snapshot.topBar, ...striped, 'the top bar');
+      assertSettled(snapshot.platformBar, ...striped, 'the platform bar');
+      assert.equal(snapshot.platformBar.backgroundColor, 'rgb(255, 109, 0)');
+      assert.deepEqual(Object.values(snapshot.platformBar.textColors), Array(3).fill('rgb(17, 34, 204)'));
+      css = await colorStyle(h);
+      everyLayer(css.platformBackgroundAttachment, 'fixed', 'the platform bar attachment');
+      everyLayer(css.platformBackgroundPosition, '0px 0px', 'the platform bar position');
+      everyLayer(css.platformBackgroundSize, 'auto', 'the platform bar size');
+      // Stripes turned on by the switch are the registered stripe colors, which is what fades them.
+      assert.deepEqual(css.platformFill.slice(KNOT_COUNT), [TRANSPARENT, 'rgba(0, 0, 0, 0.3)']);
+
+      // From the gradient to a solid, the knots are what change; the image itself stays the same
+      // template, so the switch is a transition of the properties rather than a new image.
+      await pushHistoryUrl(h, '/?project=solid');
+      snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=solid') &&
+          value.platformBar.backgroundColor === 'rgb(0, 0, 204)' &&
+          settledOn(value.topBar, Array(KNOT_COUNT).fill('rgb(0, 0, 204)')) &&
+          settledOn(value.platformBar, Array(KNOT_COUNT).fill('rgb(0, 0, 204)')),
+        'the knots did not move from the gradient to the solid for solid',
+      );
+      css = await colorStyle(h);
+      assert.deepEqual(css.overlayFill, [...Array(KNOT_COUNT).fill('rgb(0, 0, 204)'), TRANSPARENT, TRANSPARENT]);
+      assert.deepEqual(css.platformFill, [...Array(KNOT_COUNT).fill('rgb(0, 0, 204)'), TRANSPARENT, TRANSPARENT]);
+      assert.equal(snapshot.platformBar.backgroundColor, 'rgb(0, 0, 204)');
+    });
+
+    // Orange to blue, the complementary pair whose straight sRGB line passes grey. Both the switch's
+    // real fade, paused partway, and a settled bar held halfway by an inline fade value (the fade
+    // property is declared nowhere, so it wins) must paint a knot on the shorter OKLCH arc via
+    // magenta, as saturated as the ends (the sRGB midpoint has a chroma of about 0.04).
+    test('crossfades complementary colors along the hue arc instead of through grey', async () => {
+      const bars = (color) => projectSettings({ topBar: topBar(color), platformBar: platformBar(color) });
+      await setStored(
+        h,
+        settings(
+          rule('orange', 'orange', 'exact', bars(solid('#ff6d00'))),
+          rule('blue', 'blue', 'exact', bars(solid('#1a73e8'))),
+        ),
+      );
+      await h.openConsole('orange');
+      await snapshotWhen(
+        h,
+        (value) =>
+          settledOn(value.topBar, Array(KNOT_COUNT).fill('rgb(255, 109, 0)')) &&
+          settledOn(value.platformBar, Array(KNOT_COUNT).fill('rgb(255, 109, 0)')),
+        'the bars did not settle on orange',
+      );
+      // The switch's own fade, caught on the next frames and paused at 150ms of its 300ms: the knots
+      // are then on their way, so the fade property is between its ends. The first knot and the
+      // middle one, at 50%, take the same arc.
+      const arcKnots = [STOPS[0], STOPS[50]];
+      const onArc = (knot) => {
+        const [, , chroma, hue] = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)/.exec(knot) ?? [];
+        return Number(chroma) > 0.15 && Number(hue) > 258 && Number(hue) < 360;
+      };
+      const caught = await catchFade(h, '/?project=blue', [150], arcKnots);
+      for (const [label, states] of [
+        ['top bar', caught[0]],
+        ['platform bar', caught[1]],
+      ]) {
+        assert.ok(states, `the ${label} started no fade`);
+        const [state] = states;
+        assert.ok(Number(state.fade) > 0 && Number(state.fade) < 1, `the ${label} fade at 150ms: ${state.fade}`);
+        state.knots.forEach((knot, i) => {
+          assert.ok(
+            onArc(knot),
+            `the ${label} ${arcKnots[i]} at 150ms should be a saturated hue between blue and orange the short way, got ${knot}`,
+          );
+        });
+      }
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=blue') &&
+          settledOn(value.topBar, Array(KNOT_COUNT).fill('rgb(26, 115, 232)')) &&
+          settledOn(value.platformBar, Array(KNOT_COUNT).fill('rgb(26, 115, 232)')),
+        'the bars did not settle on blue',
+      );
+      const halfway = await h.browser.execute((names) => {
+        const bar = [...document.documentElement.children].find(
+          (element) => element.tagName === 'DIV' && element.style.zIndex === '2147483647',
+        );
+        bar.style.setProperty('--gcp-console-tint-fade', '0.5');
+        const style = getComputedStyle(bar);
+        const knots = names.map((name) => style.getPropertyValue(name));
+        bar.style.removeProperty('--gcp-console-tint-fade');
+        return knots;
+      }, arcKnots);
+      halfway.forEach((knot, i) => {
+        assert.ok(
+          onArc(knot),
+          `the halfway ${arcKnots[i]} should be a saturated hue between blue and orange the short way, got ${knot}`,
+        );
+      });
+    });
+
+    // A grey's OKLCH hue is powerless, so a mix in OKLCH would paint the other end's hue, or hue 0,
+    // into it at rest. Greys mix in Oklab: settled, the painted knots are the grey itself whether
+    // the bar faded in from transparent or from orange.
+    test('settles a grey fill on the grey itself, whatever it faded from', async () => {
+      const bars = (color) => projectSettings({ topBar: topBar(color), platformBar: platformBar(color) });
+      await setStored(
+        h,
+        settings(
+          rule('grey', 'grey', 'exact', bars(solid('#5f6368'))),
+          rule('orange', 'orange', 'exact', bars(solid('#ff6d00'))),
+        ),
+      );
+      const grey = Array(KNOT_COUNT).fill('rgb(95, 99, 104)');
+      await h.openConsole('grey');
+      await snapshotWhen(
+        h,
+        (value) => settledOn(value.topBar, grey) && settledOn(value.platformBar, grey),
+        'the bars did not paint the grey on a first tint',
+      );
+      await pushHistoryUrl(h, '/?project=orange');
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=orange') &&
+          settledOn(value.topBar, Array(KNOT_COUNT).fill('rgb(255, 109, 0)')) &&
+          settledOn(value.platformBar, Array(KNOT_COUNT).fill('rgb(255, 109, 0)')),
+        'the bars did not settle on orange',
+      );
+      await pushHistoryUrl(h, '/?project=grey');
+      const snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=grey') && settledOn(value.topBar, grey) && settledOn(value.platformBar, grey),
+        'the bars did not paint the grey after orange',
+      );
+      assertSettled(snapshot.topBar, grey, TRANSPARENT, TRANSPARENT, 'the top bar');
+      assertSettled(snapshot.platformBar, grey, TRANSPARENT, TRANSPARENT, 'the platform bar');
+    });
+
+    // Stops at uneven whole percents: every knot is the color at its percent, on both bars, and the
+    // bars fade from the gradient to a solid and back.
+    test('settles a gradient with eight positioned stops on both bars', async () => {
+      const bars = (color) => projectSettings({ topBar: topBar(color), platformBar: platformBar(color) });
+      await setStored(
+        h,
+        settings(
+          rule('eight', 'eight', 'exact', bars(gradient(EIGHT_STOPS))),
+          rule('blue', 'blue', 'exact', bars(solid('#1a73e8'))),
+        ),
+      );
+      const knots = rgbKnots(EIGHT_STOPS);
+      const blue = Array(KNOT_COUNT).fill('rgb(26, 115, 232)');
+      await h.openConsole('eight');
+      let snapshot = await snapshotWhen(
+        h,
+        (value) => settledOn(value.topBar, knots) && settledOn(value.platformBar, knots),
+        'the bars did not settle on the eight stops',
+      );
+      assertSettled(snapshot.topBar, knots, TRANSPARENT, TRANSPARENT, 'the top bar');
+      assertSettled(snapshot.platformBar, knots, TRANSPARENT, TRANSPARENT, 'the platform bar');
+      await pushHistoryUrl(h, '/?project=blue');
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=blue') && settledOn(value.topBar, blue) && settledOn(value.platformBar, blue),
+        'the bars did not settle on blue after the eight stops',
+      );
+      await pushHistoryUrl(h, '/?project=eight');
+      snapshot = await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=eight') && settledOn(value.topBar, knots) && settledOn(value.platformBar, knots),
+        'the bars did not settle back on the eight stops after blue',
+      );
+      assertSettled(snapshot.topBar, knots, TRANSPARENT, TRANSPARENT, 'the top bar');
+      assertSettled(snapshot.platformBar, knots, TRANSPARENT, TRANSPARENT, 'the platform bar');
+    });
+
+    // At 101 knots, a knot that mixes in another space than its neighbour paints a 1% band mid-fade
+    // (knotMixes keeps one space per bar). Caught at 75, 150 and 225ms of a gradient-to-solid fade,
+    // neighbouring painted knots stay within 16 per 8-bit channel: these gradients step at most 6
+    // between knots at rest, while mixing each knot in its own space measured seams of 35 to 211 in
+    // such fades.
+    test('crossfades a gradient to a solid without a seam between neighbouring knots', async () => {
+      const bars = (color) => projectSettings({ topBar: topBar(color), platformBar: platformBar(color) });
+      const redCyan = [
+        { color: '#ea4335', position: 0 },
+        { color: '#00bcd4', position: 100 },
+      ];
+      const switches = [
+        ['sunrise', SUNRISE, 'green', 'rgb(52, 168, 83)'],
+        ['redcyan', redCyan, 'green', 'rgb(52, 168, 83)'],
+        ['eight', EIGHT_STOPS, 'blue', 'rgb(26, 115, 232)'],
+      ];
+      await setStored(
+        h,
+        settings(
+          ...switches.map(([id, stops]) => rule(id, id, 'exact', bars(gradient(stops)))),
+          rule('green', 'green', 'exact', bars(solid('#34a853'))),
+          rule('blue', 'blue', 'exact', bars(solid('#1a73e8'))),
+        ),
+      );
+      const times = [75, 150, 225];
+      for (const [id, stops, solidId, solid] of switches) {
+        const knots = rgbKnots(stops);
+        await h.openConsole(id);
+        await snapshotWhen(
+          h,
+          (value) => settledOn(value.topBar, knots) && settledOn(value.platformBar, knots),
+          `the bars did not settle on ${id}`,
+        );
+        const caught = await catchFade(h, `/?project=${solidId}`, times, STOPS);
+        for (const [label, states] of [
+          ['top bar', caught[0]],
+          ['platform bar', caught[1]],
+        ]) {
+          assert.ok(states, `the ${label} started no fade from ${id}`);
+          states.forEach((state, t) => {
+            const at = `the ${label} from ${id} to ${solidId} at ${times[t]}ms`;
+            assert.ok(Number(state.fade) > 0 && Number(state.fade) < 1, `${at}: fade ${state.fade}`);
+            const painted = state.knots.map(paintedRgb);
+            assert.ok(
+              painted.every((rgb) => rgb?.every(Number.isFinite)),
+              `${at}: a knot is not an opaque Oklab or OKLCH color: ${state.knots}`,
+            );
+            const steps = painted
+              .slice(1)
+              .map((rgb, k) => Math.max(...rgb.map((channel, i) => Math.abs(channel - painted[k][i]))));
+            const widest = Math.max(...steps);
+            assert.ok(
+              widest <= 16,
+              `${at}: knots ${steps.indexOf(widest)} and ${steps.indexOf(widest) + 1} differ by ${widest}: ${state.knots}`,
+            );
+          });
+        }
+        const target = Array(KNOT_COUNT).fill(solid);
+        await snapshotWhen(
+          h,
+          (value) =>
+            value.href.includes(`project=${solidId}`) &&
+            settledOn(value.topBar, target) &&
+            settledOn(value.platformBar, target),
+          `the bars did not settle on ${solidId} after ${id}`,
+        );
+      }
+    });
+
     test('reacts to push, replace, back, and forward without reloading, and to shared storage changes', async () => {
-      const alpha = projectSettings({ topBar: topBar('#cc0000'), platformBar: platformBar('#cc0000') });
-      const beta = projectSettings({ topBar: topBar('#0000cc'), platformBar: platformBar('#0000cc') });
+      const alpha = projectSettings({ topBar: topBar(solid('#cc0000')), platformBar: platformBar(solid('#cc0000')) });
+      const beta = projectSettings({ topBar: topBar(solid('#0000cc')), platformBar: platformBar(solid('#0000cc')) });
       await setStored(h, settings(rule('alpha', 'alpha', 'exact', alpha), rule('beta', 'beta', 'exact', beta)));
-      await h.openConsole('alpha');
+      // A tab of its own: the history assertions count entries, and the shared console tab has
+      // collected one per navigation of every test before this one, up to the browsers' cap of 50
+      // session history entries, where a push drops the oldest entry and the length stays put.
+      const consoleHandle = await openTab(h.browser, browserName, 'https://console.cloud.google.com/?project=alpha');
       const first = await h.browser.execute(() => {
         window.__e2ePageIdentity = crypto.randomUUID();
         return { identity: window.__e2ePageIdentity, length: history.length };
       });
       const clickOnConsole = async (selector) => {
-        await h.browser.switchToWindow(h.mockHandle);
+        await h.browser.switchToWindow(consoleHandle);
         await h.browser.$(selector).click();
       };
       const identityIsStable = async () => h.browser.execute(() => window.__e2ePageIdentity);
@@ -561,6 +1122,7 @@ for (const browserName of browserTargets()) {
         h,
         (current) => current.href.includes('project=beta') && current.topBar.backgroundColor === 'rgb(0, 0, 204)',
         'pushState did not apply beta',
+        consoleHandle,
       );
       assert.equal(snapshot.topBar.backgroundColor, 'rgb(0, 0, 204)');
       assert.equal(await identityIsStable(), first.identity, 'pushState performed a full page reload');
@@ -571,6 +1133,7 @@ for (const browserName of browserTargets()) {
         h,
         (current) => current.href.includes('project=alpha') && current.topBar.backgroundColor === 'rgb(204, 0, 0)',
         'pushState did not return to alpha',
+        consoleHandle,
       );
       assert.equal(
         await h.browser.execute(() => history.length),
@@ -583,6 +1146,7 @@ for (const browserName of browserTargets()) {
         h,
         (current) => current.href.includes('project=beta') && current.topBar.backgroundColor === 'rgb(0, 0, 204)',
         'replaceState did not apply beta',
+        consoleHandle,
       );
       assert.equal(
         await h.browser.execute(() => history.length),
@@ -596,20 +1160,23 @@ for (const browserName of browserTargets()) {
         h,
         (current) => current.href.includes('project=alpha') && current.topBar.backgroundColor === 'rgb(204, 0, 0)',
         'pushState after replace did not return to alpha',
+        consoleHandle,
       );
-      await h.browser.switchToWindow(h.mockHandle);
+      await h.browser.switchToWindow(consoleHandle);
       await h.browser.back();
       snapshot = await snapshotWhen(
         h,
         (current) => current.href.includes('project=beta') && current.platformBar.backgroundColor === 'rgb(0, 0, 204)',
         'back did not restore beta',
+        consoleHandle,
       );
-      await h.browser.switchToWindow(h.mockHandle);
+      await h.browser.switchToWindow(consoleHandle);
       await h.browser.forward();
       snapshot = await snapshotWhen(
         h,
         (current) => current.href.includes('project=alpha') && current.platformBar.backgroundColor === 'rgb(204, 0, 0)',
         'forward did not restore alpha',
+        consoleHandle,
       );
       assert.equal(await identityIsStable(), first.identity, 'history navigation performed a full page reload');
 
@@ -626,7 +1193,10 @@ for (const browserName of browserTargets()) {
           'second tab did not load the initial content script and project tint',
           secondHandle,
         );
-        const shared = projectSettings({ topBar: topBar('#00aa00'), platformBar: platformBar('#00aa00') });
+        const shared = projectSettings({
+          topBar: topBar(solid('#00aa00')),
+          platformBar: platformBar(solid('#00aa00')),
+        });
         await setStored(h, settings(rule('alpha', 'alpha', 'exact', shared), rule('beta', 'beta', 'exact', beta)));
         snapshot = await snapshotWhen(
           h,
@@ -635,6 +1205,7 @@ for (const browserName of browserTargets()) {
             current.topBar.backgroundColor === 'rgb(0, 170, 0)' &&
             current.platformBar.backgroundColor === 'rgb(0, 170, 0)',
           'first tab did not receive storage.onChanged',
+          consoleHandle,
         );
         await snapshotWhen(
           h,
@@ -656,7 +1227,7 @@ for (const browserName of browserTargets()) {
           }
         });
         assert.equal(unrelatedChange?.ok, true, unrelatedChange?.message || 'Failed to write unrelated storage key');
-        for (const handle of [h.mockHandle, secondHandle]) {
+        for (const handle of [consoleHandle, secondHandle]) {
           await assertStable(
             () => h.snapshotConsole(handle),
             (current, message) => {
@@ -676,6 +1247,10 @@ for (const browserName of browserTargets()) {
           await h.browser.switchToWindow(secondHandle);
           await h.browser.closeWindow();
         }
+        if ((await h.browser.getWindowHandles()).includes(consoleHandle)) {
+          await h.browser.switchToWindow(consoleHandle);
+          await h.browser.closeWindow();
+        }
         await h.browser.switchToWindow(h.mockHandle);
       }
       await h.reloadPanel();
@@ -688,40 +1263,170 @@ for (const browserName of browserTargets()) {
       assert.equal(snapshot.topBar.backgroundColor, 'rgb(0, 170, 0)', 'storage did not persist through panel reload');
     });
 
-    test('recovers legacy and corrupt storage on extension reload while retaining current and newer schemas', async () => {
-      const legacy = {
-        projectRules: [rule('legacy', 'alpha', 'exact', projectSettings({ topBar: topBar('#cc0000') }))],
-      };
-      const old = {
-        schemaVersion: '0.0.9',
-        projectRules: [rule('old', 'alpha', 'exact', projectSettings({ topBar: topBar('#cc0000') }))],
-      };
-      const corrupt = 'not-a-settings-record';
+    test('stops tinting when unreadable settings are written and tints again when readable ones follow', async () => {
+      const paints = (color) =>
+        projectSettings({ topBar: topBar(solid(color)), platformBar: platformBar(solid(color)) });
+      const tintedWith = (rgb) => (value) =>
+        value.topBar.display === 'block' &&
+        value.topBar.backgroundColor === rgb &&
+        value.platformBar.backgroundColor === rgb;
+      await setStored(h, settings(rule('alpha', 'alpha', 'exact', paints('#cc0000'))));
+      await snapshotWhen(h, tintedWith('rgb(204, 0, 0)'), 'readable settings did not tint alpha');
+
+      // The same rule with a pattern that is not a string: the value is refused whole, so the tint
+      // goes, as no tab opened now would paint it either.
+      await setStored(h, settings({ ...rule('alpha', 'alpha', 'exact', paints('#cc0000')), pattern: 42 }));
+      await snapshotWhen(h, untinted, 'unreadable settings left the tint on');
+      await assertStable(
+        () => h.snapshotConsole(),
+        (value, message) => assertUntinted(value, message),
+        'the tint came back while storage was unreadable',
+      );
+
+      await setStored(h, settings(rule('alpha', 'alpha', 'exact', paints('#00aa00'))));
+      await snapshotWhen(h, tintedWith('rgb(0, 170, 0)'), 'readable settings after unreadable ones did not tint again');
+
+      // A removed key is no value to read: the tab keeps what it last read. (The harness clears
+      // storage between tests the same way.)
+      await h.browser.switchToWindow(h.panelHandle);
+      const removal = await h.browser.execute(async () => {
+        try {
+          await (globalThis.browser || globalThis.chrome).storage.local.remove('tintSettings');
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, message: String(error) };
+        }
+      });
+      assert.equal(removal?.ok, true, removal?.message || 'Failed to remove the stored settings');
+      await assertStable(
+        () => h.snapshotConsole(),
+        (value, message) => assert.ok(tintedWith('rgb(0, 170, 0)')(value), message),
+        'removing the stored settings changed the tint',
+      );
+
+      // A stored null is a value, and not a settings record: refused like any other.
+      await setStored(h, null);
+      await snapshotWhen(h, untinted, 'a stored null left the tint on');
+      await setStored(h, settings(rule('alpha', 'alpha', 'exact', paints('#0000cc'))));
+      await snapshotWhen(h, tintedWith('rgb(0, 0, 204)'), 'readable settings after a stored null did not tint again');
+    });
+
+    test('leaves unreadable storage as it is and paints nothing from it after an extension reload', async () => {
+      // Each would paint alpha red if it were repaired instead of refused.
+      const red = projectSettings({ topBar: topBar(solid('#cc0000')) });
       for (const [name, stored] of [
-        ['unversioned legacy', legacy],
-        ['older schema', old],
-        ['corrupt storage', corrupt],
+        ['unversioned storage', { projectRules: [rule('legacy', 'alpha', 'exact', red)] }],
+        ['an unsupported older schema', { schemaVersion: '0.0.9', projectRules: [rule('old', 'alpha', 'exact', red)] }],
+        ['storage that is not a settings record', 'not-a-settings-record'],
+        // A rule the reader refuses beside one it could read: the whole value is refused, so the
+        // readable rule does not paint alpha either.
+        [
+          'a current schema with an invalid field',
+          settings({ ...rule('bad-pattern', 'discard-me'), pattern: 42 }, rule('good', 'alpha', 'exact', red)),
+        ],
+        [
+          'a schema newer than this build',
+          { ...settings(rule('future', 'alpha', 'exact', red)), schemaVersion: '99.0.0' },
+        ],
       ]) {
         await setStored(h, stored);
         await h.reloadExtension();
-        const migrated = await waitSettings(
+        // The side panel refuses it as well and shows its recovery screen (driven in ui.e2e.mjs).
+        await h.openPanel();
+        await h.browser.waitUntil(
+          async () => {
+            const alert = await h.browser.$('[role="alert"]');
+            return (await alert.isExisting()) && /Couldn’t read saved settings/.test(await alert.getText());
+          },
+          { timeout: 5000, interval: 100, timeoutMsg: `${name}: the side panel did not refuse it` },
+        );
+        await snapshotWhen(
           h,
-          (value) =>
-            value?.schemaVersion === EFFECTIVE_VERSION &&
-            Array.isArray(value.projectRules) &&
-            value.projectRules.length === 0,
-          `${name} recovery did not finish after extension reload`,
+          (value) => value.href.includes('project=alpha') && untinted(value),
+          `${name}: the content script did not run untinted in the fresh document`,
         );
-        assert.equal(
-          migrated.schemaVersion,
-          EFFECTIVE_VERSION,
-          `${name} was not stamped with the current extension version`,
+        await assertStable(
+          () => h.snapshotConsole(),
+          (value, message) => assertUntinted(value, message),
+          `${name}: the fresh document painted from unreadable storage`,
         );
-        assert.deepEqual(migrated.projectRules, [], `${name} did not fall back to safe defaults`);
+        await assertStable(
+          () => h.readSettings(),
+          (value, message) => assert.deepEqual(value, stored, message),
+          `${name}: unreadable storage was rewritten after extension reload`,
+        );
       }
+    });
 
-      // Written before the theme existed: the 0.3.0 migration step adds theme 'auto' and keeps the rule.
-      const preThemeRule = rule('pre-theme', 'alpha', 'exact', projectSettings({ topBar: topBar('#cc0000') }));
+    test('migrates 0.1.3 and pre-theme storage on extension reload and keeps a current schema as it is', async () => {
+      // As v0.1.3 could store it: no theme, the bars' custom colors as '#rrggbb' strings, and a
+      // height that is not a whole number, which v0.1.3 rounded only when painting. The 0.2.0 step
+      // stores the 3 it painted and the 0.5.0 step wraps the bar colors as solid fills.
+      const v013 = {
+        schemaVersion: '0.1.3',
+        projectRules: [
+          rule(
+            'v013',
+            'alpha',
+            'exact',
+            projectSettings({
+              topBar: topBar('#cc0000', 2.5),
+              platformBar: { enabled: false, color: { paletteId: null, custom: '#234567' }, stripes: false },
+            }),
+          ),
+        ],
+      };
+      const v013Migrated = settings(
+        rule('v013', 'alpha', 'exact', projectSettings({ topBar: topBar(solid('#cc0000'), 3) })),
+      );
+      await setStored(h, v013);
+      // Read in memory through the same steps before anything is written.
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+          value.topBar.height === '3px',
+        '0.1.3 storage did not render its rounded height before the extension reload',
+      );
+      await h.reloadExtension();
+      const v013Reloaded = await waitSettings(
+        h,
+        (value) => value?.schemaVersion === EFFECTIVE_VERSION,
+        '0.1.3 schema migration did not finish after extension reload',
+      );
+      assert.deepEqual(v013Reloaded, v013Migrated, '0.1.3 storage was not migrated with its height rounded to 3');
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=alpha') &&
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+          value.topBar.height === '3px',
+        'migrated 0.1.3 tint and height did not render in the fresh document',
+      );
+
+      // Written before the theme existed, with the bars' custom colors as plain '#rrggbb' strings:
+      // the 0.3.0 migration step adds theme 'auto' and keeps the rule, and the 0.5.0 step wraps
+      // those two colors as solid fills, leaving the text's a string.
+      const preThemeRule = rule(
+        'pre-theme',
+        'alpha',
+        'exact',
+        projectSettings({
+          topBar: topBar('#cc0000'),
+          platformBar: { enabled: false, color: { paletteId: null, custom: '#234567' }, stripes: false },
+        }),
+      );
+      const preThemeMigratedRule = rule(
+        'pre-theme',
+        'alpha',
+        'exact',
+        projectSettings({
+          topBar: topBar(solid('#cc0000')),
+          platformBar: { enabled: false, color: { paletteId: null, custom: solid('#234567') }, stripes: false },
+        }),
+      );
       await setStored(h, { schemaVersion: '0.2.0', projectRules: [preThemeRule] });
       await h.reloadExtension();
       const preThemeMigrated = await waitSettings(
@@ -731,11 +1436,13 @@ for (const browserName of browserTargets()) {
       );
       assert.deepEqual(
         preThemeMigrated,
-        { schemaVersion: EFFECTIVE_VERSION, theme: 'auto', projectRules: [preThemeRule] },
+        { schemaVersion: EFFECTIVE_VERSION, theme: 'auto', projectRules: [preThemeMigratedRule] },
         'pre-theme schema was not migrated to the current shape with theme auto',
       );
 
-      const current = settings(rule('current', 'alpha', 'exact', projectSettings({ topBar: topBar('#00aa00') })));
+      const current = settings(
+        rule('current', 'alpha', 'exact', projectSettings({ topBar: topBar(solid('#00aa00')) })),
+      );
       await setStored(h, current);
       await h.reloadExtension();
       const currentReloaded = await waitSettings(
@@ -758,108 +1465,12 @@ for (const browserName of browserTargets()) {
         (value, message) => assert.deepEqual(value, current, message),
         'current schema raw settings changed after the fresh document rendered',
       );
-
-      const partiallyCorrupt = {
-        schemaVersion: EFFECTIVE_VERSION,
-        projectRules: [
-          { ...rule('bad-pattern', 'discard-me'), pattern: 42 },
-          rule(
-            'good',
-            'alpha',
-            'exact',
-            projectSettings({
-              palette: {
-                enabled: true,
-                entries: [{ id: 'brand', name: 'Brand', color: '#00aa00' }, 'invalid-palette-entry'],
-              },
-              topBar: {
-                enabled: true,
-                color: { paletteId: 'invalid-entry', custom: '#cc3366' },
-                height: 0,
-                stripes: false,
-              },
-            }),
-          ),
-        ],
-      };
-      await setStored(h, partiallyCorrupt);
-      await h.reloadExtension();
-
-      await h.openPanel();
-      const browser = h.browser;
-      await browser.waitUntil(async () => (await browser.$$('[draggable="true"]')).length === 1, {
-        timeout: 5000,
-        interval: 100,
-        timeoutMsg: 'partially corrupt settings did not render only the valid rule',
-      });
-      const visibleRules = await browser.$$('[draggable="true"]');
-      assert.equal(visibleRules.length, 1);
-      assert.match(await visibleRules[0].getText(), /alpha/);
-      await visibleRules[0].$('button[aria-label="Edit"]').click();
-      await browser.$('button[aria-label="Back"]').waitForDisplayed();
-      assert.equal(await browser.$('input[aria-label="Top bar height"]').getValue(), '4');
-      const picker = await browser.$('button[aria-label="Top bar color"]');
-      assert.equal(await picker.getText(), '#cc3366', 'a dangling palette reference should use its custom color');
-      await picker.click();
-      await browser.$('button[aria-label="Brand"]').waitForDisplayed();
-      const visiblePaletteEntries = await browser.$$('[role="dialog"] button[aria-label]');
-      assert.deepEqual(
-        await visiblePaletteEntries.map((entry) => entry.getAttribute('aria-label')),
-        ['Brand'],
-        'the invalid palette sibling should be excluded while Brand remains visible',
-      );
-      await browser.keys('Escape');
-
-      await h.openConsole('alpha');
-      const recovered = await snapshotWhen(
-        h,
-        (value) =>
-          value.topBar.display === 'block' &&
-          value.topBar.backgroundColor === 'rgb(204, 51, 102)' &&
-          value.topBar.height === '4px',
-        'partially corrupt CSS did not use the custom fallback color and default height',
-      );
-      assert.equal(recovered.topBar.display, 'block');
-      assert.equal(recovered.topBar.backgroundColor, 'rgb(204, 51, 102)');
-      assert.equal(recovered.topBar.height, '4px');
-      await assertStable(
-        () => h.readSettings(),
-        (value, message) => assert.deepEqual(value, partiallyCorrupt, message),
-        'partially corrupt current-schema raw settings changed after the CSS fallback rendered',
-      );
-
-      const newer = {
-        ...settings(rule('future', 'alpha', 'exact', projectSettings({ topBar: topBar('#0000cc') }))),
-        schemaVersion: '99.0.0',
-      };
-      await setStored(h, newer);
-      await h.reloadExtension();
-      const newerReloaded = await waitSettings(
-        h,
-        (value) => isDeepStrictEqual(value, newer),
-        'newer schema did not remain intact after extension reload',
-      );
-      assert.deepEqual(newerReloaded, newer, 'newer schema data did not remain intact after extension reload');
-      await snapshotWhen(
-        h,
-        (value) =>
-          value.href.includes('project=alpha') &&
-          value.topBar.display === 'block' &&
-          value.topBar.backgroundColor === 'rgb(0, 0, 204)' &&
-          value.topBar.height === '7px',
-        'newer schema tint and height did not render in the fresh document',
-      );
-      await assertStable(
-        () => h.readSettings(),
-        (value, message) => assert.deepEqual(value, newer, message),
-        'newer schema raw settings changed after the fresh document rendered',
-      );
     });
 
     test('reapplies scoped CSS when the mock platform bar is replaced', async () => {
       const project = projectSettings({
-        topBar: topBar('#aa00aa'),
-        platformBar: platformBar('#00aa00'),
+        topBar: topBar(solid('#aa00aa')),
+        platformBar: platformBar(solid('#00aa00')),
         platformBarText: textColor('#0000cc'),
       });
       await setStored(h, settings(rule('alpha', 'alpha', 'exact', project)));
@@ -913,8 +1524,8 @@ for (const browserName of browserTargets()) {
               'alpha',
               'exact',
               projectSettings({
-                topBar: topBar('#cc0000'),
-                platformBar: platformBar('#00aa00'),
+                topBar: topBar(solid('#cc0000')),
+                platformBar: platformBar(solid('#00aa00')),
                 platformBarText: textColor('#0000cc'),
               }),
             ),
@@ -945,6 +1556,12 @@ for (const browserName of browserTargets()) {
           /\.cfc-platform-bar-left \*, \.cfc-platform-bar-right \*, \.pcc-platform-bar-button \*\s*\{[^}]*color:/,
         );
         assert.doesNotMatch(css.platformTransition, /transition\s*:/);
+        // No fade either: the knots mix from their own targets. That no fade animation is created is
+        // checked in content.test.ts, since a finished one leaves getAnimations() at once.
+        assert.ok(
+          css.platformTransition.includes(`${FROM[0]}: #00aa00 !important;`),
+          `the platform bar faded from something: ${css.platformTransition}`,
+        );
       } catch (error) {
         try {
           await h.captureFailure('reduced motion styles');

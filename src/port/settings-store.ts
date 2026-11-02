@@ -57,25 +57,66 @@ export class SettingsImportError extends Error {
   }
 }
 
+// Why the stored settings could not be read. The same reasons as an import refusal minus the two
+// that only a file can have: storage holds a value, not text (invalid-json), and storage with no
+// rules is a legitimate state (no-rules).
+export type StoredSettingsFailure = Exclude<SettingsImportFailure, { reason: 'invalid-json' } | { reason: 'no-rules' }>;
+
+function storedFailureMessage(failure: StoredSettingsFailure): string {
+  switch (failure.reason) {
+    case 'not-settings':
+      return 'Saved settings are not a GCP Console Tint settings record';
+    case 'unsupported-version':
+      return `Saved settings version ${failure.version} is not supported`;
+    case 'newer-version':
+      return `Saved settings version ${failure.version} is newer than this extension`;
+    case 'migration-failed':
+      return `Saved settings version ${failure.version} could not be migrated`;
+    case 'invalid-fields':
+      return `Saved settings have missing or invalid fields (${failure.issues.length}${failure.validationStopped ? '+' : ''})`;
+    default:
+      return assertNever(failure);
+  }
+}
+
+// Thrown by load() and handed to watch()'s onError when the stored value cannot be read. Nothing is
+// repaired with a default: the reader stops, and the stored value stays as it was. `raw` is that
+// value exactly as storage returned it, so the side panel can export what failed to load without
+// reading storage again (which may have changed by then).
+export class StoredSettingsError extends Error {
+  constructor(
+    readonly failure: StoredSettingsFailure,
+    readonly raw: unknown,
+    options?: { cause?: unknown },
+  ) {
+    super(storedFailureMessage(failure), options);
+    this.name = 'StoredSettingsError';
+  }
+}
+
 // Driven-side port: the persistence boundary for TintSettings. The browser.storage
 // implementation lives in adapter/out; driving adapters (side panel, content script)
 // depend on this interface instead of the storage API.
 export interface SettingsStore {
-  // Reads whatever is stored and returns it folded to the current schema shape
-  // (in-memory migration; never writes).
+  // Reads what is stored and returns it folded to the current schema shape (in-memory migration;
+  // never writes). Strict, with the same checks as importJson: an absent value (an unconfigured
+  // install) reads as no rules under the default theme, and anything else that cannot be read
+  // whole rejects with StoredSettingsError. Any other rejection is the storage API's own failure.
   load(): Promise<TintSettings>;
   // Stamps the effective schema version and resolves when storage has persisted the value.
   save(settings: TintSettings): Promise<void>;
-  // Invokes onChange with current-shape settings whenever the stored value changes.
-  // Deletions are ignored. Listeners live for the lifetime of the context.
-  watch(onChange: (settings: TintSettings) => void): void;
+  // Invokes onChange with current-shape settings whenever the stored value changes, or onError
+  // with the StoredSettingsError when the new value cannot be read (see load()). Deletions are
+  // ignored. Listeners live for the lifetime of the context.
+  watch(onChange: (settings: TintSettings) => void, onError: (error: unknown) => void): void;
   // Serializes settings in the stored JSON shape, stamped with CURRENT_SCHEMA_VERSION (the data
   // shape) and pretty-printed (2-space). Storage saves use the effective release version, so
   // exports from releases with the same shape share a stamp; importJson can migrate legacy
   // files stamped with a release version within this build's supported schema version range.
   exportJson(settings: TintSettings): string;
   // Parses text written by exportJson (or the stored shape of any past release) into
-  // current-shape settings. Strict, unlike load(): every field the export writes must be present
+  // current-shape settings. The same checks as load(), and a file must also hold at least one
+  // rule. Strict: every field the export writes must be present
   // with the right JSON type (checked by the adapter) and hold a value the domain accepts
   // (checked by the domain's own factories) — nothing is repaired with a default. Throws
   // SettingsImportError instead of silently returning defaults, so the caller can show the user

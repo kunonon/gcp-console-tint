@@ -13,9 +13,10 @@ export const VersionComparisonResult = {
 export type VersionComparisonResult = (typeof VersionComparisonResult)[keyof typeof VersionComparisonResult];
 
 // Compares two dot-separated numeric version strings (e.g. "0.1.0" vs "0.2.0").
-// Defensive: if either side fails to parse as a dot-separated sequence of non-negative
-// integers, the comparison resolves to Older, so callers gating on "not Older" reject
-// invalid input rather than accept it.
+// Defensive: if either side has a segment that Number() cannot read as a finite non-negative
+// number, the comparison resolves to Older, so callers gating on "not Older" reject it.
+// Segments are read with Number(), so this is not a format check ('' reads as 0, '0x10' as 16):
+// callers comparing untrusted stamps validate the format first (parseSettingsFile does).
 export function compareVersions(a: string, b: string): VersionComparisonResult {
   const parse = (value: string): number[] | null => {
     if (typeof value !== 'string' || value.trim() === '') return null;

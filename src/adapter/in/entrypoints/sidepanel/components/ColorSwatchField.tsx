@@ -1,21 +1,26 @@
 import { Popover } from '@heroui/react';
-import { useState } from 'react';
-import type { Color } from '../../../../../domain/color';
-import ColorEditor from './ColorEditor';
+import { useRef, useState } from 'react';
+import { type Fill, Gradient } from '../../../../../domain/gradient';
+import { fillBackground } from '../../../fill-css';
+import FillEditor, { type KeptGradient } from './FillEditor';
 
 interface ColorSwatchFieldProps {
   ariaLabel: string;
-  /** '#rrggbb', lowercase. */
-  value: string;
-  onChange: (color: Color) => void;
+  value: Fill;
+  onChange: (fill: Fill) => void;
   hexHidableOnNarrow?: boolean;
 }
 
 // A palette row's colour: the bead-and-hex control every tinted surface already uses as its
-// trigger, opening the colour editor in a popover of the same family as the surface pickers.
+// trigger, opening the fill editor (a colour, or a gradient's stops) in a popover of the same
+// family as the surface pickers.
 export default function ColorSwatchField({ ariaLabel, value, onChange, hexHidableOnNarrow }: ColorSwatchFieldProps) {
   // Controlled so Enter in the hex input can close it (focus then returns to the trigger).
   const [open, setOpen] = useState(false);
+  // As in PaletteColorPicker: the gradient a switch to Solid left outlives the popover's content.
+  const lastGradient = useRef<KeptGradient | null>(null);
+  const { color, image } = fillBackground(value);
+  const label = value instanceof Gradient ? 'Gradient' : value.toHex();
 
   return (
     <Popover isOpen={open} onOpenChange={setOpen}>
@@ -33,10 +38,11 @@ export default function ColorSwatchField({ ariaLabel, value, onChange, hexHidabl
           <span
             aria-hidden="true"
             className="color-chip h-5 w-5 rounded-full border"
-            style={{ backgroundColor: value }}
+            // Longhands, as in PaletteColorPicker.
+            style={{ backgroundColor: color, backgroundImage: image }}
           />
           <span className={`font-mono text-sm text-muted ${hexHidableOnNarrow ? 'hidden @min-[220px]:inline' : ''}`}>
-            {value}
+            {label}
           </span>
         </button>
       </Popover.Trigger>
@@ -50,7 +56,14 @@ export default function ColorSwatchField({ ariaLabel, value, onChange, hexHidabl
           aria-label={ariaLabel}
           className="flex min-h-0 w-56 max-w-[calc(100vw-24px)] flex-col overflow-y-auto px-3 py-2"
         >
-          <ColorEditor hexLabel="Hex" value={value} onChange={onChange} onDone={() => setOpen(false)} />
+          <FillEditor
+            hexLabel="Hex"
+            typeLabel="Color type"
+            value={value}
+            lastGradient={lastGradient}
+            onChange={onChange}
+            onDone={() => setOpen(false)}
+          />
         </Popover.Dialog>
       </Popover.Content>
     </Popover>

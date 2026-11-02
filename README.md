@@ -4,12 +4,12 @@ A browser extension (Chrome MV3 / Firefox MV2) that tints parts of the [Google C
 
 ## Features
 
-- **Per-project rules** — matched against the console URL's `?project=` parameter with four match types: *Starts with*, *Ends with*, *Exact* (literal string comparisons), or *Regex* (must match the entire project id). Rules are an ordered list: the first match wins, drag the grip to reprioritize, and when nothing matches, nothing is tinted.
+- **Per-project rules** — matched against the console URL's `?project=` parameter with four match types: *Starts with*, *Ends with*, *Exact* (literal string comparisons), or *Regex* (must match the entire project id). Rules are an ordered list: the first match wins, drag the grip to reprioritize, and when nothing matches, nothing is tinted. Check rules (or select them all) to duplicate, delete, or drag them together.
 - **Tinted surfaces**
-  - A fixed bar along the top edge (height 1–40px, optional diagonal stripes)
-  - The platform bar background (`#ocb-platform-bar`), optional stripes
-  - The platform bar text color (descendants of `.cfc-platform-bar-left` / `.cfc-platform-bar-right` / `.pcc-platform-bar-button`), with an auto mode that picks black or white by WCAG contrast against the platform bar color
-- **Per-project color palette** — named color entries that the pickers reference; change a palette color once and every surface using it follows.
+  - A fixed bar along the top edge (height 1–40px, optional diagonal stripes), in a color or a left-to-right gradient of 2–8 color stops (the end stops sit at the edges; the inner ones can be moved)
+  - The platform bar background (`#ocb-platform-bar`), optional stripes, in a color or a gradient
+  - The platform bar text color (descendants of `.cfc-platform-bar-left` / `.cfc-platform-bar-right` / `.pcc-platform-bar-button`), with an auto mode that picks black or white by WCAG contrast against the platform bar color (against every stop of a gradient)
+- **Per-project color palette** — named color or gradient entries that the pickers reference; change a palette entry once and every bar using it follows (the text color, which cannot be a gradient, keeps its own color while the entry it references is a gradient).
 - **Live updates** — settings apply immediately via `storage.onChanged`, and the tint follows the console's SPA project switches without a reload, with a short crossfade (disabled under `prefers-reduced-motion`).
 - **Export / import** — the Settings tab saves every rule (with its palette and colors) to a JSON file, as stored once pending changes have been written, and imports rules back from one: pick the rules to take, and a rule with the same match type and pattern as an existing one replaces that rule in place instead of being added.
 - **Theme** — the Settings tab picks *Auto* (follow the system), *Light*, or *Dark* for the side panel. The colours fade from one theme to the other instead of flipping.
@@ -84,7 +84,7 @@ Dependency updates sit behind a one-week cooldown: `minimumReleaseAge` in `pnpm-
 
 ## CI
 
-GitHub Actions runs on every pull request and push to `main`: Biome lint, typecheck, the Vitest suite, and both browser builds run as a parallel step group, followed by the Chrome and Firefox extension end-to-end tests. On failure, the workflow uploads only the E2E screenshots and startup diagnostics. Commits on `develop` are validated by the pull-request runs (feature PRs, and the release PR whose head is `develop`), so there is no separate develop push run. CodeQL code scanning (GitHub default setup: JavaScript/TypeScript and Actions workflows) runs independently on pushes and pull requests.
+GitHub Actions runs on every pull request and push to `main`. One job runs Biome lint, typecheck, the Vitest suite, and both browser builds as a parallel step group. Alongside it, four jobs run the extension end-to-end tests on their own runners: Chrome and Firefox, each split into the side panel UI spec and the other specs. A final `All CI jobs` job passes only when all of them have. On failure, an end-to-end job uploads only its screenshots and startup diagnostics. Commits on `develop` are validated by the pull-request runs (feature PRs, and the release PR whose head is `develop`), so there is no separate develop push run. CodeQL code scanning (GitHub default setup: JavaScript/TypeScript and Actions workflows) runs independently on pushes and pull requests.
 
 Workflow actions are pinned to full commit SHAs and also recorded in `.github/workflows/actions.lock`, a [workflow dependency lockfile](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles) (public preview) maintained with the [`gh actions-lock`](https://github.com/github/gh-actions-lock) extension. For workflows listed in it, GitHub Actions requires every action to have a lockfile entry and checks at run time that each action's repository is still the one that was locked. Dependabot regenerates the lockfile in its action update PRs. When you add, remove or change a `uses:` reference (keep the `owner/repo@<full SHA> # vX.Y.Z` form), or add or remove a workflow, run `gh actions-lock --no-narrow` and commit the lockfile; without `--no-narrow` the tool rewrites the SHA pins to version tags. Keep `uses:` steps outside `- parallel:` groups for now, because the tool does not record actions inside them yet ([github/gh-actions-lock#175](https://github.com/github/gh-actions-lock/issues/175)). Don't edit the lockfile by hand.
 
@@ -106,7 +106,7 @@ Store submission is a separate, manual step: publishing to the Chrome Web Store 
 
 One thing worth knowing:
 
-- Required status checks are bound to CI job names: `Lint, typecheck, test, build` (required on `develop` and `main`) and `Version bump check (release PRs)` (required on `main`). Renaming those jobs requires updating the branch rulesets to match.
+- Required status checks are bound to CI job names: `All CI jobs` (required on `develop` and `main`) and `Version bump check (release PRs)` (required on `main`). Renaming those jobs requires updating the branch rulesets to match. `All CI jobs` is the CI workflow's final job, which passes only when every other CI job has; a new CI job must be added to its `needs` and to its result check, or a failure there will not block merging.
 
 ### Release notes and labels
 
@@ -139,7 +139,8 @@ src/
         sidepanel/    # React settings UI, incl. its components/
       hooks/          # settings state + persistence for the side panel
     out/            # driven side: browser.storage store + settings repository
-                    # (Zod schemas of the persisted JSON, toDomain/toStored mapping)
+                    # (strict reader and Zod schemas shared by storage and import,
+                    # migration steps, toDomain/toStored mapping)
   domain/           # pure core: immutable entities/VOs per concept (Color, Palette,
                     # ProjectSettings, ProjectRule, TintSettings); no framework or
                     # library imports, base/ holds the Entity/ValueObject classes
@@ -149,3 +150,5 @@ src/
 Settings are stored in `browser.storage.local` as versioned JSON. Storage saves use the running extension release version, floored at `CURRENT_SCHEMA_VERSION`; exported files use `CURRENT_SCHEMA_VERSION` to identify their data shape. Releases with the same shape therefore export files an earlier release can import.
 
 A shape change must include a migration whose `to` and `CURRENT_SCHEMA_VERSION` equal the first extension release that ships it, above every earlier release version. Import accepts stamps from `SCHEMA_MIN_VERSION` through the importing build's effective schema version ceiling and runs applicable migrations; a future schema stamp above that ceiling is refused. A file exported by older code may keep its release version stamp, so an older importer can still reject that legacy file even when its data shape is otherwise unchanged.
+
+Stored settings are read as strictly as an import, with the same migration steps and the same stamp range: a value that cannot be read whole (not a settings record, a stamp outside that range, or a missing or invalid field) is refused, never repaired with defaults or written over. Only an absent key reads as empty settings. Content scripts then paint nothing, the background script leaves storage as it is (it logs the refusal when it tries to migrate an older stamp; current and newer stamps are not read there), and the side panel opens on a recovery screen that lists the invalid fields with their paths, exports the stored value as it is to a JSON file, and resets to empty settings after a confirmation.
