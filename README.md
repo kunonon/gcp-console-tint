@@ -4,9 +4,9 @@ A browser extension (Chrome MV3 / Firefox MV2) that tints parts of the [Google C
 
 ## Features
 
-- **Per-project rules** — matched against the console URL's `?project=` parameter with four match types: *Starts with*, *Ends with*, *Exact* (literal string comparisons), or *Regex* (must match the entire project id). Rules are an ordered list: the first match wins, drag the grip to reprioritize, and when nothing matches, nothing is tinted.
+- **Per-project rules** — matched against the console URL's `?project=` parameter with four match types: *Starts with*, *Ends with*, *Exact* (literal string comparisons), or *Regex* (must match the entire project id). Rules are an ordered list: the first match wins, drag the grip to reprioritize, and when nothing matches, nothing is tinted. Check rules (or select them all) to duplicate, delete, or drag them together.
 - **Tinted surfaces**
-  - A fixed bar along the top edge (height 1–40px, optional diagonal stripes), in a color or a left-to-right gradient of 2–4 colors
+  - A fixed bar along the top edge (height 1–40px, optional diagonal stripes), in a color or a left-to-right gradient of 2–8 color stops (the end stops sit at the edges; the inner ones can be moved)
   - The platform bar background (`#ocb-platform-bar`), optional stripes, in a color or a gradient
   - The platform bar text color (descendants of `.cfc-platform-bar-left` / `.cfc-platform-bar-right` / `.pcc-platform-bar-button`), with an auto mode that picks black or white by WCAG contrast against the platform bar color (against every stop of a gradient)
 - **Per-project color palette** — named color or gradient entries that the pickers reference; change a palette entry once and every bar using it follows (the text color, which cannot be a gradient, keeps its own color while the entry it references is a gradient).
