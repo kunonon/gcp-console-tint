@@ -18,12 +18,50 @@ export interface SchemaMigration {
 export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
   // 0.3.0 adds the side panel theme; data from earlier releases starts on 'auto'.
   { to: '0.3.0', migrate: (data) => ({ ...data, theme: 'auto' }) },
-  // 0.5.0 lets palette entries and the bars' custom colors be gradients
-  // ({ stops: [{ color, position }, ...] }) in the slot that held the '#rrggbb' string; every
-  // earlier file is already valid in this shape, so the step only moves the stamp, which keeps a
-  // gradient-bearing file from being labelled older than the first release that can read it.
-  { to: '0.5.0', migrate: (data) => data },
+  // 0.5.0 makes palette entries' and the bars' custom fills tagged objects, so they can also be
+  // gradients: { type: 'solid', color } or { type: 'gradient', stops: [{ color, position }, ...] }.
+  // The '#rrggbb' strings of 0.4.x and earlier are wrapped as { type: 'solid', color }; the
+  // platform bar text's custom stays a string. Every other value passes through untouched, left to
+  // the storage reader's repair or the import's refusal, and the step never throws on any JSON:
+  // toDomain runs it against raw storage.
+  {
+    to: '0.5.0',
+    migrate: (data) =>
+      isArray(data.projectRules) ? { ...data, projectRules: data.projectRules.map(tagRuleFills) } : data,
+  },
 ];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Array.isArray narrows to any[]; this keeps the elements unknown so each one is checked before use.
+function isArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
+// The 0.5.0 step's helpers copy every record on the path they change, so the input is never mutated,
+// and they never add a key the record did not have.
+const solidAt = (record: Record<string, unknown>, key: string) =>
+  typeof record[key] === 'string' ? { ...record, [key]: { type: 'solid', color: record[key] } } : record;
+
+const tagBar = (bar: unknown) =>
+  isRecord(bar) && isRecord(bar.color) ? { ...bar, color: solidAt(bar.color, 'custom') } : bar;
+
+function tagRuleFills(rule: unknown) {
+  if (!isRecord(rule) || !isRecord(rule.settings)) return rule;
+  const settings = { ...rule.settings };
+  const { palette } = settings;
+  if (isRecord(palette) && isArray(palette.entries)) {
+    settings.palette = {
+      ...palette,
+      entries: palette.entries.map((entry) => (isRecord(entry) ? solidAt(entry, 'color') : entry)),
+    };
+  }
+  if ('topBar' in settings) settings.topBar = tagBar(settings.topBar);
+  if ('platformBar' in settings) settings.platformBar = tagBar(settings.platformBar);
+  return { ...rule, settings };
+}
 
 // The oldest schemaVersion the migration chain can read. Anything below (or missing, or
 // invalid) predates every released shape: storage falls back to fresh defaults, an imported

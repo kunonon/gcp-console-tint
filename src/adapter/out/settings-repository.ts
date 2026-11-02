@@ -12,8 +12,9 @@ import {
 } from '../../domain/project-settings';
 import { isTheme, TintSettings } from '../../domain/tint-settings';
 import { TopBarHeight } from '../../domain/top-bar-height';
+import { assertNever } from '../../utils/assert';
 import { CURRENT_SCHEMA_VERSION, runMigrations, SCHEMA_MIN_VERSION } from './migrations';
-import type { SettingsFile } from './settings-file';
+import type { FillFile, SettingsFile } from './settings-file';
 import { compareVersions, VersionComparisonResult } from './version';
 
 // The domain owns the default VALUES, this module owns which field recovers to what: every
@@ -46,16 +47,30 @@ function colorField(fallback: Color) {
     .transform((value) => (typeof value === 'string' ? Color.fromHex(value) : undefined) ?? fallback);
 }
 
-// A stored fill: a '#rrggbb' string, or { stops: [{ color, position }, ...] } whose every color is
-// such a string and whose stops Gradient.fromStops accepts (count, whole-percent positions, ends at
-// 0 and 100, strictly increasing). Whole or nothing: one bad stop makes the whole value unreadable,
-// since a partly repaired gradient would look silently different. The unreleased { stops: ['#..'] }
-// of development builds is not read either, and falls back like any other junk.
+// A stored fill: { type: 'solid', color: '#rrggbb' } or { type: 'gradient', stops: [...] } (see
+// parseStoredStops). Anything else is junk and falls back like it: a bare '#rrggbb' string, an untagged
+// { stops } object, a missing or unknown type. Files stamped below 0.5.0 never get here with a bare
+// string, since the 0.5.0 migration step wraps those; only unreleased development builds stored
+// the untagged shapes under a 0.5.0 stamp.
 function parseStoredFill(value: unknown): Fill | undefined {
-  if (typeof value === 'string') return Color.fromHex(value);
-  if (!isRecord(value) || !isArray(value.stops)) return undefined;
+  if (!isRecord(value)) return undefined;
+  switch (value.type) {
+    case 'solid':
+      return typeof value.color === 'string' ? Color.fromHex(value.color) : undefined;
+    case 'gradient':
+      return isArray(value.stops) ? parseStoredStops(value.stops) : undefined;
+    default:
+      return undefined;
+  }
+}
+
+// A gradient's stops: [{ color, position }, ...] whose every color is a '#rrggbb' string and which
+// Gradient.fromStops accepts (count, whole-percent positions, ends at 0 and 100, strictly
+// increasing). Whole or nothing: one bad stop makes the whole value unreadable, since a partly
+// repaired gradient would look silently different.
+function parseStoredStops(value: readonly unknown[]): Gradient | undefined {
   const stops: GradientStop[] = [];
-  for (const stop of value.stops) {
+  for (const stop of value) {
     if (!isRecord(stop) || typeof stop.color !== 'string' || typeof stop.position !== 'number') return undefined;
     const color = Color.fromHex(stop.color);
     if (!color) return undefined;
@@ -240,10 +255,10 @@ export function toDomain(stored: unknown): TintSettings {
   return new TintSettings(projectRules, theme);
 }
 
-// The stored JSON shape. Colors leave the model as '#rrggbb' strings or { stops } objects (see
-// storedFill), everything else is written verbatim — this is the persisted contract, so keep it
-// in sync with the schemas that read it back (adapter/out/tests/browser-settings-store.test.ts
-// asserts it).
+// The stored JSON shape. Fills leave the model as { type: 'solid' | 'gradient', ... } objects (see
+// storedFill) and the platform bar text's custom color as a '#rrggbb' string; everything else is
+// written verbatim — this is the persisted contract, so keep it in sync with the schemas that read
+// it back (adapter/out/tests/browser-settings-store.test.ts asserts it).
 export function toStored(settings: TintSettings, schemaVersion: string): SettingsFile & { schemaVersion: string } {
   return {
     schemaVersion,
@@ -285,17 +300,22 @@ export function toStored(settings: TintSettings, schemaVersion: string): Setting
   };
 }
 
-// A gradient is written as { stops: [{ color: '#rrggbb', position }, ...] }, the ends' 0 and 100
-// included so the file explains itself and the import can check them: string-vs-object already
-// tells the two kinds apart, so the object needs no type key.
-function storedFill(fill: Fill) {
-  return fill instanceof Gradient
-    ? { stops: fill.stops.map((stop) => ({ color: stop.color.toHex(), position: stop.position })) }
-    : fill.toHex();
+// A solid fill is written as { type: 'solid', color: '#rrggbb' }, a gradient as
+// { type: 'gradient', stops: [{ color: '#rrggbb', position }, ...] }, the ends' 0 and 100 included
+// so the file explains itself and the import can check them.
+function storedFill(fill: Fill): FillFile {
+  if (fill instanceof Gradient) {
+    return {
+      type: 'gradient',
+      stops: fill.stops.map((stop) => ({ color: stop.color.toHex(), position: stop.position })),
+    };
+  }
+  if (fill instanceof Color) return { type: 'solid', color: fill.toHex() };
+  return assertNever(fill);
 }
 
 // The bars' selections. toStored writes the text's selection itself: SettingsFile types its custom as a
-// string, which storedFill's string | { stops } result is not.
+// string, which storedFill's FillFile result is not.
 function storedSelection(selection: ColorSelection) {
   return { paletteId: selection.paletteId?.toString() ?? null, custom: storedFill(selection.custom) };
 }

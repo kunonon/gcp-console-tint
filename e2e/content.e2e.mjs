@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { setTimeout as pause } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { EFFECTIVE_VERSION, projectSettings, rule, settings } from './fixtures.mjs';
+import { EFFECTIVE_VERSION, gradient, projectSettings, rule, settings, solid } from './fixtures.mjs';
 import { browserTargets, createHarness, openTab } from './harness.mjs';
 
 function topBar(color, height = 7, stripes = false) {
@@ -40,7 +40,7 @@ const FILL_IMAGE = `repeating-linear-gradient(-45deg, var(--gcp-console-tint-str
 const stopMix = (k) => `color-mix(in oklch shorter hue, var(${FROM[k]}), var(${TO[k]}) calc(var(${FADE}, 1) * 100%))`;
 const TRANSPARENT = 'rgba(0, 0, 0, 0)';
 
-// Stored gradients: stops at whole percents, the ends at 0 and 100.
+// Stored gradients' stops (gradient() wraps them): whole percents, the ends at 0 and 100.
 const SUNRISE = [
   { color: '#ff6d00', position: 0 },
   { color: '#1a73e8', position: 100 },
@@ -322,10 +322,10 @@ for (const browserName of browserTargets()) {
 
     test('applies prefix, suffix, exact, and full-match regex rules in priority order', async () => {
       const colors = {
-        prefix: projectSettings({ topBar: topBar('#cc0000') }),
-        suffix: projectSettings({ topBar: topBar('#00aa00') }),
-        exact: projectSettings({ topBar: topBar('#0000cc') }),
-        regex: projectSettings({ topBar: topBar('#aa00aa') }),
+        prefix: projectSettings({ topBar: topBar(solid('#cc0000')) }),
+        suffix: projectSettings({ topBar: topBar(solid('#00aa00')) }),
+        exact: projectSettings({ topBar: topBar(solid('#0000cc')) }),
+        regex: projectSettings({ topBar: topBar(solid('#aa00aa')) }),
       };
       await setStored(
         h,
@@ -333,9 +333,9 @@ for (const browserName of browserTargets()) {
           rule('prefix', 'team-', 'prefix', colors.prefix),
           rule('suffix', '-prod', 'suffix', colors.suffix),
           rule('exact', 'exact-id', 'exact', colors.exact),
-          rule('exact-path', 'team/prod', 'exact', projectSettings({ topBar: topBar('#ffaa00') })),
+          rule('exact-path', 'team/prod', 'exact', projectSettings({ topBar: topBar(solid('#ffaa00')) })),
           rule('regex', 'svc[0-9]+|dev[0-9]+', 'regex', colors.regex),
-          rule('invalid-regex', '[', 'regex', projectSettings({ topBar: topBar('#ff00ff') })),
+          rule('invalid-regex', '[', 'regex', projectSettings({ topBar: topBar(solid('#ff00ff')) })),
         ),
       );
 
@@ -378,8 +378,8 @@ for (const browserName of browserTargets()) {
             'alpha',
             'exact',
             projectSettings({
-              topBar: topBar('#cc0000'),
-              platformBar: platformBar('#00aa00'),
+              topBar: topBar(solid('#cc0000')),
+              platformBar: platformBar(solid('#00aa00')),
             }),
           ),
         ),
@@ -497,8 +497,8 @@ for (const browserName of browserTargets()) {
             'alpha',
             'exact',
             projectSettings({
-              topBar: topBar('#123456', 11),
-              platformBar: platformBar('#00aa00'),
+              topBar: topBar(solid('#123456'), 11),
+              platformBar: platformBar(solid('#00aa00')),
               platformBarText: textColor('#ab12cd'),
             }),
           ),
@@ -522,8 +522,8 @@ for (const browserName of browserTargets()) {
             'alpha',
             'exact',
             projectSettings({
-              topBar: { ...topBar('#123456', 11), enabled: topEnabled },
-              platformBar: { ...platformBar('#00aa00'), enabled: platformEnabled },
+              topBar: { ...topBar(solid('#123456'), 11), enabled: topEnabled },
+              platformBar: { ...platformBar(solid('#00aa00')), enabled: platformEnabled },
               platformBarText: { ...textColor('#ab12cd'), enabled: textEnabled },
             }),
           ),
@@ -548,20 +548,20 @@ for (const browserName of browserTargets()) {
 
     test('resolves palette references in rule scope, falls back for disabled or dangling entries, and updates all targeted text descendants', async () => {
       const first = projectSettings({
-        palette: { enabled: true, entries: [{ id: 'shared', name: 'Alpha', color: '#00aa00' }] },
-        topBar: { enabled: true, color: { paletteId: 'shared', custom: '#111111' }, height: 8, stripes: true },
-        platformBar: { enabled: true, color: { paletteId: 'missing', custom: '#cc3300' }, stripes: true },
+        palette: { enabled: true, entries: [{ id: 'shared', name: 'Alpha', color: solid('#00aa00') }] },
+        topBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#111111') }, height: 8, stripes: true },
+        platformBar: { enabled: true, color: { paletteId: 'missing', custom: solid('#cc3300') }, stripes: true },
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#1122cc' }, auto: false },
       });
       const second = projectSettings({
-        palette: { enabled: true, entries: [{ id: 'shared', name: 'Beta', color: '#0000cc' }] },
-        topBar: { enabled: true, color: { paletteId: 'shared', custom: '#113355' }, height: 9, stripes: false },
-        platformBar: { enabled: true, color: { paletteId: 'shared', custom: '#224466' }, stripes: false },
+        palette: { enabled: true, entries: [{ id: 'shared', name: 'Beta', color: solid('#0000cc') }] },
+        topBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#113355') }, height: 9, stripes: false },
+        platformBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#224466') }, stripes: false },
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#228844' }, auto: false },
       });
       const third = projectSettings({
-        palette: { enabled: false, entries: [{ id: 'shared', name: 'Disabled', color: '#ffffff' }] },
-        topBar: { enabled: true, color: { paletteId: 'shared', custom: '#abcdef' }, height: 10, stripes: false },
+        palette: { enabled: false, entries: [{ id: 'shared', name: 'Disabled', color: solid('#ffffff') }] },
+        topBar: { enabled: true, color: { paletteId: 'shared', custom: solid('#abcdef') }, height: 10, stripes: false },
       });
       await setStored(
         h,
@@ -717,15 +717,15 @@ for (const browserName of browserTargets()) {
 
     test('selects black or white auto text for light and dark backgrounds', async () => {
       const dark = projectSettings({
-        platformBar: platformBar('#111111'),
+        platformBar: platformBar(solid('#111111')),
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
       });
       const light = projectSettings({
-        platformBar: platformBar('#f8f8f8'),
+        platformBar: platformBar(solid('#f8f8f8')),
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
       });
       const gray = projectSettings({
-        platformBar: platformBar('#777777'),
+        platformBar: platformBar(solid('#777777')),
         platformBarText: { enabled: true, color: { paletteId: null, custom: '#777777' }, auto: true },
       });
       await setStored(
@@ -752,12 +752,12 @@ for (const browserName of browserTargets()) {
     });
 
     test('paints gradient fills on both bars, alone and under stripes', async () => {
-      const sunrise = { stops: SUNRISE };
+      const sunrise = gradient(SUNRISE);
       const gradientSettings = (stripes, platformBarText) =>
         projectSettings({
           palette: { enabled: true, entries: [{ id: 'sunrise', name: 'Sunrise', color: sunrise }] },
           topBar: { enabled: true, color: { paletteId: null, custom: sunrise }, height: 7, stripes },
-          platformBar: { enabled: true, color: { paletteId: 'sunrise', custom: '#cc3300' }, stripes },
+          platformBar: { enabled: true, color: { paletteId: 'sunrise', custom: solid('#cc3300') }, stripes },
           platformBarText,
         });
       await setStored(
@@ -783,7 +783,7 @@ for (const browserName of browserTargets()) {
             'solid',
             'solid',
             'exact',
-            projectSettings({ topBar: topBar('#0000cc'), platformBar: platformBar('#0000cc') }),
+            projectSettings({ topBar: topBar(solid('#0000cc')), platformBar: platformBar(solid('#0000cc')) }),
           ),
         ),
       );
@@ -876,7 +876,10 @@ for (const browserName of browserTargets()) {
       const bars = (color) => projectSettings({ topBar: topBar(color), platformBar: platformBar(color) });
       await setStored(
         h,
-        settings(rule('orange', 'orange', 'exact', bars('#ff6d00')), rule('blue', 'blue', 'exact', bars('#1a73e8'))),
+        settings(
+          rule('orange', 'orange', 'exact', bars(solid('#ff6d00'))),
+          rule('blue', 'blue', 'exact', bars(solid('#1a73e8'))),
+        ),
       );
       await h.openConsole('orange');
       await snapshotWhen(
@@ -942,7 +945,10 @@ for (const browserName of browserTargets()) {
       const bars = (color) => projectSettings({ topBar: topBar(color), platformBar: platformBar(color) });
       await setStored(
         h,
-        settings(rule('grey', 'grey', 'exact', bars('#5f6368')), rule('orange', 'orange', 'exact', bars('#ff6d00'))),
+        settings(
+          rule('grey', 'grey', 'exact', bars(solid('#5f6368'))),
+          rule('orange', 'orange', 'exact', bars(solid('#ff6d00'))),
+        ),
       );
       const grey = Array(KNOT_COUNT).fill('rgb(95, 99, 104)');
       await h.openConsole('grey');
@@ -978,8 +984,8 @@ for (const browserName of browserTargets()) {
       await setStored(
         h,
         settings(
-          rule('eight', 'eight', 'exact', bars({ stops: EIGHT_STOPS })),
-          rule('blue', 'blue', 'exact', bars('#1a73e8')),
+          rule('eight', 'eight', 'exact', bars(gradient(EIGHT_STOPS))),
+          rule('blue', 'blue', 'exact', bars(solid('#1a73e8'))),
         ),
       );
       const knots = rgbKnots(EIGHT_STOPS);
@@ -1029,9 +1035,9 @@ for (const browserName of browserTargets()) {
       await setStored(
         h,
         settings(
-          ...switches.map(([id, stops]) => rule(id, id, 'exact', bars({ stops }))),
-          rule('green', 'green', 'exact', bars('#34a853')),
-          rule('blue', 'blue', 'exact', bars('#1a73e8')),
+          ...switches.map(([id, stops]) => rule(id, id, 'exact', bars(gradient(stops)))),
+          rule('green', 'green', 'exact', bars(solid('#34a853'))),
+          rule('blue', 'blue', 'exact', bars(solid('#1a73e8'))),
         ),
       );
       const times = [75, 150, 225];
@@ -1080,8 +1086,8 @@ for (const browserName of browserTargets()) {
     });
 
     test('reacts to push, replace, back, and forward without reloading, and to shared storage changes', async () => {
-      const alpha = projectSettings({ topBar: topBar('#cc0000'), platformBar: platformBar('#cc0000') });
-      const beta = projectSettings({ topBar: topBar('#0000cc'), platformBar: platformBar('#0000cc') });
+      const alpha = projectSettings({ topBar: topBar(solid('#cc0000')), platformBar: platformBar(solid('#cc0000')) });
+      const beta = projectSettings({ topBar: topBar(solid('#0000cc')), platformBar: platformBar(solid('#0000cc')) });
       await setStored(h, settings(rule('alpha', 'alpha', 'exact', alpha), rule('beta', 'beta', 'exact', beta)));
       // A tab of its own: the history assertions count entries, and the shared console tab has
       // collected one per navigation of every test before this one, up to the browsers' cap of 50
@@ -1173,7 +1179,10 @@ for (const browserName of browserTargets()) {
           'second tab did not load the initial content script and project tint',
           secondHandle,
         );
-        const shared = projectSettings({ topBar: topBar('#00aa00'), platformBar: platformBar('#00aa00') });
+        const shared = projectSettings({
+          topBar: topBar(solid('#00aa00')),
+          platformBar: platformBar(solid('#00aa00')),
+        });
         await setStored(h, settings(rule('alpha', 'alpha', 'exact', shared), rule('beta', 'beta', 'exact', beta)));
         snapshot = await snapshotWhen(
           h,
@@ -1272,8 +1281,27 @@ for (const browserName of browserTargets()) {
         assert.deepEqual(migrated.projectRules, [], `${name} did not fall back to safe defaults`);
       }
 
-      // Written before the theme existed: the 0.3.0 migration step adds theme 'auto' and keeps the rule.
-      const preThemeRule = rule('pre-theme', 'alpha', 'exact', projectSettings({ topBar: topBar('#cc0000') }));
+      // Written before the theme existed, with the bars' custom colors as plain '#rrggbb' strings:
+      // the 0.3.0 migration step adds theme 'auto' and keeps the rule, and the 0.5.0 step wraps
+      // those two colors as solid fills, leaving the text's a string.
+      const preThemeRule = rule(
+        'pre-theme',
+        'alpha',
+        'exact',
+        projectSettings({
+          topBar: topBar('#cc0000'),
+          platformBar: { enabled: false, color: { paletteId: null, custom: '#234567' }, stripes: false },
+        }),
+      );
+      const preThemeMigratedRule = rule(
+        'pre-theme',
+        'alpha',
+        'exact',
+        projectSettings({
+          topBar: topBar(solid('#cc0000')),
+          platformBar: { enabled: false, color: { paletteId: null, custom: solid('#234567') }, stripes: false },
+        }),
+      );
       await setStored(h, { schemaVersion: '0.2.0', projectRules: [preThemeRule] });
       await h.reloadExtension();
       const preThemeMigrated = await waitSettings(
@@ -1283,11 +1311,13 @@ for (const browserName of browserTargets()) {
       );
       assert.deepEqual(
         preThemeMigrated,
-        { schemaVersion: EFFECTIVE_VERSION, theme: 'auto', projectRules: [preThemeRule] },
+        { schemaVersion: EFFECTIVE_VERSION, theme: 'auto', projectRules: [preThemeMigratedRule] },
         'pre-theme schema was not migrated to the current shape with theme auto',
       );
 
-      const current = settings(rule('current', 'alpha', 'exact', projectSettings({ topBar: topBar('#00aa00') })));
+      const current = settings(
+        rule('current', 'alpha', 'exact', projectSettings({ topBar: topBar(solid('#00aa00')) })),
+      );
       await setStored(h, current);
       await h.reloadExtension();
       const currentReloaded = await waitSettings(
@@ -1322,11 +1352,11 @@ for (const browserName of browserTargets()) {
             projectSettings({
               palette: {
                 enabled: true,
-                entries: [{ id: 'brand', name: 'Brand', color: '#00aa00' }, 'invalid-palette-entry'],
+                entries: [{ id: 'brand', name: 'Brand', color: solid('#00aa00') }, 'invalid-palette-entry'],
               },
               topBar: {
                 enabled: true,
-                color: { paletteId: 'invalid-entry', custom: '#cc3366' },
+                color: { paletteId: 'invalid-entry', custom: solid('#cc3366') },
                 height: 0,
                 stripes: false,
               },
@@ -1382,7 +1412,7 @@ for (const browserName of browserTargets()) {
       );
 
       const newer = {
-        ...settings(rule('future', 'alpha', 'exact', projectSettings({ topBar: topBar('#0000cc') }))),
+        ...settings(rule('future', 'alpha', 'exact', projectSettings({ topBar: topBar(solid('#0000cc')) }))),
         schemaVersion: '99.0.0',
       };
       await setStored(h, newer);
@@ -1411,8 +1441,8 @@ for (const browserName of browserTargets()) {
 
     test('reapplies scoped CSS when the mock platform bar is replaced', async () => {
       const project = projectSettings({
-        topBar: topBar('#aa00aa'),
-        platformBar: platformBar('#00aa00'),
+        topBar: topBar(solid('#aa00aa')),
+        platformBar: platformBar(solid('#00aa00')),
         platformBarText: textColor('#0000cc'),
       });
       await setStored(h, settings(rule('alpha', 'alpha', 'exact', project)));
@@ -1466,8 +1496,8 @@ for (const browserName of browserTargets()) {
               'alpha',
               'exact',
               projectSettings({
-                topBar: topBar('#cc0000'),
-                platformBar: platformBar('#00aa00'),
+                topBar: topBar(solid('#cc0000')),
+                platformBar: platformBar(solid('#00aa00')),
                 platformBarText: textColor('#0000cc'),
               }),
             ),

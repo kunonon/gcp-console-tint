@@ -14,8 +14,10 @@ import { MATCH_TYPE_LABELS } from '../components/MatchTypeSelect';
 
 type MatchType = 'prefix' | 'suffix' | 'exact' | 'regex';
 
-// A fill as stored: '#rrggbb' or a gradient's stops.
-type StoredFill = string | { stops: { color: string; position: number }[] };
+// A fill as stored: { type: 'solid', color } or { type: 'gradient', stops }.
+type StoredFill = { type: 'solid'; color: string } | { type: 'gradient'; stops: { color: string; position: number }[] };
+
+const solid = (color: string): StoredFill => ({ type: 'solid', color });
 
 interface PaletteEntry {
   id: string;
@@ -518,11 +520,11 @@ describe('App', () => {
     const stored = await getStoredSettings();
     expect(stored.projectRules).toHaveLength(1);
     const settings = stored.projectRules[0]!.settings;
-    expect(settings.topBar.color.custom).toBe('#ff6d00');
+    expect(settings.topBar.color.custom).toEqual(solid('#ff6d00'));
     expect(settings.topBar.color.paletteId).toBe('default');
     expect(settings.topBar.height).toBe(4);
     expect(settings.topBar.stripes).toBe(false);
-    expect(settings.palette.entries).toEqual([{ id: 'default', name: 'Primary', color: '#ff6d00' }]);
+    expect(settings.palette.entries).toEqual([{ id: 'default', name: 'Primary', color: solid('#ff6d00') }]);
   });
 
   it('opens the Top bar picker showing the referenced palette entry active and Custom inactive', async () => {
@@ -557,7 +559,7 @@ describe('App', () => {
 
     await setPaletteRowColor(user, 'Color 2', '#00ff00');
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries[1]!.color).toBe('#00ff00');
+      expect((await getStoredSettings()).projectRules[0]!.settings.palette.entries[1]!.color).toEqual(solid('#00ff00'));
     });
     const secondEntry = (await getStoredSettings()).projectRules[0]!.settings.palette.entries[1]!;
 
@@ -586,7 +588,7 @@ describe('App', () => {
     await waitFor(async () => {
       const stored = await getStoredSettings();
       expect(stored.projectRules[0]!.settings.topBar.color.paletteId).toBeNull();
-      expect(stored.projectRules[0]!.settings.topBar.color.custom).toBe('#654321');
+      expect(stored.projectRules[0]!.settings.topBar.color.custom).toEqual(solid('#654321'));
     });
 
     await closePicker(user);
@@ -606,7 +608,7 @@ describe('App', () => {
     await waitFor(async () => {
       const stored = await getStoredSettings();
       expect(stored.projectRules[0]!.settings.platformBar.color.paletteId).toBeNull();
-      expect(stored.projectRules[0]!.settings.platformBar.color.custom).toBe('#101010');
+      expect(stored.projectRules[0]!.settings.platformBar.color.custom).toEqual(solid('#101010'));
     });
   });
 
@@ -644,8 +646,8 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toContain('Primary');
 
     const stored = await getStoredSettings();
-    expect(stored.projectRules[0]!.settings.topBar.color.custom).toBe('#ff6d00');
-    expect(stored.projectRules[0]!.settings.palette.entries[0]!.color).toBe('#123456');
+    expect(stored.projectRules[0]!.settings.topBar.color.custom).toEqual(solid('#ff6d00'));
+    expect(stored.projectRules[0]!.settings.palette.entries[0]!.color).toEqual(solid('#123456'));
   });
 
   it('adds a new palette entry via the "Add color" icon button and exposes it in the picker', async () => {
@@ -757,7 +759,7 @@ describe('App', () => {
 
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0]!.settings.palette.entries[0]!.color).toBe('#a1b2c3');
+      expect(stored.projectRules[0]!.settings.palette.entries[0]!.color).toEqual(solid('#a1b2c3'));
     });
   });
 
@@ -1023,7 +1025,7 @@ describe('App', () => {
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#777777' } });
     await waitFor(async () => {
       const stored = await getStoredSettings();
-      expect(stored.projectRules[0]!.settings.topBar.color.custom).toBe('#777777');
+      expect(stored.projectRules[0]!.settings.topBar.color.custom).toEqual(solid('#777777'));
     });
   });
 
@@ -1078,7 +1080,7 @@ describe('App', () => {
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#000080' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0]!.settings.platformBar.color.custom).toBe('#000080');
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBar.color.custom).toEqual(solid('#000080'));
     });
     await closePicker(user);
 
@@ -1089,7 +1091,7 @@ describe('App', () => {
     dialog = await openPicker(user, 'Platform Bar color');
     fireEvent.change(getCustomColorInput(dialog), { target: { value: '#ffff00' } });
     await waitFor(async () => {
-      expect((await getStoredSettings()).projectRules[0]!.settings.platformBar.color.custom).toBe('#ffff00');
+      expect((await getStoredSettings()).projectRules[0]!.settings.platformBar.color.custom).toEqual(solid('#ffff00'));
     });
     await closePicker(user);
 
@@ -1190,7 +1192,10 @@ describe('App', () => {
       await user.keyboard('1A73E8');
 
       await waitFor(async () => {
-        expect((await storedSettings()).palette.entries.map((e) => e.color)).toEqual(['#ff6d00', '#1a73e8']);
+        expect((await storedSettings()).palette.entries.map((e) => e.color)).toEqual([
+          solid('#ff6d00'),
+          solid('#1a73e8'),
+        ]);
       });
       expect(save).toHaveBeenCalledTimes(1);
       expect(hex.value).toBe('#1a73e8');
@@ -1212,15 +1217,15 @@ describe('App', () => {
 
       await waitFor(async () => {
         const color = (await storedSettings()).palette.entries[0]!.color;
-        expect(color).toMatch(/^#[0-9a-f]{6}$/);
-        expect(color).not.toBe('#ff6d00');
+        expect(color).toEqual({ type: 'solid', color: expect.stringMatching(/^#[0-9a-f]{6}$/) });
+        expect(color).not.toEqual(solid('#ff6d00'));
       });
       expect(save).toHaveBeenCalledTimes(1);
     });
 
     it('Top bar: a press on the custom control while a palette entry is in use re-selects the kept custom colour unchanged, in one save', async () => {
       const { user, save } = await renderRuleDetail();
-      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: solid('#ff6d00') });
 
       const dialog = await openPicker(user, 'Top bar color');
       const customInput = getCustomColorInput(dialog);
@@ -1228,7 +1233,7 @@ describe('App', () => {
       await user.click(customInput);
 
       await waitFor(async () => {
-        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#ff6d00' });
+        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: solid('#ff6d00') });
       });
       expect(save).toHaveBeenCalledTimes(1);
       // The ring moves from the bead to the custom control, and the popover stays open.
@@ -1272,7 +1277,7 @@ describe('App', () => {
         expect(screen.queryByRole('dialog')).toBeNull();
         expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Top bar color' }));
       });
-      expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#ff6d00' });
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: solid('#ff6d00') });
       expect(save).toHaveBeenCalledTimes(1);
       expect(screen.getByRole('button', { name: 'Top bar color' }).textContent).toBe('#ff6d00');
     });
@@ -1289,7 +1294,7 @@ describe('App', () => {
       expect(customInput.value).toBe('abc');
       expect(screen.getByRole('dialog', { name: 'Top bar color' })).toBeTruthy();
       expect(save).not.toHaveBeenCalled();
-      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: solid('#ff6d00') });
       expect(getPaletteSwatch(dialog, 'Primary').getAttribute('aria-pressed')).toBe('true');
     });
 
@@ -1342,7 +1347,7 @@ describe('App', () => {
 
       expect(customInput.value).toBe('#ff6d00');
       expect(save).not.toHaveBeenCalled();
-      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: '#ff6d00' });
+      expect((await storedSettings()).topBar.color).toEqual({ paletteId: 'default', custom: solid('#ff6d00') });
       expect(screen.getByRole('dialog', { name: 'Top bar color' })).toBeTruthy();
     });
 
@@ -1357,7 +1362,8 @@ describe('App', () => {
       await waitFor(async () => {
         const color = (await storedSettings()).topBar.color;
         expect(color.paletteId).toBeNull();
-        expect(color.custom).not.toBe('#ff6d00');
+        expect(color.custom).toEqual({ type: 'solid', color: expect.stringMatching(/^#[0-9a-f]{6}$/) });
+        expect(color.custom).not.toEqual(solid('#ff6d00'));
       });
       expect(save).toHaveBeenCalledTimes(1);
     });
@@ -1401,6 +1407,7 @@ describe('App', () => {
     const GRADIENT_STOPS = '(#ff6d00|rgb\\(255, 109, 0\\)) 0%, (#1a73e8|rgb\\(26, 115, 232\\)) 100%';
     const GRADIENT = new RegExp(`^linear-gradient\\(to right, ${GRADIENT_STOPS}\\)$`);
     const SUNSET = {
+      type: 'gradient',
       stops: [
         { color: '#ff6d00', position: 0 },
         { color: '#1a73e8', position: 100 },
@@ -1419,6 +1426,7 @@ describe('App', () => {
         expect((await storedSettings()).topBar.color).toEqual({
           paletteId: null,
           custom: {
+            type: 'gradient',
             stops: [
               { color: '#ff6d00', position: 0 },
               { color: '#ff6d00', position: 100 },
@@ -1442,7 +1450,7 @@ describe('App', () => {
       dialog = await openPicker(user, 'Top bar color');
       await user.click(typeOption(dialog, 'Custom color type', 'Solid'));
       await waitFor(async () => {
-        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: '#ff6d00' });
+        expect((await storedSettings()).topBar.color).toEqual({ paletteId: null, custom: solid('#ff6d00') });
       });
       expect(save).toHaveBeenCalledTimes(3);
       expect(getCustomColorInput(dialog).value).toBe('#ff6d00');
@@ -1654,10 +1662,11 @@ describe('App', () => {
   });
 
   it('reflects a partial stored settings object merged with defaults', async () => {
-    // Nested (current-shape) on purpose: no migration step reshapes rules (the 0.3.0 step only
-    // adds the theme), so a "partial merge" fixture must already be in the current rule shape
-    // to actually exercise per-field merging rather than the destructive old-shape path
-    // (covered separately below, "... but destructively").
+    // Nested on purpose: no migration step reshapes flat rules (the 0.3.0 step only adds the
+    // theme, the 0.5.0 step only wraps the nested fills, here the plain '#123123'), so a
+    // "partial merge" fixture must already be in the nested rule shape to actually exercise
+    // per-field merging rather than the destructive old-shape path (covered separately below,
+    // "... but destructively").
     await fakeBrowser.storage.local.set({
       tintSettings: {
         schemaVersion: '0.1.0',
@@ -1729,7 +1738,7 @@ describe('App', () => {
           {
             id: 'r1',
             pattern: 'my-project',
-            settings: { topBar: { color: { custom: '#334455', paletteId: null } } },
+            settings: { topBar: { color: { custom: solid('#334455'), paletteId: null } } },
           },
         ],
       },
@@ -2043,12 +2052,12 @@ describe('App', () => {
       await setPaletteRowColor(user, 'Primary', '#00ff00');
       await waitFor(async () => {
         const rules = (await getStoredSettings()).projectRules;
-        expect(rules[1]!.settings.palette.entries[0]!.color).toBe('#00ff00');
+        expect(rules[1]!.settings.palette.entries[0]!.color).toEqual(solid('#00ff00'));
       });
 
       // The original (index 0) keeps its own, unaffected palette entry.
       const rules = (await getStoredSettings()).projectRules;
-      expect(rules[0]!.settings.palette.entries[0]!.color).toBe('#ff6d00');
+      expect(rules[0]!.settings.palette.entries[0]!.color).toEqual(solid('#ff6d00'));
     });
 
     it('Delete opens a confirmation popover naming the rule pattern, without deleting yet', async () => {
@@ -2735,7 +2744,7 @@ describe('App', () => {
         const alpha = stored.projectRules.find((r) => r.pattern === 'alpha')!;
         const beta = stored.projectRules.find((r) => r.pattern === 'beta')!;
         expect(alpha.settings.topBar.color.paletteId).toBeNull();
-        expect(alpha.settings.topBar.color.custom).toBe('#654321');
+        expect(alpha.settings.topBar.color.custom).toEqual(solid('#654321'));
         // The other rule keeps its own default reference untouched.
         expect(beta.settings.topBar.color.paletteId).toBe('default');
       });
