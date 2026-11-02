@@ -139,7 +139,8 @@ src/
         sidepanel/    # React settings UI, incl. its components/
       hooks/          # settings state + persistence for the side panel
     out/            # driven side: browser.storage store + settings repository
-                    # (Zod schemas of the persisted JSON, toDomain/toStored mapping)
+                    # (strict reader and Zod schemas shared by storage and import,
+                    # migration steps, toDomain/toStored mapping)
   domain/           # pure core: immutable entities/VOs per concept (Color, Palette,
                     # ProjectSettings, ProjectRule, TintSettings); no framework or
                     # library imports, base/ holds the Entity/ValueObject classes
@@ -149,3 +150,5 @@ src/
 Settings are stored in `browser.storage.local` as versioned JSON. Storage saves use the running extension release version, floored at `CURRENT_SCHEMA_VERSION`; exported files use `CURRENT_SCHEMA_VERSION` to identify their data shape. Releases with the same shape therefore export files an earlier release can import.
 
 A shape change must include a migration whose `to` and `CURRENT_SCHEMA_VERSION` equal the first extension release that ships it, above every earlier release version. Import accepts stamps from `SCHEMA_MIN_VERSION` through the importing build's effective schema version ceiling and runs applicable migrations; a future schema stamp above that ceiling is refused. A file exported by older code may keep its release version stamp, so an older importer can still reject that legacy file even when its data shape is otherwise unchanged.
+
+Stored settings are read as strictly as an import, with the same migration steps and the same stamp range: a value that cannot be read whole (not a settings record, a stamp outside that range, or a missing or invalid field) is refused, never repaired with defaults or written over. Only an absent key reads as empty settings. Content scripts then paint nothing, the background script leaves storage as it is (it logs the refusal when it tries to migrate an older stamp; current and newer stamps are not read there), and the side panel opens on a recovery screen that lists the invalid fields with their paths, exports the stored value as it is to a JSON file, and resets to empty settings after a confirmation.

@@ -134,8 +134,8 @@ export class PlatformBarTextSettings extends ValueObject<PlatformBarTextSettings
 
 // One object per tinted surface, mirroring the settings UI's cards.
 export class ProjectSettings extends ValueObject<ProjectSettings> {
-  // The domain owns the default VALUES; recovering junk storage back to them is the settings
-  // repository's job (adapter/out), which sources its `.catch()` fallbacks from here.
+  // The domain owns the default VALUES. Stored settings are never repaired to them: the settings
+  // reader (adapter/out) refuses a value it cannot read whole.
   static readonly DEFAULT: ProjectSettings = new ProjectSettings(
     // The palette's own default entries (a single "Primary" swatch). Its id is the stable
     // literal 'default' — not a generated one — because topBar/platformBar's default color

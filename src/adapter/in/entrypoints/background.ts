@@ -3,7 +3,9 @@ import { migrateStoredSettings } from '../../out/browser-settings-store';
 export default defineBackground(() => {
   // Single writer for schema migrations: persist stored settings in the newest shape as
   // soon as the extension starts after an update. Content scripts and the side panel also
-  // migrate in memory on read, so nothing depends on this write having happened yet.
+  // migrate in memory on read, so nothing depends on this write having happened yet. Settings
+  // that cannot be read are never written: storage is left as is, and a refusal while migrating an
+  // older stamp is logged here (current and newer stamps are left to the readers).
   migrateStoredSettings(browser.runtime.getManifest().version).catch((error) =>
     console.error('[gcp-console-tint] settings migration failed', error),
   );

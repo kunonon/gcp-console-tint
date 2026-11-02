@@ -222,6 +222,20 @@ async function assertStable(read, assertSample, message, duration = 450) {
   } while (Date.now() < deadline);
 }
 
+// A console page with nothing painted: the top bar is in the document, so the content script ran,
+// but hidden, and the mock platform bar keeps its own color.
+function untinted(value) {
+  return (
+    value.topBar.exists && value.topBar.display === 'none' && value.platformBar.backgroundColor === 'rgb(238, 238, 238)'
+  );
+}
+
+function assertUntinted(value, message) {
+  assert.equal(value.topBar.exists, true, message);
+  assert.equal(value.topBar.display, 'none', message);
+  assert.equal(value.platformBar.backgroundColor, 'rgb(238, 238, 238)', message);
+}
+
 async function waitSettings(h, predicate, message) {
   await h.browser.waitUntil(async () => predicate(await h.readSettings()), {
     timeout: 5000,
@@ -1249,37 +1263,148 @@ for (const browserName of browserTargets()) {
       assert.equal(snapshot.topBar.backgroundColor, 'rgb(0, 170, 0)', 'storage did not persist through panel reload');
     });
 
-    test('recovers legacy and corrupt storage on extension reload while retaining current and newer schemas', async () => {
-      const legacy = {
-        projectRules: [rule('legacy', 'alpha', 'exact', projectSettings({ topBar: topBar('#cc0000') }))],
-      };
-      const old = {
-        schemaVersion: '0.0.9',
-        projectRules: [rule('old', 'alpha', 'exact', projectSettings({ topBar: topBar('#cc0000') }))],
-      };
-      const corrupt = 'not-a-settings-record';
+    test('stops tinting when unreadable settings are written and tints again when readable ones follow', async () => {
+      const paints = (color) =>
+        projectSettings({ topBar: topBar(solid(color)), platformBar: platformBar(solid(color)) });
+      const tintedWith = (rgb) => (value) =>
+        value.topBar.display === 'block' &&
+        value.topBar.backgroundColor === rgb &&
+        value.platformBar.backgroundColor === rgb;
+      await setStored(h, settings(rule('alpha', 'alpha', 'exact', paints('#cc0000'))));
+      await snapshotWhen(h, tintedWith('rgb(204, 0, 0)'), 'readable settings did not tint alpha');
+
+      // The same rule with a pattern that is not a string: the value is refused whole, so the tint
+      // goes, as no tab opened now would paint it either.
+      await setStored(h, settings({ ...rule('alpha', 'alpha', 'exact', paints('#cc0000')), pattern: 42 }));
+      await snapshotWhen(h, untinted, 'unreadable settings left the tint on');
+      await assertStable(
+        () => h.snapshotConsole(),
+        (value, message) => assertUntinted(value, message),
+        'the tint came back while storage was unreadable',
+      );
+
+      await setStored(h, settings(rule('alpha', 'alpha', 'exact', paints('#00aa00'))));
+      await snapshotWhen(h, tintedWith('rgb(0, 170, 0)'), 'readable settings after unreadable ones did not tint again');
+
+      // A removed key is no value to read: the tab keeps what it last read. (The harness clears
+      // storage between tests the same way.)
+      await h.browser.switchToWindow(h.panelHandle);
+      const removal = await h.browser.execute(async () => {
+        try {
+          await (globalThis.browser || globalThis.chrome).storage.local.remove('tintSettings');
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, message: String(error) };
+        }
+      });
+      assert.equal(removal?.ok, true, removal?.message || 'Failed to remove the stored settings');
+      await assertStable(
+        () => h.snapshotConsole(),
+        (value, message) => assert.ok(tintedWith('rgb(0, 170, 0)')(value), message),
+        'removing the stored settings changed the tint',
+      );
+
+      // A stored null is a value, and not a settings record: refused like any other.
+      await setStored(h, null);
+      await snapshotWhen(h, untinted, 'a stored null left the tint on');
+      await setStored(h, settings(rule('alpha', 'alpha', 'exact', paints('#0000cc'))));
+      await snapshotWhen(h, tintedWith('rgb(0, 0, 204)'), 'readable settings after a stored null did not tint again');
+    });
+
+    test('leaves unreadable storage as it is and paints nothing from it after an extension reload', async () => {
+      // Each would paint alpha red if it were repaired instead of refused.
+      const red = projectSettings({ topBar: topBar(solid('#cc0000')) });
       for (const [name, stored] of [
-        ['unversioned legacy', legacy],
-        ['older schema', old],
-        ['corrupt storage', corrupt],
+        ['unversioned storage', { projectRules: [rule('legacy', 'alpha', 'exact', red)] }],
+        ['an unsupported older schema', { schemaVersion: '0.0.9', projectRules: [rule('old', 'alpha', 'exact', red)] }],
+        ['storage that is not a settings record', 'not-a-settings-record'],
+        // A rule the reader refuses beside one it could read: the whole value is refused, so the
+        // readable rule does not paint alpha either.
+        [
+          'a current schema with an invalid field',
+          settings({ ...rule('bad-pattern', 'discard-me'), pattern: 42 }, rule('good', 'alpha', 'exact', red)),
+        ],
+        [
+          'a schema newer than this build',
+          { ...settings(rule('future', 'alpha', 'exact', red)), schemaVersion: '99.0.0' },
+        ],
       ]) {
         await setStored(h, stored);
         await h.reloadExtension();
-        const migrated = await waitSettings(
+        // The side panel refuses it as well and shows its recovery screen (driven in ui.e2e.mjs).
+        await h.openPanel();
+        await h.browser.waitUntil(
+          async () => {
+            const alert = await h.browser.$('[role="alert"]');
+            return (await alert.isExisting()) && /Couldn’t read saved settings/.test(await alert.getText());
+          },
+          { timeout: 5000, interval: 100, timeoutMsg: `${name}: the side panel did not refuse it` },
+        );
+        await snapshotWhen(
           h,
-          (value) =>
-            value?.schemaVersion === EFFECTIVE_VERSION &&
-            Array.isArray(value.projectRules) &&
-            value.projectRules.length === 0,
-          `${name} recovery did not finish after extension reload`,
+          (value) => value.href.includes('project=alpha') && untinted(value),
+          `${name}: the content script did not run untinted in the fresh document`,
         );
-        assert.equal(
-          migrated.schemaVersion,
-          EFFECTIVE_VERSION,
-          `${name} was not stamped with the current extension version`,
+        await assertStable(
+          () => h.snapshotConsole(),
+          (value, message) => assertUntinted(value, message),
+          `${name}: the fresh document painted from unreadable storage`,
         );
-        assert.deepEqual(migrated.projectRules, [], `${name} did not fall back to safe defaults`);
+        await assertStable(
+          () => h.readSettings(),
+          (value, message) => assert.deepEqual(value, stored, message),
+          `${name}: unreadable storage was rewritten after extension reload`,
+        );
       }
+    });
+
+    test('migrates 0.1.3 and pre-theme storage on extension reload and keeps a current schema as it is', async () => {
+      // As v0.1.3 could store it: no theme, the bars' custom colors as '#rrggbb' strings, and a
+      // height that is not a whole number, which v0.1.3 rounded only when painting. The 0.2.0 step
+      // stores the 3 it painted and the 0.5.0 step wraps the bar colors as solid fills.
+      const v013 = {
+        schemaVersion: '0.1.3',
+        projectRules: [
+          rule(
+            'v013',
+            'alpha',
+            'exact',
+            projectSettings({
+              topBar: topBar('#cc0000', 2.5),
+              platformBar: { enabled: false, color: { paletteId: null, custom: '#234567' }, stripes: false },
+            }),
+          ),
+        ],
+      };
+      const v013Migrated = settings(
+        rule('v013', 'alpha', 'exact', projectSettings({ topBar: topBar(solid('#cc0000'), 3) })),
+      );
+      await setStored(h, v013);
+      // Read in memory through the same steps before anything is written.
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+          value.topBar.height === '3px',
+        '0.1.3 storage did not render its rounded height before the extension reload',
+      );
+      await h.reloadExtension();
+      const v013Reloaded = await waitSettings(
+        h,
+        (value) => value?.schemaVersion === EFFECTIVE_VERSION,
+        '0.1.3 schema migration did not finish after extension reload',
+      );
+      assert.deepEqual(v013Reloaded, v013Migrated, '0.1.3 storage was not migrated with its height rounded to 3');
+      await snapshotWhen(
+        h,
+        (value) =>
+          value.href.includes('project=alpha') &&
+          value.topBar.display === 'block' &&
+          value.topBar.backgroundColor === 'rgb(204, 0, 0)' &&
+          value.topBar.height === '3px',
+        'migrated 0.1.3 tint and height did not render in the fresh document',
+      );
 
       // Written before the theme existed, with the bars' custom colors as plain '#rrggbb' strings:
       // the 0.3.0 migration step adds theme 'auto' and keeps the rule, and the 0.5.0 step wraps
@@ -1339,103 +1464,6 @@ for (const browserName of browserTargets()) {
         () => h.readSettings(),
         (value, message) => assert.deepEqual(value, current, message),
         'current schema raw settings changed after the fresh document rendered',
-      );
-
-      const partiallyCorrupt = {
-        schemaVersion: EFFECTIVE_VERSION,
-        projectRules: [
-          { ...rule('bad-pattern', 'discard-me'), pattern: 42 },
-          rule(
-            'good',
-            'alpha',
-            'exact',
-            projectSettings({
-              palette: {
-                enabled: true,
-                entries: [{ id: 'brand', name: 'Brand', color: solid('#00aa00') }, 'invalid-palette-entry'],
-              },
-              topBar: {
-                enabled: true,
-                color: { paletteId: 'invalid-entry', custom: solid('#cc3366') },
-                height: 0,
-                stripes: false,
-              },
-            }),
-          ),
-        ],
-      };
-      await setStored(h, partiallyCorrupt);
-      await h.reloadExtension();
-
-      await h.openPanel();
-      const browser = h.browser;
-      await browser.waitUntil(async () => (await browser.$$('[data-rule-row]')).length === 1, {
-        timeout: 5000,
-        interval: 100,
-        timeoutMsg: 'partially corrupt settings did not render only the valid rule',
-      });
-      const visibleRules = await browser.$$('[data-rule-row]');
-      assert.equal(visibleRules.length, 1);
-      assert.match(await visibleRules[0].getText(), /alpha/);
-      await visibleRules[0].$('button[aria-label="Edit"]').click();
-      await browser.$('button[aria-label="Back"]').waitForDisplayed();
-      assert.equal(await browser.$('input[aria-label="Top bar height"]').getValue(), '4');
-      const picker = await browser.$('button[aria-label="Top bar color"]');
-      assert.equal(await picker.getText(), '#cc3366', 'a dangling palette reference should use its custom color');
-      await picker.click();
-      await browser.$('button[aria-label="Brand"]').waitForDisplayed();
-      // The palette beads, not the gradient stop buttons beside the custom color (Add and Remove stop).
-      const visiblePaletteEntries = await browser.$$('[role="dialog"] button[aria-label]:not(fieldset button)');
-      assert.deepEqual(
-        await visiblePaletteEntries.map((entry) => entry.getAttribute('aria-label')),
-        ['Brand'],
-        'the invalid palette sibling should be excluded while Brand remains visible',
-      );
-      await browser.keys('Escape');
-
-      await h.openConsole('alpha');
-      const recovered = await snapshotWhen(
-        h,
-        (value) =>
-          value.topBar.display === 'block' &&
-          value.topBar.backgroundColor === 'rgb(204, 51, 102)' &&
-          value.topBar.height === '4px',
-        'partially corrupt CSS did not use the custom fallback color and default height',
-      );
-      assert.equal(recovered.topBar.display, 'block');
-      assert.equal(recovered.topBar.backgroundColor, 'rgb(204, 51, 102)');
-      assert.equal(recovered.topBar.height, '4px');
-      await assertStable(
-        () => h.readSettings(),
-        (value, message) => assert.deepEqual(value, partiallyCorrupt, message),
-        'partially corrupt current-schema raw settings changed after the CSS fallback rendered',
-      );
-
-      const newer = {
-        ...settings(rule('future', 'alpha', 'exact', projectSettings({ topBar: topBar(solid('#0000cc')) }))),
-        schemaVersion: '99.0.0',
-      };
-      await setStored(h, newer);
-      await h.reloadExtension();
-      const newerReloaded = await waitSettings(
-        h,
-        (value) => isDeepStrictEqual(value, newer),
-        'newer schema did not remain intact after extension reload',
-      );
-      assert.deepEqual(newerReloaded, newer, 'newer schema data did not remain intact after extension reload');
-      await snapshotWhen(
-        h,
-        (value) =>
-          value.href.includes('project=alpha') &&
-          value.topBar.display === 'block' &&
-          value.topBar.backgroundColor === 'rgb(0, 0, 204)' &&
-          value.topBar.height === '7px',
-        'newer schema tint and height did not render in the fresh document',
-      );
-      await assertStable(
-        () => h.readSettings(),
-        (value, message) => assert.deepEqual(value, newer, message),
-        'newer schema raw settings changed after the fresh document rendered',
       );
     });
 

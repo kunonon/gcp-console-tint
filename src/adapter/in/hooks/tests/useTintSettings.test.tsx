@@ -2,7 +2,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRule } from '../../../../domain/project-rule';
 import { TintSettings } from '../../../../domain/tint-settings';
-import type { SettingsStore } from '../../../../port/settings-store';
+import { type SettingsStore, StoredSettingsError } from '../../../../port/settings-store';
 import { useTintSettings } from '../useTintSettings';
 
 function deferred<T>() {
@@ -64,7 +64,64 @@ describe('useTintSettings', () => {
     });
 
     expect(result.current.status).toBe('failed');
+    expect(result.current.loadError).toBe(error);
     expect(log).toHaveBeenCalledWith('[gcp-console-tint] settings load failed', error);
+  });
+
+  it('hands over a StoredSettingsError from load as loadError', async () => {
+    const error = new StoredSettingsError({ reason: 'not-settings' }, 'not-a-settings-record');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = makeStore({ load: () => Promise.reject(error) });
+    const { result } = renderHook(() => useTintSettings(store));
+
+    await waitFor(() => expect(result.current.status).toBe('failed'));
+    expect(result.current.loadError).toBe(error);
+  });
+
+  describe('reset', () => {
+    const unreadable = new StoredSettingsError({ reason: 'not-settings' }, null);
+
+    it('saves empty settings under the default theme, then reports ready with them and clears loadError', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const write = deferred<void>();
+      const save = vi.fn((_settings: TintSettings) => write.promise);
+      const store = makeStore({ load: () => Promise.reject(unreadable), save });
+      const { result } = renderHook(() => useTintSettings(store));
+      await waitFor(() => expect(result.current.status).toBe('failed'));
+
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.reset();
+      });
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+      const saved = save.mock.calls[0]![0];
+      expect(saved.projectRules).toHaveLength(0);
+      expect(saved.theme).toBe(TintSettings.DEFAULT_THEME);
+      // Still failed until storage has the value.
+      expect(result.current.status).toBe('failed');
+
+      await act(async () => {
+        write.resolve(undefined);
+        await pending;
+      });
+      expect(result.current.status).toBe('ready');
+      expect(result.current.settings).toBe(saved);
+      expect(result.current.loadError).toBeUndefined();
+    });
+
+    it('rejects when the write fails and stays failed with the same loadError', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const error = new Error('write failed');
+      const store = makeStore({ load: () => Promise.reject(unreadable), save: () => Promise.reject(error) });
+      const { result } = renderHook(() => useTintSettings(store));
+      await waitFor(() => expect(result.current.status).toBe('failed'));
+
+      await act(async () => {
+        await expect(result.current.reset()).rejects.toBe(error);
+      });
+      expect(result.current.status).toBe('failed');
+      expect(result.current.loadError).toBe(unreadable);
+    });
   });
 
   it('ignores a stale load after the settings store changes', async () => {

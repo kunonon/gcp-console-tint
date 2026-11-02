@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fitDetail, shortenForDisplay } from '../text';
+import { fitDetail, issueLines, plural, shortenForDisplay } from '../text';
 
 const EMOJI = '😀'; // two UTF-16 units
 const MARKER = '\nDetails truncated.';
@@ -117,5 +117,27 @@ describe('fitDetail', () => {
     // Pair at units 16,363-16,364: the cut lands after it.
     const even = `${'z'.repeat(16_363)}${EMOJI.repeat(3000)}`;
     expect(fitDetail(even)).toBe(`${'z'.repeat(16_363)}${EMOJI}${MARKER}`);
+  });
+});
+
+describe('issueLines', () => {
+  it('puts one issue per line as "path: message", naming the empty root path', () => {
+    expect(
+      issueLines(
+        [
+          { path: '', message: 'expected an object' },
+          { path: 'projectRules[1].settings.topBar.height', message: 'expected a number' },
+        ],
+        'Saved settings',
+      ),
+    ).toBe('Saved settings: expected an object\nprojectRules[1].settings.topBar.height: expected a number');
+  });
+});
+
+describe('plural', () => {
+  it('adds an s to the noun unless the count is one', () => {
+    expect(plural(1, 'rule')).toBe('1 rule');
+    expect(plural(0, 'rule')).toBe('0 rules');
+    expect(plural(2, 'invalid field')).toBe('2 invalid fields');
   });
 });

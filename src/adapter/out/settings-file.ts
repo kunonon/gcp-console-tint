@@ -14,14 +14,14 @@ import { isTheme, THEMES, type Theme, TintSettings } from '../../domain/tint-set
 import { TopBarHeight } from '../../domain/top-bar-height';
 import { SettingsImportError, type SettingsImportIssue } from '../../port/settings-store';
 import { assertNever } from '../../utils/assert';
-import { runMigrations, SCHEMA_MIGRATIONS, SCHEMA_MIN_VERSION, type SchemaMigration } from './migrations';
+import { MAX_ISSUES, runMigrations, SCHEMA_MIGRATIONS, SCHEMA_MIN_VERSION, type SchemaMigration } from './migrations';
 import { compareVersions, VersionComparisonResult } from './version';
 
-// The import format: the same JSON shape settings-repository's toStored() writes, read back
-// STRICTLY. Where toDomain() repairs corrupt storage field by field, an imported file is the
-// user's own input: every field the exporter writes must be there with the right type and a
-// usable value, and anything else is refused with the reason and the offending paths, so the
-// user can fix the file instead of silently getting defaults back.
+// The stored and import format: the same JSON shape settings-repository's toStored() writes, read
+// back STRICTLY (readSettingsValue). Storage and the import share every check; the import alone
+// parses text and refuses a file with no rules. Every field the exporter writes must be there
+// with the right type and a usable value, and anything else is refused with the reason and the
+// offending paths, so the user is told what is wrong instead of silently getting defaults back.
 //
 // The two validation stages are deliberately split:
 //   1. STRUCTURE (checkStructure, with the Zod schemas below) — required keys and JSON types only. No enums, ranges
@@ -108,12 +108,10 @@ export type SettingsFile = {
   projectRules: RuleFile[];
 };
 
-// Each stage keeps at most this many issues, so a file that is wrong everywhere is neither
-// walked nor reported in full.
-const MAX_ISSUES = 100;
-
-// Thrown by an issue collector instead of keeping the issue past MAX_ISSUES, and caught only by
-// the stage that owns that collector, so validation stops on the spot.
+// Each stage keeps at most MAX_ISSUES issues (shared with the migration steps), so a file that is
+// wrong everywhere is neither walked nor reported in full. This is thrown by an issue collector
+// instead of keeping the issue past MAX_ISSUES, and caught only by the stage that owns that
+// collector, so validation stops on the spot.
 class ValidationStopped {}
 
 function issueCollector(issues: SettingsImportIssue[]) {
@@ -288,7 +286,7 @@ function toRules(file: SettingsFile): {
   // so there is no value rule to apply here. A paletteId naming no entry of the rule's own
   // palette is NOT an issue either: the domain treats a dangling reference as legal and falls
   // back to the custom color (see Palette.resolve). Palette-local id uniqueness is checked
-  // below as an import-file constraint, without changing domain ids or storage recovery. A text
+  // below as a constraint of the stored format, without changing domain ids. A text
   // reference to a gradient entry is legal for the same reason (see Palette.resolveSolid), and it
   // is what this extension's own export writes. `custom` is judged by the surface's own parser:
   // the bars take `fill`, the text `color`.
@@ -361,31 +359,20 @@ function invalidFields(issues: readonly SettingsImportIssue[], validationStopped
   );
 }
 
-// Parses an imported settings file's text into current-shape settings, throwing
-// SettingsImportError on anything the user needs to be told about: bad JSON, the wrong kind of
-// file, a version predating every readable shape or postdating this build, a file whose
-// migration to the current shape fails, fields that are missing/wrongly typed/unusable, or no
-// rules at all.
-//
-// The file's theme is validated like every other field and carried on the result, but the
-// Import modal only merges the rules: importing never changes the user's own theme.
+// Reads a stored or imported settings value into current-shape settings, throwing
+// SettingsImportError on anything that cannot be read whole: not a settings record, a version
+// predating every readable shape or postdating this build, a migration step that refuses the data
+// or fails, or fields that are missing/wrongly typed/unusable. Zero rules is a valid result here.
 //
 // `currentVersion` is this build's effective schema version ceiling (the running extension
-// version floored at CURRENT_SCHEMA_VERSION). It bounds legacy release-stamped files; stamps
+// version floored at CURRENT_SCHEMA_VERSION). It bounds legacy release-stamped data; stamps
 // below SCHEMA_MIN_VERSION are also refused. `steps` is injectable for tests; production uses
 // the registry.
-export function parseSettingsFile(
-  text: string,
+export function readSettingsValue(
+  value: unknown,
   currentVersion: string,
   steps: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
 ): TintSettings {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (error) {
-    throw new SettingsImportError({ reason: 'invalid-json' }, { cause: error });
-  }
-
   if (!isRecord(value)) {
     throw new SettingsImportError({ reason: 'not-settings' });
   }
@@ -403,10 +390,11 @@ export function parseSettingsFile(
     throw new SettingsImportError({ reason: 'newer-version', version: schemaVersion });
   }
 
-  // Folded forward to the current shape first, so an older file is judged against the shape it
-  // migrates into rather than the one it was written in. Only steps newer than the file's own
-  // stamp run (see runMigrations), so a file already in a later shape is not migrated twice.
-  // Only a throw from the migration itself is migration-failed, reported against the file's own
+  // Folded forward to the current shape first, so older data is judged against the shape it
+  // migrates into rather than the one it was written in. Only steps newer than the data's own
+  // stamp run (see runMigrations), so data already in a later shape is not migrated twice.
+  // A step's own refusal (invalid-fields, with the paths it could not interpret) is kept as is.
+  // Any other throw from the migration is migration-failed, reported against the data's own
   // stamp (the step that threw is an internal detail the user cannot act on); every check after
   // the migration keeps its own reason, and an unexpected error from one of those checks
   // propagates unchanged.
@@ -414,10 +402,11 @@ export function parseSettingsFile(
   try {
     ({ data } = runMigrations(value, schemaVersion, steps));
   } catch (error) {
+    if (error instanceof SettingsImportError) throw error;
     throw new SettingsImportError({ reason: 'migration-failed', version: schemaVersion }, { cause: error });
   }
 
-  // Only a structurally complete file reaches the value stage: it builds from Zod's parsed data.
+  // Only a structurally complete value reaches the value stage: it builds from Zod's parsed data.
   const structureIssues: SettingsImportIssue[] = [];
   let file: SettingsFile;
   try {
@@ -430,8 +419,29 @@ export function parseSettingsFile(
 
   const { theme, rules, issues, validationStopped } = toRules(file);
   if (issues.length > 0) throw invalidFields(issues, validationStopped);
-  if (rules.length === 0) {
+  return new TintSettings(rules, theme);
+}
+
+// Parses an imported settings file's text into current-shape settings, throwing
+// SettingsImportError on anything the user needs to be told about: bad JSON, everything
+// readSettingsValue refuses, or no rules at all.
+//
+// The file's theme is validated like every other field and carried on the result, but the
+// Import modal only merges the rules: importing never changes the user's own theme.
+export function parseSettingsFile(
+  text: string,
+  currentVersion: string,
+  steps: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
+): TintSettings {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new SettingsImportError({ reason: 'invalid-json' }, { cause: error });
+  }
+  const settings = readSettingsValue(value, currentVersion, steps);
+  if (settings.projectRules.length === 0) {
     throw new SettingsImportError({ reason: 'no-rules' });
   }
-  return new TintSettings(rules, theme);
+  return settings;
 }
