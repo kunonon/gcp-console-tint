@@ -91,49 +91,63 @@ export default defineContentScript({
     // Such a root gets the same rules in a style element of its own, the background on :host. The
     // background and text rules share that one element, so a root the script misses keeps the
     // console's own colors on both, never tinted text on an untinted bar or the reverse.
-    // Each root's style element, and how often it has been put back since restoredSince. Something on
-    // the page that removed it every time it came back would trade mutations with this observer
-    // without the event loop ever yielding, so it is put back at most MAX_RESTORES times within
-    // RESTORE_WINDOW_MS; past that the root keeps the console's own colors until a pass after the
-    // window.
-    const MAX_RESTORES = 10;
-    const RESTORE_WINDOW_MS = 1000;
-    type ShellStyle = { element: HTMLStyleElement; restoredSince: number; restores: number };
-    const shellStyles = new WeakMap<ShadowRoot, ShellStyle>();
+    const shellStyles = new WeakMap<ShadowRoot, HTMLStyleElement>();
     let shellCss = '';
+
+    // A write in one of the observer's passes (styling a new root, putting back a style element the
+    // page removed, or restoring rules the page rewrote) may answer something on the page that undoes
+    // it every time, and the two would trade mutations without the event loop ever yielding. A page
+    // that re-creates the host gives each write a new root, so the passes share one budget for the
+    // whole document: at most MAX_REPAIRS such writes in a window of REPAIR_WINDOW_MS that opens with
+    // the first one after the previous window. Past that a root stays as the page left it until a pass
+    // after the window. Settings and project changes write at once however often they come: dragging
+    // a color in the side panel saves on every move.
+    const MAX_REPAIRS = 10;
+    const REPAIR_WINDOW_MS = 1000;
+    let repairsSince = 0;
+    let repairs = 0;
+    const repairAllowed = () => {
+      const now = performance.now();
+      if (now - repairsSince > REPAIR_WINDOW_MS) {
+        repairsSince = now;
+        repairs = 0;
+      }
+      return ++repairs <= MAX_REPAIRS;
+    };
+
     const shellRoots = () =>
       Array.from(document.getElementsByTagName('one-cloud-bar-widget')).flatMap((widget) =>
         Array.from(widget.querySelectorAll('*'), (host) => host.shadowRoot).filter((root) => root !== null),
       );
-    const syncShellStyles = () => {
+    // `repair` is true in the observer's passes, whose writes count against the budget above.
+    const syncShellStyles = (repair: boolean) => {
       for (const root of shellRoots()) {
-        let style = shellStyles.get(root);
+        const style = shellStyles.get(root);
+        // Nothing to write to a root whose style element holds the rules, nor, while no rule paints, to
+        // a root without its style element.
+        if (style?.parentNode === root ? style.textContent === shellCss : shellCss === '') continue;
+        if (repair && !repairAllowed()) continue;
         if (style === undefined) {
-          if (shellCss === '') continue;
-          style = { element: document.createElement('style'), restoredSince: 0, restores: 0 };
-          shellStyles.set(root, style);
-          root.append(style.element);
+          const created = document.createElement('style');
+          created.textContent = shellCss;
+          shellStyles.set(root, created);
+          root.append(created);
           // Puts the style back if the console empties the root in place.
           shellObserver.observe(root, { childList: true });
-        } else if (style.element.parentNode !== root) {
-          const now = performance.now();
-          if (now - style.restoredSince > RESTORE_WINDOW_MS) {
-            style.restoredSince = now;
-            style.restores = 0;
-          }
-          if (++style.restores > MAX_RESTORES) continue;
-          root.append(style.element);
+        } else {
+          // The rules go in before a removed element goes back, so the page sees one mutation.
+          if (style.textContent !== shellCss) style.textContent = shellCss;
+          if (style.parentNode !== root) root.append(style);
         }
-        if (style.element.textContent !== shellCss) style.element.textContent = shellCss;
       }
     };
-    // When mica mounts a widget in a container it creates, as it does for one-cloud-bar-widget on the
-    // pages seen, it attaches the root before it inserts the container, so the insertion brings the
-    // root. Each pass searches the document by tag name, a cost that grows with the page, and walks
-    // the widgets' few light-DOM descendants. The observer also sees the script's own platformBarStyle
-    // writes, so every apply runs a second pass; it changes nothing, as both writes in
-    // syncShellStyles are guarded.
-    const shellObserver = new MutationObserver(syncShellStyles);
+    // When mica mounts a widget in a container it creates, as the loader saved with Cloud Run's
+    // overview does for one-cloud-bar-widget, it attaches the root before it inserts the container,
+    // so the insertion brings the root. Each pass searches the document by tag name, a cost that
+    // grows with the page, and walks the widgets' few light-DOM descendants. The observer also sees
+    // the script's own writes to platformBarStyle, so an apply that writes rules there or empties it
+    // runs a second pass; that pass writes nothing, as each root already holds what the apply wrote.
+    const shellObserver = new MutationObserver(() => syncShellStyles(true));
 
     const applyProjectSettings = (project: ProjectSettings) => {
       const { palette } = project;
@@ -171,7 +185,10 @@ export default defineContentScript({
       let platformFade = false;
       if (project.platformBar.enabled) {
         const fill = palette.resolve(project.platformBar.color);
-        const { next, fresh } = fadeFrom(platformBarFade, fill, () => paintedKnots(platformBarOnScreen()));
+        // Under reduced motion nothing fades, so no bar's box is measured either.
+        const { next, fresh } = fadeFrom(platformBarFade, fill, () =>
+          animate ? paintedKnots(platformBarOnScreen()) : undefined,
+        );
         platformBarFade = next;
         platformFade = fresh && next.from !== undefined;
         const { color, properties } = fillProperties(fill, project.platformBar.stripes, next.from);
@@ -207,7 +224,7 @@ export default defineContentScript({
       }
       platformBarStyle.textContent = rules.join('\n');
       shellCss = shellRules.join('\n');
-      syncShellStyles();
+      syncShellStyles(false);
       if (platformFade) for (const platformBar of platformBars) fade(platformBar);
     };
 
@@ -223,7 +240,7 @@ export default defineContentScript({
         bar.style.display = 'none';
         platformBarStyle.textContent = '';
         shellCss = '';
-        syncShellStyles();
+        syncShellStyles(false);
         topBarFade = undefined;
         platformBarFade = undefined;
         return;
