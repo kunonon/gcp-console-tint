@@ -89,7 +89,15 @@ export default defineContentScript({
     // where platformBarStyle cannot reach. Such a root gets the same rules in a style element of its
     // own, the background on :host: the host is the bar's box, which mica displays as a block. Both
     // rules arrive together or not at all, so a root this misses keeps the console's own colors.
-    const shellStyles = new WeakMap<ShadowRoot, HTMLStyleElement>();
+    // Each root's style element, and how often it has been put back since restoredSince. Something on
+    // the page that removed it every time it came back would trade mutations with this observer
+    // without the event loop ever yielding, so it is put back at most MAX_RESTORES times within
+    // RESTORE_WINDOW_MS; past that the root keeps the console's own colors until a pass after the
+    // window.
+    const MAX_RESTORES = 10;
+    const RESTORE_WINDOW_MS = 1000;
+    type ShellStyle = { element: HTMLStyleElement; restoredSince: number; restores: number };
+    const shellStyles = new WeakMap<ShadowRoot, ShellStyle>();
     let shellCss = '';
     const shellRoots = () =>
       Array.from(document.getElementsByTagName('one-cloud-bar-widget')).flatMap((widget) =>
@@ -100,13 +108,21 @@ export default defineContentScript({
         let style = shellStyles.get(root);
         if (style === undefined) {
           if (shellCss === '') continue;
-          style = document.createElement('style');
+          style = { element: document.createElement('style'), restoredSince: 0, restores: 0 };
           shellStyles.set(root, style);
+          root.append(style.element);
           // Puts the style back if the console empties the root in place.
           shellObserver.observe(root, { childList: true });
+        } else if (style.element.parentNode !== root) {
+          const now = performance.now();
+          if (now - style.restoredSince > RESTORE_WINDOW_MS) {
+            style.restoredSince = now;
+            style.restores = 0;
+          }
+          if (++style.restores > MAX_RESTORES) continue;
+          root.append(style.element);
         }
-        if (style.parentNode !== root) root.append(style);
-        if (style.textContent !== shellCss) style.textContent = shellCss;
+        if (style.element.textContent !== shellCss) style.element.textContent = shellCss;
       }
     };
     // When mica mounts a widget in a container it creates, as it does for one-cloud-bar-widget on the

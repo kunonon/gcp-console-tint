@@ -1685,6 +1685,42 @@ describe('platform bar in the console shell', () => {
     expect(copies(root)).toEqual([shellCss()]);
   });
 
+  // Something that removed the style every time it came back would otherwise trade mutations with the
+  // script for ever, without the event loop yielding. The remover here gives up after 1000 removals,
+  // so a script without the limit fails this test instead of hanging it.
+  it('puts the style back at most ten times a second into a root that keeps losing it', async () => {
+    let now = 5000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const root = renderShellBar();
+    await runOnTestProject();
+    let removals = 0;
+    const remover = new MutationObserver(() => {
+      const copy = root.querySelectorAll('style')[1];
+      if (copy && removals < 1000) {
+        removals++;
+        copy.remove();
+      }
+    });
+    remover.observe(root, { childList: true });
+
+    root.querySelectorAll('style')[1]?.remove();
+    await flush();
+    remover.disconnect();
+
+    expect(removals).toBe(10);
+    expect(copies(root)).toEqual([]);
+
+    // Later passes within the same second leave the root alone; the first one after it restores.
+    now += 1000;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
+    expect(copies(root)).toEqual([]);
+    now += 1;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
   it('stops watching for shell bars once the content script is invalidated', async () => {
     await runOnTestProject();
     const before = renderShellBar();
