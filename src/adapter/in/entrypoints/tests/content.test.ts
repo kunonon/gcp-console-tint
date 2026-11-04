@@ -90,10 +90,10 @@ const CURRENT_VERSION = '0.5.0';
 // Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event, and
 // `ctx.onInvalidated` to stop watching the page. The real ContentScriptContext is only constructed
 // by WXT's entrypoint wrapper (not present when importing content.ts directly in tests), so we
-// provide a minimal fake here: it forwards to the target's native addEventListener, which is all
-// our code relies on. The listeners are removed and the invalidation callbacks run after each test,
-// as WXT's context does when a content script is invalidated, so an earlier test's script does not
-// react to a later test's location changes or DOM.
+// provide a minimal fake here: addEventListener forwards to the target's native one, and
+// onInvalidated keeps the callback, which is all our code relies on. The listeners are removed and
+// the invalidation callbacks run after each test, as WXT's context does when a content script is
+// invalidated, so an earlier test's script does not react to a later test's location changes or DOM.
 const ctxListeners: (() => void)[] = [];
 function createFakeCtx() {
   return {
@@ -1429,8 +1429,8 @@ describe('content script', () => {
   });
 });
 
-// An orange project, then a switch to a blue one on both bars, over a mock console platform bar
-// (#ocb-platform-bar, a shell platform bar, or both).
+// An orange project, then a switch to a blue one on the top bar and the platform bar, over a mock
+// console platform bar: #ocb-platform-bar, a shell platform bar, or one of each.
 async function switchFromOrangeToBlue({ legacyBar = true, shellBar = false } = {}) {
   document.body.innerHTML = legacyBar ? '<div id="ocb-platform-bar"></div>' : '';
   if (shellBar) renderShellBar();
@@ -1611,7 +1611,7 @@ function shellHosts() {
   return Array.from(document.querySelectorAll('one-cloud-bar-widget mica-widget div > div'));
 }
 
-describe('platform bar in the console shell', () => {
+describe("platform bar in the console's newer shell", () => {
   // The style elements the script put into a shell root: those after the console's own.
   const copies = (root: ShadowRoot) =>
     Array.from(root.querySelectorAll('style'))
@@ -1683,7 +1683,7 @@ describe('platform bar in the console shell', () => {
     expect(copies(root)).toEqual(['']);
   });
 
-  it('adds nothing to a shell bar while no rule paints it', async () => {
+  it('adds no style element to a shell bar until a rule paints it', async () => {
     const root = renderShellBar();
     runContentScript();
     await flush();
