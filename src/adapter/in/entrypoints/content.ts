@@ -84,11 +84,13 @@ export default defineContentScript({
     fillPropertyStyle.textContent = FILL_PROPERTY_RULES;
     document.documentElement.appendChild(fillPropertyStyle);
 
-    // Pages in the console's newer shell (Cloud Run, for one) leave #ocb-platform-bar empty and draw
-    // the bar in one-cloud-bar-widget, inside the open shadow root of a host in the widget's light DOM,
-    // where platformBarStyle cannot reach. Such a root gets the same rules in a style element of its
-    // own, the background on :host: the host is the bar's box, which mica displays as a block. Both
-    // rules arrive together or not at all, so a root this misses keeps the console's own colors.
+    // Pages in the console's newer shell (Cloud Run's overview, for one) leave #ocb-platform-bar empty
+    // and draw the bar in one-cloud-bar-widget, inside the open shadow root of a host in the widget's
+    // light DOM, where platformBarStyle cannot reach. The host is a container that the console's widget
+    // loader, mica (the mica-widget element), mounts the bar in and displays as a block: the bar's box.
+    // Such a root gets the same rules in a style element of its own, the background on :host. The
+    // background and text rules share that one element, so a root the script misses keeps the
+    // console's own colors on both, never tinted text on an untinted bar or the reverse.
     // Each root's style element, and how often it has been put back since restoredSince. Something on
     // the page that removed it every time it came back would trade mutations with this observer
     // without the event loop ever yielding, so it is put back at most MAX_RESTORES times within
@@ -128,7 +130,9 @@ export default defineContentScript({
     // When mica mounts a widget in a container it creates, as it does for one-cloud-bar-widget on the
     // pages seen, it attaches the root before it inserts the container, so the insertion brings the
     // root. Each pass searches the document by tag name, a cost that grows with the page, and walks
-    // the widgets' few light-DOM descendants.
+    // the widgets' few light-DOM descendants. The observer also sees the script's own platformBarStyle
+    // writes, so every apply runs a second pass; it changes nothing, as both writes in
+    // syncShellStyles are guarded.
     const shellObserver = new MutationObserver(syncShellStyles);
 
     const applyProjectSettings = (project: ProjectSettings) => {

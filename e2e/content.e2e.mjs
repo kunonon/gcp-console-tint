@@ -214,7 +214,7 @@ async function catchFade(h, path, times, names) {
   );
 }
 
-// The platform bar as pages in the newer console shell draw it (the fixture's renderShellBar()):
+// The platform bar as pages in the console's newer shell draw it (the fixture's renderShellBar()):
 // the shadow host's box, which takes the fill, the text inside its root, and the extension's copy of
 // the rules there (the root's second style element).
 async function shellWhen(h, predicate, message) {
@@ -1535,7 +1535,7 @@ for (const browserName of browserTargets()) {
       assert.equal(snapshot.unaffectedColor, 'rgb(32, 33, 36)');
     });
 
-    test('tints the platform bar that pages in the newer console shell draw in a shadow root', async () => {
+    test("tints the platform bar that pages in the console's newer shell draw in a shadow root", async () => {
       await setStored(
         h,
         settings(
@@ -1576,7 +1576,7 @@ for (const browserName of browserTargets()) {
       assert.equal(shell.copies.length, 1);
       assert.equal(shell.unaffectedColor, 'rgb(32, 33, 36)');
 
-      // Drawn again later, as the console does when it replaces the widget's container.
+      // Drawn again later in a new container, as the console may do when it re-creates the widget.
       await h.browser.execute(() => document.querySelector('#render-shell-bar').click());
       shell = await shellWhen(
         h,
