@@ -1592,15 +1592,18 @@ describe('gradient fills', () => {
 const SHELL_BAR_CONTENT =
   '<style>.cfc-platform-bar-left * { color: #3c4043; }</style><pcc-platform-bar><cfc-platform-bar><div class="cfc-platform-bar-left"><span>Google Cloud</span></div></cfc-platform-bar></pcc-platform-bar>';
 
-function renderShellBar(): ShadowRoot {
+// In a new widget, or beside an earlier host when `slot` is that host's parent.
+function renderShellBar(slot?: Element): ShadowRoot {
   const host = document.createElement('div');
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = SHELL_BAR_CONTENT;
-  document.body
-    .appendChild(document.createElement('one-cloud-bar-widget'))
-    .appendChild(document.createElement('mica-widget'))
-    .appendChild(document.createElement('div'))
-    .appendChild(host);
+  (
+    slot ??
+    document.body
+      .appendChild(document.createElement('one-cloud-bar-widget'))
+      .appendChild(document.createElement('mica-widget'))
+      .appendChild(document.createElement('div'))
+  ).appendChild(host);
   return root;
 }
 
@@ -1642,12 +1645,29 @@ describe('platform bar in the console shell', () => {
     expect(getElements().styleEl.textContent).toContain('#ocb-platform-bar { background-color: #000080 !important;');
   });
 
+  it('paints every host in every widget', async () => {
+    const first = renderShellBar();
+    const second = renderShellBar(first.host.parentElement ?? undefined);
+    const third = renderShellBar();
+
+    await runOnTestProject();
+
+    expect([first, second, third].map(copies)).toEqual(Array(3).fill([shellCss()]));
+  });
+
   it('paints a shell bar drawn later, and keeps it in step with the document', async () => {
     await runOnTestProject();
 
     const root = renderShellBar();
     await flush();
     expect(copies(root)).toEqual([shellCss()]);
+
+    // Any insertion on the page runs a pass; one that changes nothing leaves the copy's text node as
+    // it is, rather than rewriting the style sheet each time.
+    const text = root.querySelectorAll('style')[1]?.firstChild;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
+    expect(root.querySelectorAll('style')[1]?.firstChild).toBe(text);
 
     await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBarText: { enabled: false } }));
     await flush();
