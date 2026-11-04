@@ -87,12 +87,13 @@ interface TintSettings {
 // fixtures are current-schema data that no migration step touches.
 const CURRENT_VERSION = '0.5.0';
 
-// Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
-// The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
-// when importing content.ts directly in tests), so we provide a minimal fake here: it simply
-// forwards to the target's native addEventListener, which is all our code relies on. The listeners
-// are removed after each test, as WXT's context does when a content script is invalidated, so an
-// earlier test's script does not react to a later test's location changes.
+// Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event, and
+// `ctx.onInvalidated` to stop watching the page. The real ContentScriptContext is only constructed
+// by WXT's entrypoint wrapper (not present when importing content.ts directly in tests), so we
+// provide a minimal fake here: addEventListener forwards to the target's native one, and
+// onInvalidated keeps the callback, which is all our code relies on. The listeners are removed and
+// the invalidation callbacks run after each test, as WXT's context does when a content script is
+// invalidated, so an earlier test's script does not react to a later test's location changes or DOM.
 const ctxListeners: (() => void)[] = [];
 function createFakeCtx() {
   return {
@@ -100,11 +101,20 @@ function createFakeCtx() {
       target.addEventListener(type, listener as EventListener);
       ctxListeners.push(() => target.removeEventListener(type, listener as EventListener));
     },
+    onInvalidated(callback: () => void) {
+      ctxListeners.push(callback);
+      return () => {};
+    },
   };
 }
 
-afterEach(() => {
+// Runs what WXT runs when the content script is invalidated.
+function invalidateContentScripts() {
   for (const remove of ctxListeners.splice(0)) remove();
+}
+
+afterEach(() => {
+  invalidateContentScripts();
   vi.restoreAllMocks();
 });
 
@@ -1300,6 +1310,16 @@ describe('content script', () => {
           delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
         }
       });
+
+      // Finding the bar on screen forces a layout right after the top bar's writes.
+      it('measures no platform bar on a switch', async () => {
+        vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+        const measure = vi.spyOn(Element.prototype, 'getBoundingClientRect');
+
+        await switchFromOrangeToBlue();
+
+        expect(measure).not.toHaveBeenCalled();
+      });
     });
 
     describe('where the browser can animate', () => {
@@ -1310,19 +1330,24 @@ describe('content script', () => {
 
       // jsdom has no animate() and computes no color-mix(), so both are stubbed: the painted knots
       // read back as an oklch() color, as a browser serializes a mixed knot. `painted.value` is what
-      // every knot reads back as.
+      // every knot reads back as; `knotsReadFrom` lists the elements whose knots were read, in order.
       function stubBrowser() {
         const animate = vi.fn();
         HTMLElement.prototype.animate = animate;
         const painted = { value: 'oklch(0.7 0.2 45)' };
+        const knotsReadFrom: Element[] = [];
         const realGetComputedStyle = window.getComputedStyle.bind(window);
         vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
           const style = realGetComputedStyle(element);
           const getPropertyValue = style.getPropertyValue.bind(style);
-          style.getPropertyValue = (name: string) => (STOPS.includes(name) ? painted.value : getPropertyValue(name));
+          style.getPropertyValue = (name: string) => {
+            if (!STOPS.includes(name)) return getPropertyValue(name);
+            if (!knotsReadFrom.includes(element)) knotsReadFrom.push(element);
+            return painted.value;
+          };
           return style;
         });
-        return { animate, painted };
+        return { animate, painted, knotsReadFrom };
       }
 
       it('fades from the knots as painted to the next fill through the fade property', async () => {
@@ -1361,6 +1386,61 @@ describe('content script', () => {
         expect(styleEl.textContent).toContain(`${FROM[0]}: oklch(0.7 0.2 45) !important;`);
       });
 
+      it('fades every shell platform bar with #ocb-platform-bar', async () => {
+        const { animate } = stubBrowser();
+
+        await switchFromOrangeToBlue({ shellBars: 2 });
+
+        const { bar } = getElements();
+        const platformBars = [document.querySelector('#ocb-platform-bar'), ...shellHosts()];
+        expect(animate.mock.contexts).toEqual([...platformBars, bar, ...platformBars]);
+      });
+
+      it('fades a shell platform bar from its own knots where #ocb-platform-bar is missing', async () => {
+        const { animate, knotsReadFrom } = stubBrowser();
+
+        await switchFromOrangeToBlue({ legacyBar: false, shellBars: 1 });
+
+        const host = shellHosts()[0];
+        const { bar } = getElements();
+        expect(animate.mock.contexts).toEqual([host, bar, host]);
+        expect(knotsReadFrom.filter((element) => element !== bar)).toEqual([host]);
+        expect(host?.shadowRoot?.querySelectorAll('style')[1]?.textContent).toContain(
+          `${FROM[0]}: oklch(0.7 0.2 45) !important;`,
+        );
+      });
+
+      // A bar the console inserts during a fade paints the target at once, so the start is read from
+      // the bar on screen: here the shell bar, beside a 0px #ocb-platform-bar.
+      it('reads the fade start from the platform bar on screen, not from an empty #ocb-platform-bar', async () => {
+        const { knotsReadFrom } = stubBrowser();
+        vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+          return { height: this.matches('one-cloud-bar-widget *') ? 48 : 0 } as DOMRect;
+        });
+
+        await switchFromOrangeToBlue({ shellBars: 1 });
+
+        const { bar } = getElements();
+        expect(knotsReadFrom.filter((element) => element !== bar)).toEqual([shellHosts()[0]]);
+      });
+
+      // The console's welcome page, a legacy page, has a 49px #ocb-platform-bar and, in
+      // one-cloud-bar-widget, a 0px mica container with an open shadow root and no bar inside. The
+      // knots come from the bar on screen there too, not from the last bar found.
+      it('reads the fade start from #ocb-platform-bar when an empty shell host comes after it', async () => {
+        const { knotsReadFrom } = stubBrowser();
+        vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+          return { height: this.matches('#ocb-platform-bar') ? 48 : 0 } as DOMRect;
+        });
+
+        await switchFromOrangeToBlue({ shellBars: 1 });
+
+        const { bar } = getElements();
+        expect(knotsReadFrom.filter((element) => element !== bar)).toEqual([
+          document.querySelector('#ocb-platform-bar'),
+        ]);
+      });
+
       it('fades again into the same fill after a page no rule matches', async () => {
         const { animate } = stubBrowser();
         await switchFromOrangeToBlue();
@@ -1376,9 +1456,12 @@ describe('content script', () => {
   });
 });
 
-// An orange project, then a switch to a blue one on both bars, over a mock console platform bar.
-async function switchFromOrangeToBlue() {
-  document.body.innerHTML = '<div id="ocb-platform-bar"></div>';
+// An orange project, then a switch to a blue one on the top bar and the platform bar, over a mock
+// console platform bar: #ocb-platform-bar, `shellBars` shell platform bars (each in its own widget),
+// or both.
+async function switchFromOrangeToBlue({ legacyBar = true, shellBars = 0 } = {}) {
+  document.body.innerHTML = legacyBar ? '<div id="ocb-platform-bar"></div>' : '';
+  for (let i = 0; i < shellBars; i++) renderShellBar();
   const bars = (color: string) => ({
     topBar: { color: { paletteId: null, custom: solid(color) } },
     platformBar: { color: { paletteId: null, custom: solid(color) } },
@@ -1528,6 +1611,286 @@ describe('gradient fills', () => {
     });
 
     expect(styleEl.textContent).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
+  });
+});
+
+// Pages in the console's newer shell draw the platform bar in one-cloud-bar-widget, inside an open
+// shadow root that the console attaches and fills before it inserts the host (mica-widget's
+// container). The bar's text has colors of its own in there, set by the root's first style element.
+const SHELL_BAR_CONTENT =
+  '<style>.cfc-platform-bar-left * { color: #3c4043; }</style><pcc-platform-bar><cfc-platform-bar><div class="cfc-platform-bar-left"><span>Google Cloud</span></div></cfc-platform-bar></pcc-platform-bar>';
+
+// In a new widget, or beside an earlier host when `slot` is that host's parent.
+function renderShellBar(slot?: Element): ShadowRoot {
+  const host = document.createElement('div');
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = SHELL_BAR_CONTENT;
+  (
+    slot ??
+    document.body
+      .appendChild(document.createElement('one-cloud-bar-widget'))
+      .appendChild(document.createElement('mica-widget'))
+      .appendChild(document.createElement('div'))
+  ).appendChild(host);
+  return root;
+}
+
+function shellHosts() {
+  return Array.from(document.querySelectorAll('one-cloud-bar-widget mica-widget div > div'));
+}
+
+describe("platform bar in the console's newer shell", () => {
+  // The style elements the script put into a shell root: those after the console's own.
+  const copies = (root: ShadowRoot) =>
+    Array.from(root.querySelectorAll('style'))
+      .slice(1)
+      .map((style) => style.textContent);
+
+  // The document's rules, with the background on the root's host.
+  const shellCss = () => getElements().styleEl.textContent?.replace('#ocb-platform-bar {', ':host {') ?? '';
+
+  async function runOnTestProject(settings: ProjectSettingsOverrides = {}) {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule(settings));
+    setTestProjectLocation();
+    runContentScript();
+    await flush();
+  }
+
+  it('paints a shell bar drawn before the script runs, background on its host and text inside', async () => {
+    const root = renderShellBar();
+    const elsewhere = document.body.appendChild(document.createElement('div')).attachShadow({ mode: 'open' });
+
+    await runOnTestProject({
+      platformBar: { color: { paletteId: null, custom: solid('#000080') } },
+      platformBarText: { color: { paletteId: null, custom: '#abcdef' } },
+    });
+
+    expect(shellCss()).toContain(':host { background-color: #000080 !important;');
+    expect(shellCss()).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
+    expect(copies(root)).toEqual([shellCss()]);
+    // Only one-cloud-bar-widget's roots get a copy, and the document's rule still paints
+    // #ocb-platform-bar.
+    expect(elsewhere.querySelectorAll('style')).toHaveLength(0);
+    expect(getElements().styleEl.textContent).toContain('#ocb-platform-bar { background-color: #000080 !important;');
+  });
+
+  it('paints every host in every widget', async () => {
+    const first = renderShellBar();
+    const second = renderShellBar(first.host.parentElement ?? undefined);
+    const third = renderShellBar();
+
+    await runOnTestProject();
+
+    expect([first, second, third].map(copies)).toEqual(Array(3).fill([shellCss()]));
+  });
+
+  it('clears a painted root even when a root before it in the document was never painted', async () => {
+    const first = renderShellBar();
+    await runOnTestProject();
+    expect(copies(first)).toEqual([shellCss()]);
+
+    // The new root comes first in document order and is in the same task as the switch, so the
+    // observer has not styled it yet: the pass must skip it and still reach the painted root after it.
+    const slot = document.body
+      .insertBefore(document.createElement('one-cloud-bar-widget'), document.body.firstChild)
+      .appendChild(document.createElement('mica-widget'))
+      .appendChild(document.createElement('div'));
+    renderShellBar(slot);
+    triggerLocationChange('/?project=unknown-project');
+
+    expect(copies(first)).toEqual(['']);
+  });
+
+  it('paints a shell bar drawn later, and keeps it in step with the document', async () => {
+    await runOnTestProject();
+
+    const root = renderShellBar();
+    await flush();
+    expect(copies(root)).toEqual([shellCss()]);
+
+    // Any insertion into the document's light DOM runs a pass; one that changes nothing leaves the
+    // copy's text node as it is, rather than rewriting the style sheet each time.
+    const text = root.querySelectorAll('style')[1]?.firstChild;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
+    expect(root.querySelectorAll('style')[1]?.firstChild).toBe(text);
+
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBarText: { enabled: false } }));
+    await flush();
+    expect(shellCss()).toMatch(/^:host \{[^\n]*\}$/);
+    expect(copies(root)).toEqual([shellCss()]);
+
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBar: { enabled: false } }));
+    await flush();
+    expect(shellCss()).toMatch(/^\.cfc-platform-bar-left \*/);
+    expect(copies(root)).toEqual([shellCss()]);
+
+    triggerLocationChange('/?project=unknown-project');
+    expect(copies(root)).toEqual(['']);
+  });
+
+  it('adds no style element to a shell bar until a rule paints it', async () => {
+    const root = renderShellBar();
+    runContentScript();
+    await flush();
+    expect(copies(root)).toEqual([]);
+
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({}));
+    triggerLocationChange('/?project=test-project');
+    await flush();
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  it('puts the style back when the console empties the root in place', async () => {
+    const root = renderShellBar();
+    await runOnTestProject();
+
+    root.innerHTML = SHELL_BAR_CONTENT;
+    await flush();
+
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  // Something that removed the style every time it came back would otherwise trade mutations with the
+  // script for ever, without the event loop yielding. The remover here gives up after 1000 removals,
+  // so a script without the limit fails this test instead of hanging it.
+  it('puts the style back at most ten times a second into a root that keeps losing it', async () => {
+    let now = 5000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const root = renderShellBar();
+    await runOnTestProject();
+    let removals = 0;
+    // Each removal comes 50ms after the last, so the tenth restore is at 5450.
+    const remover = new MutationObserver(() => {
+      const copy = root.querySelectorAll('style')[1];
+      if (copy && removals < 1000) {
+        removals++;
+        now += 50;
+        copy.remove();
+      }
+    });
+    remover.observe(root, { childList: true });
+
+    root.querySelectorAll('style')[1]?.remove();
+    await flush();
+    remover.disconnect();
+
+    expect(removals).toBe(10);
+    expect(copies(root)).toEqual([]);
+
+    // The window opened with the first restore, at 5000: later passes within it leave the root alone,
+    // and the first one after it restores, although the last restore was less than a second before.
+    now = 6000;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
+    expect(copies(root)).toEqual([]);
+    now = 6001;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  // A page that answered each copy by re-creating the host would bring a new root every time, so the
+  // limit counts writes across the document rather than per root.
+  it('styles at most ten new roots a second for a page that re-creates the host each time', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    const first = renderShellBar();
+    const slot = first.host.parentElement as Element;
+    await runOnTestProject();
+    let recreations = 0;
+    let latest = first;
+    const recreate = () => {
+      const host = document.createElement('div');
+      latest = host.attachShadow({ mode: 'open' });
+      latest.innerHTML = SHELL_BAR_CONTENT;
+      const page = new MutationObserver(() => {
+        page.disconnect();
+        if (recreations < 1000) {
+          recreations++;
+          recreate();
+        }
+      });
+      page.observe(latest, { childList: true });
+      slot.replaceChildren(host);
+    };
+
+    recreate();
+    await flush();
+
+    expect(recreations).toBe(10);
+    expect(copies(latest)).toEqual([]);
+  });
+
+  it('restores rules the page rewrote at most ten times a second', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    const root = renderShellBar();
+    await runOnTestProject();
+    const copy = root.querySelectorAll('style')[1] as HTMLStyleElement;
+    // Rewrites the copy whenever the script restores it, and inserts something into the page, which
+    // runs the script's next pass.
+    let rewrites = 0;
+    const rewrite = () => {
+      copy.textContent = 'rewritten';
+      document.body.appendChild(document.createElement('p'));
+    };
+    const page = new MutationObserver(() => {
+      if (copy.textContent !== 'rewritten' && rewrites < 1000) {
+        rewrites++;
+        rewrite();
+      }
+    });
+    page.observe(root, { childList: true, subtree: true });
+
+    rewrite();
+    await flush();
+    page.disconnect();
+
+    expect(rewrites).toBe(10);
+    expect(copies(root)).toEqual(['rewritten']);
+  });
+
+  // Dragging a color in the side panel saves on every move, so settings changes are not limited.
+  it('follows every settings change at once, however many come in a second', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    const root = renderShellBar();
+    await runOnTestProject();
+
+    for (let i = 0; i < 15; i++) {
+      const color = `#0000${(16 + i).toString(16)}`;
+      await fakeBrowser.storage.local.set(
+        tintSettingsWithRule({ platformBar: { color: { paletteId: null, custom: solid(color) } } }),
+      );
+      await flush();
+      expect(shellCss()).toContain(`:host { background-color: ${color} !important;`);
+      expect(copies(root)).toEqual([shellCss()]);
+    }
+  });
+
+  it('puts no empty style back into a root that loses it while no rule paints', async () => {
+    const root = renderShellBar();
+    await runOnTestProject();
+    triggerLocationChange('/?project=unknown-project');
+    expect(copies(root)).toEqual(['']);
+
+    root.innerHTML = SHELL_BAR_CONTENT;
+    await flush();
+    expect(copies(root)).toEqual([]);
+
+    triggerLocationChange('/?project=test-project');
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  it('stops watching for shell bars once the content script is invalidated', async () => {
+    await runOnTestProject();
+    const before = renderShellBar();
+    await flush();
+    expect(copies(before)).toEqual([shellCss()]);
+
+    invalidateContentScripts();
+    const after = renderShellBar();
+    await flush();
+
+    expect(copies(after)).toEqual([]);
   });
 });
 

@@ -84,6 +84,71 @@ export default defineContentScript({
     fillPropertyStyle.textContent = FILL_PROPERTY_RULES;
     document.documentElement.appendChild(fillPropertyStyle);
 
+    // Pages in the console's newer shell (Cloud Run's overview, for one) leave #ocb-platform-bar empty
+    // and draw the bar in one-cloud-bar-widget, inside the open shadow root of a host in the widget's
+    // light DOM, where platformBarStyle cannot reach. The host is a container that the console's widget
+    // loader, mica (the mica-widget element), mounts the bar in and displays as a block: the bar's box.
+    // Such a root gets the same rules in a style element of its own, the background on :host. The
+    // background and text rules share that one element, so a root the script misses keeps the
+    // console's own colors on both, never tinted text on an untinted bar or the reverse.
+    const shellStyles = new WeakMap<ShadowRoot, HTMLStyleElement>();
+    let shellCss = '';
+
+    // A write in one of the observer's passes (styling a new root, putting back a style element the
+    // page removed, or restoring rules the page rewrote) may answer something on the page that undoes
+    // it every time, and the two would trade mutations without the event loop ever yielding. A page
+    // that re-creates the host gives each write a new root, so the passes share one budget for the
+    // whole document: at most MAX_REPAIRS such writes in a window of REPAIR_WINDOW_MS that opens with
+    // the first one after the previous window. Past that a root stays as the page left it until a pass
+    // after the window. Settings and project changes write at once however often they come: dragging
+    // a color in the side panel saves on every move.
+    const MAX_REPAIRS = 10;
+    const REPAIR_WINDOW_MS = 1000;
+    let repairsSince = 0;
+    let repairs = 0;
+    const repairAllowed = () => {
+      const now = performance.now();
+      if (now - repairsSince > REPAIR_WINDOW_MS) {
+        repairsSince = now;
+        repairs = 0;
+      }
+      return ++repairs <= MAX_REPAIRS;
+    };
+
+    const shellRoots = () =>
+      Array.from(document.getElementsByTagName('one-cloud-bar-widget')).flatMap((widget) =>
+        Array.from(widget.querySelectorAll('*'), (host) => host.shadowRoot).filter((root) => root !== null),
+      );
+    // `repair` is true in the observer's passes, whose writes count against the budget above.
+    const syncShellStyles = (repair: boolean) => {
+      for (const root of shellRoots()) {
+        const style = shellStyles.get(root);
+        // Nothing to write to a root whose style element holds the rules, nor, while no rule paints, to
+        // a root without its style element.
+        if (style?.parentNode === root ? style.textContent === shellCss : shellCss === '') continue;
+        if (repair && !repairAllowed()) continue;
+        if (style === undefined) {
+          const created = document.createElement('style');
+          created.textContent = shellCss;
+          shellStyles.set(root, created);
+          root.append(created);
+          // Puts the style back if the console empties the root in place.
+          shellObserver.observe(root, { childList: true });
+        } else {
+          // The rules go in before a removed element goes back, so the page sees one mutation.
+          if (style.textContent !== shellCss) style.textContent = shellCss;
+          if (style.parentNode !== root) root.append(style);
+        }
+      }
+    };
+    // When mica mounts a widget in a container it creates, as the loader saved with Cloud Run's
+    // overview does for one-cloud-bar-widget, it attaches the root before it inserts the container,
+    // so the insertion brings the root. Each pass searches the document by tag name, a cost that
+    // grows with the page, and walks the widgets' few light-DOM descendants. The observer also sees
+    // the script's own writes to platformBarStyle, so an apply that writes rules there or empties it
+    // runs a second pass; that pass writes nothing, as each root already holds what the apply wrote.
+    const shellObserver = new MutationObserver(() => syncShellStyles(true));
+
     const applyProjectSettings = (project: ProjectSettings) => {
       const { palette } = project;
       if (project.topBar.enabled) {
@@ -105,13 +170,25 @@ export default defineContentScript({
       }
 
       const rules: string[] = [];
+      const shellRules: string[] = [];
       // Read before the rule changes. Without a rule yet the knots read as transparent (their
-      // registered initial value), so the first tint fades in from the console's own color.
-      const platformBar = document.querySelector('#ocb-platform-bar');
+      // registered initial value), so the first tint fades in from the console's own color. Every bar
+      // found here takes the same declarations and fades with the others, but a bar inserted during a
+      // fade paints the target at once, so the knots are read from the bar on screen: on a shell page
+      // #ocb-platform-bar is still there, 0px high, and may be such a bar.
+      const platformBars = [
+        ...document.querySelectorAll('#ocb-platform-bar'),
+        ...shellRoots().map((root) => root.host),
+      ];
+      const platformBarOnScreen = () =>
+        platformBars.find((element) => element.getBoundingClientRect().height > 0) ?? platformBars[0] ?? null;
       let platformFade = false;
       if (project.platformBar.enabled) {
         const fill = palette.resolve(project.platformBar.color);
-        const { next, fresh } = fadeFrom(platformBarFade, fill, () => paintedKnots(platformBar));
+        // Under reduced motion nothing fades, so no bar's box is measured either.
+        const { next, fresh } = fadeFrom(platformBarFade, fill, () =>
+          animate ? paintedKnots(platformBarOnScreen()) : undefined,
+        );
         platformBarFade = next;
         platformFade = fresh && next.from !== undefined;
         const { color, properties } = fillProperties(fill, project.platformBar.stripes, next.from);
@@ -129,6 +206,7 @@ export default defineContentScript({
           declarations.push(`transition: ${colorTransitions} !important;`);
         }
         rules.push(`#ocb-platform-bar { ${declarations.join(' ')} }`);
+        shellRules.push(`:host { ${declarations.join(' ')} }`);
       } else {
         platformBarFade = undefined;
       }
@@ -140,12 +218,14 @@ export default defineContentScript({
         if (animate) {
           textDeclarations.push('transition: color 300ms ease !important;');
         }
-        rules.push(
-          `.cfc-platform-bar-left *, .cfc-platform-bar-right *, .pcc-platform-bar-button * { ${textDeclarations.join(' ')} }`,
-        );
+        const textRule = `.cfc-platform-bar-left *, .cfc-platform-bar-right *, .pcc-platform-bar-button * { ${textDeclarations.join(' ')} }`;
+        rules.push(textRule);
+        shellRules.push(textRule);
       }
       platformBarStyle.textContent = rules.join('\n');
-      if (platformFade && platformBar) fade(platformBar);
+      shellCss = shellRules.join('\n');
+      syncShellStyles(false);
+      if (platformFade) for (const platformBar of platformBars) fade(platformBar);
     };
 
     // Empty settings until the store's load() resolves: no rules, so nothing is tinted.
@@ -159,6 +239,8 @@ export default defineContentScript({
       if (project === undefined) {
         bar.style.display = 'none';
         platformBarStyle.textContent = '';
+        shellCss = '';
+        syncShellStyles(false);
         topBarFade = undefined;
         platformBarFade = undefined;
         return;
@@ -167,6 +249,8 @@ export default defineContentScript({
     };
 
     applySettings(emptySettings);
+    shellObserver.observe(document.documentElement, { childList: true, subtree: true });
+    ctx.onInvalidated(() => shellObserver.disconnect());
 
     // Composition root for this entrypoint: the content script owns its store instance.
     const settingsStore = new SettingsStoreImpl();
