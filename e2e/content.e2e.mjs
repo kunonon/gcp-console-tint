@@ -214,6 +214,37 @@ async function catchFade(h, path, times, names) {
   );
 }
 
+// The platform bar as pages in the newer console shell draw it (the fixture's renderShellBar()):
+// the shadow host's box, which takes the fill, the text inside its root, and the extension's copy of
+// the rules there (the root's second style element).
+async function shellWhen(h, predicate, message) {
+  const read = async () => {
+    await h.browser.switchToWindow(h.mockHandle);
+    return h.browser.execute(() => {
+      const host = document.querySelector('one-cloud-bar-widget [mica-container]');
+      const style = getComputedStyle(host);
+      const color = (id) => getComputedStyle(host.shadowRoot.getElementById(id)).color;
+      return {
+        href: location.href,
+        render: host.dataset.render,
+        height: host.getBoundingClientRect().height,
+        legacyHeight: document.querySelector('#ocb-platform-bar').getBoundingClientRect().height,
+        backgroundColor: style.backgroundColor,
+        backgroundImage: style.backgroundImage,
+        backgroundAttachment: style.backgroundAttachment,
+        fill: Array.from({ length: 101 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-to-${k}`)),
+        fade: style.getPropertyValue('--gcp-console-tint-fade'),
+        painted: Array.from({ length: 101 }, (_, k) => style.getPropertyValue(`--gcp-console-tint-stop-${k}`)),
+        textColors: ['shell-left-text', 'shell-right-text', 'shell-button-text'].map(color),
+        copies: [...host.shadowRoot.querySelectorAll('style')].slice(1).map((element) => element.textContent),
+        unaffectedColor: getComputedStyle(document.querySelector('#unaffected-content')).color,
+      };
+    });
+  };
+  await h.browser.waitUntil(async () => predicate(await read()), { timeout: 8000, interval: 100, timeoutMsg: message });
+  return read();
+}
+
 async function assertStable(read, assertSample, message, duration = 450) {
   const deadline = Date.now() + duration;
   do {
@@ -1502,6 +1533,103 @@ for (const browserName of browserTargets()) {
       );
       const snapshot = await h.snapshotConsole();
       assert.equal(snapshot.unaffectedColor, 'rgb(32, 33, 36)');
+    });
+
+    test('tints the platform bar that pages in the newer console shell draw in a shadow root', async () => {
+      await setStored(
+        h,
+        settings(
+          rule(
+            'alpha',
+            'alpha',
+            'exact',
+            projectSettings({ platformBar: platformBar(solid('#00aa00')), platformBarText: textColor('#0000cc') }),
+          ),
+          rule(
+            'beta',
+            'beta',
+            'exact',
+            projectSettings({ platformBar: platformBar(solid('#0000cc')), platformBarText: textColor('#ffffff') }),
+          ),
+        ),
+      );
+      const textIs = (value, color) => value.textColors.every((textColor) => textColor === color);
+      const green = Array(KNOT_COUNT).fill('rgb(0, 170, 0)');
+      const blue = Array(KNOT_COUNT).fill('rgb(0, 0, 204)');
+
+      // Drawn while the page loads, before the content script runs. The host's inline all: initial
+      // gives way to the copied rules, which are !important.
+      await h.openConsole('/run/overview?project=alpha');
+      let shell = await shellWhen(
+        h,
+        (value) =>
+          value.render === '1' &&
+          value.backgroundColor === 'rgb(0, 170, 0)' &&
+          settledOn(value, green) &&
+          textIs(value, 'rgb(0, 0, 204)'),
+        'the shell platform bar drawn before the content script ran was not tinted',
+      );
+      assert.equal(shell.height, 48);
+      assert.equal(shell.legacyHeight, 0);
+      assertSettled(shell, green, TRANSPARENT, TRANSPARENT, 'the shell platform bar');
+      everyLayer(shell.backgroundAttachment, 'fixed', 'the shell platform bar attachment');
+      assert.equal(shell.copies.length, 1);
+      assert.equal(shell.unaffectedColor, 'rgb(32, 33, 36)');
+
+      // Drawn again later, as the console does when it replaces the widget's container.
+      await h.browser.execute(() => document.querySelector('#render-shell-bar').click());
+      shell = await shellWhen(
+        h,
+        (value) =>
+          value.render === '2' &&
+          value.backgroundColor === 'rgb(0, 170, 0)' &&
+          settledOn(value, green) &&
+          textIs(value, 'rgb(0, 0, 204)'),
+        'a shell platform bar inserted after the content script ran was not tinted',
+      );
+      assert.equal(shell.copies.length, 1);
+
+      // The switch fades the shell bar as well: its own fade animation, caught halfway.
+      await h.browser.switchToWindow(h.mockHandle);
+      const halfway = await h.browser.execute(async () => {
+        history.pushState({}, '', '/?project=beta');
+        const host = document.querySelector('one-cloud-bar-widget [mica-container]');
+        const fadeOf = () => host.getAnimations().find((animation) => !(animation instanceof CSSTransition));
+        const deadline = performance.now() + 2000;
+        while (!fadeOf() && performance.now() < deadline) {
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+        const fade = fadeOf();
+        if (!fade) return null;
+        fade.pause();
+        fade.currentTime = 150;
+        const value = Number(getComputedStyle(host).getPropertyValue('--gcp-console-tint-fade'));
+        fade.finish();
+        return value;
+      });
+      assert.ok(halfway > 0 && halfway < 1, `the shell platform bar did not fade on the switch: ${halfway}`);
+      shell = await shellWhen(
+        h,
+        (value) =>
+          value.href.includes('project=beta') &&
+          value.backgroundColor === 'rgb(0, 0, 204)' &&
+          settledOn(value, blue) &&
+          textIs(value, 'rgb(255, 255, 255)'),
+        'the shell platform bar did not follow the project switch',
+      );
+      assertSettled(shell, blue, TRANSPARENT, TRANSPARENT, 'the shell platform bar');
+
+      await pushHistoryUrl(h, '/?project=missing');
+      shell = await shellWhen(
+        h,
+        (value) =>
+          value.href.includes('project=missing') &&
+          value.backgroundColor === TRANSPARENT &&
+          value.backgroundImage === 'none' &&
+          textIs(value, 'rgb(60, 64, 67)'),
+        'the shell platform bar kept a tint on a page no rule matches',
+      );
+      assert.deepEqual(shell.copies, ['']);
     });
   });
 
