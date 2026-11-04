@@ -139,16 +139,19 @@ export default defineContentScript({
       const shellRules: string[] = [];
       // Read before the rule changes. Without a rule yet the knots read as transparent (their
       // registered initial value), so the first tint fades in from the console's own color. Every bar
-      // found here takes the same declarations and fades with the others, so the first one's knots
-      // stand for all of them; a bar inserted during a fade paints the target at once.
+      // found here takes the same declarations and fades with the others, but a bar inserted during a
+      // fade paints the target at once, so the knots are read from the bar on screen: on a shell page
+      // #ocb-platform-bar is still there, 0px high, and may be such a bar.
       const platformBars = [
         ...document.querySelectorAll('#ocb-platform-bar'),
         ...shellRoots().map((root) => root.host),
       ];
+      const platformBarOnScreen = () =>
+        platformBars.find((element) => element.getBoundingClientRect().height > 0) ?? platformBars[0] ?? null;
       let platformFade = false;
       if (project.platformBar.enabled) {
         const fill = palette.resolve(project.platformBar.color);
-        const { next, fresh } = fadeFrom(platformBarFade, fill, () => paintedKnots(platformBars[0] ?? null));
+        const { next, fresh } = fadeFrom(platformBarFade, fill, () => paintedKnots(platformBarOnScreen()));
         platformBarFade = next;
         platformFade = fresh && next.from !== undefined;
         const { color, properties } = fillProperties(fill, project.platformBar.stripes, next.from);
