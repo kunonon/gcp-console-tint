@@ -1320,19 +1320,24 @@ describe('content script', () => {
 
       // jsdom has no animate() and computes no color-mix(), so both are stubbed: the painted knots
       // read back as an oklch() color, as a browser serializes a mixed knot. `painted.value` is what
-      // every knot reads back as.
+      // every knot reads back as; `knotsReadFrom` lists the elements whose knots were read, in order.
       function stubBrowser() {
         const animate = vi.fn();
         HTMLElement.prototype.animate = animate;
         const painted = { value: 'oklch(0.7 0.2 45)' };
+        const knotsReadFrom: Element[] = [];
         const realGetComputedStyle = window.getComputedStyle.bind(window);
         vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
           const style = realGetComputedStyle(element);
           const getPropertyValue = style.getPropertyValue.bind(style);
-          style.getPropertyValue = (name: string) => (STOPS.includes(name) ? painted.value : getPropertyValue(name));
+          style.getPropertyValue = (name: string) => {
+            if (!STOPS.includes(name)) return getPropertyValue(name);
+            if (!knotsReadFrom.includes(element)) knotsReadFrom.push(element);
+            return painted.value;
+          };
           return style;
         });
-        return { animate, painted };
+        return { animate, painted, knotsReadFrom };
       }
 
       it('fades from the knots as painted to the next fill through the fade property', async () => {
@@ -1382,15 +1387,31 @@ describe('content script', () => {
       });
 
       it('fades a shell platform bar from its own knots where #ocb-platform-bar is missing', async () => {
-        const { animate } = stubBrowser();
+        const { animate, knotsReadFrom } = stubBrowser();
 
         await switchFromOrangeToBlue({ legacyBar: false, shellBar: true });
 
         const host = shellHosts()[0];
-        expect(animate.mock.contexts).toEqual([host, getElements().bar, host]);
+        const { bar } = getElements();
+        expect(animate.mock.contexts).toEqual([host, bar, host]);
+        expect(knotsReadFrom.filter((element) => element !== bar)).toEqual([host]);
         expect(host?.shadowRoot?.querySelectorAll('style')[1]?.textContent).toContain(
           `${FROM[0]}: oklch(0.7 0.2 45) !important;`,
         );
+      });
+
+      // A bar the console inserts during a fade paints the target at once, so the start is read from
+      // the bar on screen: here the shell bar, beside a 0px #ocb-platform-bar.
+      it('reads the fade start from the platform bar on screen, not from an empty #ocb-platform-bar', async () => {
+        const { knotsReadFrom } = stubBrowser();
+        vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+          return { height: this.matches('one-cloud-bar-widget *') ? 48 : 0 } as DOMRect;
+        });
+
+        await switchFromOrangeToBlue({ shellBar: true });
+
+        const { bar } = getElements();
+        expect(knotsReadFrom.filter((element) => element !== bar)).toEqual([shellHosts()[0]]);
       });
 
       it('fades again into the same fill after a page no rule matches', async () => {
@@ -1661,6 +1682,42 @@ describe('platform bar in the console shell', () => {
     root.innerHTML = SHELL_BAR_CONTENT;
     await flush();
 
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  // Something that removed the style every time it came back would otherwise trade mutations with the
+  // script for ever, without the event loop yielding. The remover here gives up after 1000 removals,
+  // so a script without the limit fails this test instead of hanging it.
+  it('puts the style back at most ten times a second into a root that keeps losing it', async () => {
+    let now = 5000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const root = renderShellBar();
+    await runOnTestProject();
+    let removals = 0;
+    const remover = new MutationObserver(() => {
+      const copy = root.querySelectorAll('style')[1];
+      if (copy && removals < 1000) {
+        removals++;
+        copy.remove();
+      }
+    });
+    remover.observe(root, { childList: true });
+
+    root.querySelectorAll('style')[1]?.remove();
+    await flush();
+    remover.disconnect();
+
+    expect(removals).toBe(10);
+    expect(copies(root)).toEqual([]);
+
+    // Later passes within the same second leave the root alone; the first one after it restores.
+    now += 1000;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
+    expect(copies(root)).toEqual([]);
+    now += 1;
+    document.body.appendChild(document.createElement('p'));
+    await flush();
     expect(copies(root)).toEqual([shellCss()]);
   });
 
