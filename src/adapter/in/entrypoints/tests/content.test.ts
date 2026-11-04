@@ -1668,7 +1668,8 @@ describe("platform bar in the console's newer shell", () => {
     expect(shellCss()).toContain(':host { background-color: #000080 !important;');
     expect(shellCss()).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
     expect(copies(root)).toEqual([shellCss()]);
-    // Only one-cloud-bar-widget's roots, and the document's rules are unchanged.
+    // Only one-cloud-bar-widget's roots get a copy, and the document's rule still paints
+    // #ocb-platform-bar.
     expect(elsewhere.querySelectorAll('style')).toHaveLength(0);
     expect(getElements().styleEl.textContent).toContain('#ocb-platform-bar { background-color: #000080 !important;');
   });
@@ -1707,8 +1708,8 @@ describe("platform bar in the console's newer shell", () => {
     await flush();
     expect(copies(root)).toEqual([shellCss()]);
 
-    // Any insertion on the page runs a pass; one that changes nothing leaves the copy's text node as
-    // it is, rather than rewriting the style sheet each time.
+    // Any insertion into the document's light DOM runs a pass; one that changes nothing leaves the
+    // copy's text node as it is, rather than rewriting the style sheet each time.
     const text = root.querySelectorAll('style')[1]?.firstChild;
     document.body.appendChild(document.createElement('p'));
     await flush();

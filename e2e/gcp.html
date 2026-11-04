@@ -41,13 +41,14 @@
       document.querySelector('#navigate-home').addEventListener('click', () => changeProject('alpha'));
       document.querySelector('#replace-project').addEventListener('click', () => changeProject('beta', true));
       document.querySelector('#navigate-missing').addEventListener('click', () => changeProject('missing'));
-      // Pages in the console's newer shell, such as Cloud Run's overview (the fixture uses every /run/
-      // path), leave #ocb-platform-bar empty and draw the bar in one-cloud-bar-widget: mica, the
-      // console's widget loader, attaches an open shadow root to a detached container, fills it, resets
-      // the container's own styles (all: initial, display: block) and only then inserts it. The text in
-      // there has colors of its own, so inherited color does not reach it, and their selectors are more
-      // specific than the extension's, as the console's are, so only !important lets the copied rule
-      // win. Each render replaces the previous container, numbered in data-render.
+      // Pages in the console's newer shell, such as Cloud Run's overview (the fixture draws the bar on
+      // every /run/ path), leave #ocb-platform-bar empty and draw the bar in one-cloud-bar-widget: mica,
+      // the console's widget loader, attaches an open shadow root to a detached container, fills it,
+      // resets the container's own styles (all: initial, display: block) and only then inserts it. The
+      // text in there has colors of its own, so inherited color does not reach it, and the root's own
+      // text rule has more specific selectors than the extension's, as the console's rules do, so only
+      // !important lets the copied rule win. Each render replaces the previous container, numbered in
+      // data-render.
       let renders = 0;
       const renderShellBar = () => {
         const host = document.createElement('div');
