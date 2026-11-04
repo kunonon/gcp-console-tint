@@ -1576,7 +1576,8 @@ for (const browserName of browserTargets()) {
       assert.equal(shell.copies.length, 1);
       assert.equal(shell.unaffectedColor, 'rgb(32, 33, 36)');
 
-      // Drawn again later in a new container, as the console may do when it re-creates the widget.
+      // Drawn again later in a new container in the same widget, as the console may do when it
+      // re-renders the bar.
       await h.browser.execute(() => document.querySelector('#render-shell-bar').click());
       shell = await shellWhen(
         h,
