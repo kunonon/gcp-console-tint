@@ -1310,6 +1310,16 @@ describe('content script', () => {
           delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
         }
       });
+
+      // Finding the bar on screen forces a layout right after the top bar's writes.
+      it('measures no platform bar on a switch', async () => {
+        vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+        const measure = vi.spyOn(Element.prototype, 'getBoundingClientRect');
+
+        await switchFromOrangeToBlue();
+
+        expect(measure).not.toHaveBeenCalled();
+      });
     });
 
     describe('where the browser can animate', () => {
@@ -1714,10 +1724,12 @@ describe("platform bar in the console's newer shell", () => {
     const root = renderShellBar();
     await runOnTestProject();
     let removals = 0;
+    // Each removal comes 50ms after the last, so the tenth restore is at 5450.
     const remover = new MutationObserver(() => {
       const copy = root.querySelectorAll('style')[1];
       if (copy && removals < 1000) {
         removals++;
+        now += 50;
         copy.remove();
       }
     });
@@ -1730,14 +1742,105 @@ describe("platform bar in the console's newer shell", () => {
     expect(removals).toBe(10);
     expect(copies(root)).toEqual([]);
 
-    // Later passes within the same second leave the root alone; the first one after it restores.
-    now += 1000;
+    // The window opened with the first restore, at 5000: later passes within it leave the root alone,
+    // and the first one after it restores, although the last restore was less than a second before.
+    now = 6000;
     document.body.appendChild(document.createElement('p'));
     await flush();
     expect(copies(root)).toEqual([]);
-    now += 1;
+    now = 6001;
     document.body.appendChild(document.createElement('p'));
     await flush();
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  // A page that answered each copy by re-creating the host would bring a new root every time, so the
+  // limit counts writes across the document rather than per root.
+  it('styles at most ten new roots a second for a page that re-creates the host each time', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    const first = renderShellBar();
+    const slot = first.host.parentElement as Element;
+    await runOnTestProject();
+    let recreations = 0;
+    let latest = first;
+    const recreate = () => {
+      const host = document.createElement('div');
+      latest = host.attachShadow({ mode: 'open' });
+      latest.innerHTML = SHELL_BAR_CONTENT;
+      const page = new MutationObserver(() => {
+        page.disconnect();
+        if (recreations < 1000) {
+          recreations++;
+          recreate();
+        }
+      });
+      page.observe(latest, { childList: true });
+      slot.replaceChildren(host);
+    };
+
+    recreate();
+    await flush();
+
+    expect(recreations).toBe(10);
+    expect(copies(latest)).toEqual([]);
+  });
+
+  it('restores rules the page rewrote at most ten times a second', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    const root = renderShellBar();
+    await runOnTestProject();
+    const copy = root.querySelectorAll('style')[1] as HTMLStyleElement;
+    // Rewrites the copy whenever the script restores it, and inserts something into the page, which
+    // runs the script's next pass.
+    let rewrites = 0;
+    const rewrite = () => {
+      copy.textContent = 'rewritten';
+      document.body.appendChild(document.createElement('p'));
+    };
+    const page = new MutationObserver(() => {
+      if (copy.textContent !== 'rewritten' && rewrites < 1000) {
+        rewrites++;
+        rewrite();
+      }
+    });
+    page.observe(root, { childList: true, subtree: true });
+
+    rewrite();
+    await flush();
+    page.disconnect();
+
+    expect(rewrites).toBe(10);
+    expect(copies(root)).toEqual(['rewritten']);
+  });
+
+  // Dragging a color in the side panel saves on every move, so settings changes are not limited.
+  it('follows every settings change at once, however many come in a second', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    const root = renderShellBar();
+    await runOnTestProject();
+
+    for (let i = 0; i < 15; i++) {
+      const color = `#0000${(16 + i).toString(16)}`;
+      await fakeBrowser.storage.local.set(
+        tintSettingsWithRule({ platformBar: { color: { paletteId: null, custom: solid(color) } } }),
+      );
+      await flush();
+      expect(shellCss()).toContain(`:host { background-color: ${color} !important;`);
+      expect(copies(root)).toEqual([shellCss()]);
+    }
+  });
+
+  it('puts no empty style back into a root that loses it while no rule paints', async () => {
+    const root = renderShellBar();
+    await runOnTestProject();
+    triggerLocationChange('/?project=unknown-project');
+    expect(copies(root)).toEqual(['']);
+
+    root.innerHTML = SHELL_BAR_CONTENT;
+    await flush();
+    expect(copies(root)).toEqual([]);
+
+    triggerLocationChange('/?project=test-project');
     expect(copies(root)).toEqual([shellCss()]);
   });
 
