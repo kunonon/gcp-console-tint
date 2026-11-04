@@ -1386,20 +1386,20 @@ describe('content script', () => {
         expect(styleEl.textContent).toContain(`${FROM[0]}: oklch(0.7 0.2 45) !important;`);
       });
 
-      it('fades the shell platform bar with #ocb-platform-bar', async () => {
+      it('fades every shell platform bar with #ocb-platform-bar', async () => {
         const { animate } = stubBrowser();
 
-        await switchFromOrangeToBlue({ shellBar: true });
+        await switchFromOrangeToBlue({ shellBars: 2 });
 
         const { bar } = getElements();
-        const platformBars = [document.querySelector('#ocb-platform-bar'), shellHosts()[0]];
+        const platformBars = [document.querySelector('#ocb-platform-bar'), ...shellHosts()];
         expect(animate.mock.contexts).toEqual([...platformBars, bar, ...platformBars]);
       });
 
       it('fades a shell platform bar from its own knots where #ocb-platform-bar is missing', async () => {
         const { animate, knotsReadFrom } = stubBrowser();
 
-        await switchFromOrangeToBlue({ legacyBar: false, shellBar: true });
+        await switchFromOrangeToBlue({ legacyBar: false, shellBars: 1 });
 
         const host = shellHosts()[0];
         const { bar } = getElements();
@@ -1418,10 +1418,27 @@ describe('content script', () => {
           return { height: this.matches('one-cloud-bar-widget *') ? 48 : 0 } as DOMRect;
         });
 
-        await switchFromOrangeToBlue({ shellBar: true });
+        await switchFromOrangeToBlue({ shellBars: 1 });
 
         const { bar } = getElements();
         expect(knotsReadFrom.filter((element) => element !== bar)).toEqual([shellHosts()[0]]);
+      });
+
+      // The console's welcome page, a legacy page, has a 49px #ocb-platform-bar and, in
+      // one-cloud-bar-widget, a 0px mica container with an open shadow root and no bar inside. The
+      // knots come from the bar on screen there too, not from the last bar found.
+      it('reads the fade start from #ocb-platform-bar when an empty shell host comes after it', async () => {
+        const { knotsReadFrom } = stubBrowser();
+        vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+          return { height: this.matches('#ocb-platform-bar') ? 48 : 0 } as DOMRect;
+        });
+
+        await switchFromOrangeToBlue({ shellBars: 1 });
+
+        const { bar } = getElements();
+        expect(knotsReadFrom.filter((element) => element !== bar)).toEqual([
+          document.querySelector('#ocb-platform-bar'),
+        ]);
       });
 
       it('fades again into the same fill after a page no rule matches', async () => {
@@ -1440,10 +1457,11 @@ describe('content script', () => {
 });
 
 // An orange project, then a switch to a blue one on the top bar and the platform bar, over a mock
-// console platform bar: #ocb-platform-bar, a shell platform bar, or one of each.
-async function switchFromOrangeToBlue({ legacyBar = true, shellBar = false } = {}) {
+// console platform bar: #ocb-platform-bar, `shellBars` shell platform bars (each in its own widget),
+// or both.
+async function switchFromOrangeToBlue({ legacyBar = true, shellBars = 0 } = {}) {
   document.body.innerHTML = legacyBar ? '<div id="ocb-platform-bar"></div>' : '';
-  if (shellBar) renderShellBar();
+  for (let i = 0; i < shellBars; i++) renderShellBar();
   const bars = (color: string) => ({
     topBar: { color: { paletteId: null, custom: solid(color) } },
     platformBar: { color: { paletteId: null, custom: solid(color) } },
@@ -1663,6 +1681,23 @@ describe("platform bar in the console's newer shell", () => {
     await runOnTestProject();
 
     expect([first, second, third].map(copies)).toEqual(Array(3).fill([shellCss()]));
+  });
+
+  it('clears a painted root even when a root before it in the document was never painted', async () => {
+    const first = renderShellBar();
+    await runOnTestProject();
+    expect(copies(first)).toEqual([shellCss()]);
+
+    // The new root comes first in document order and is in the same task as the switch, so the
+    // observer has not styled it yet: the pass must skip it and still reach the painted root after it.
+    const slot = document.body
+      .insertBefore(document.createElement('one-cloud-bar-widget'), document.body.firstChild)
+      .appendChild(document.createElement('mica-widget'))
+      .appendChild(document.createElement('div'));
+    renderShellBar(slot);
+    triggerLocationChange('/?project=unknown-project');
+
+    expect(copies(first)).toEqual(['']);
   });
 
   it('paints a shell bar drawn later, and keeps it in step with the document', async () => {
