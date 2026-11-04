@@ -87,12 +87,13 @@ interface TintSettings {
 // fixtures are current-schema data that no migration step touches.
 const CURRENT_VERSION = '0.5.0';
 
-// Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event.
-// The real ContentScriptContext is only constructed by WXT's entrypoint wrapper (not present
-// when importing content.ts directly in tests), so we provide a minimal fake here: it simply
-// forwards to the target's native addEventListener, which is all our code relies on. The listeners
-// are removed after each test, as WXT's context does when a content script is invalidated, so an
-// earlier test's script does not react to a later test's location changes.
+// Our main() reads `ctx.addEventListener` to subscribe to WXT's `wxt:locationchange` event, and
+// `ctx.onInvalidated` to stop watching the page. The real ContentScriptContext is only constructed
+// by WXT's entrypoint wrapper (not present when importing content.ts directly in tests), so we
+// provide a minimal fake here: it forwards to the target's native addEventListener, which is all
+// our code relies on. The listeners are removed and the invalidation callbacks run after each test,
+// as WXT's context does when a content script is invalidated, so an earlier test's script does not
+// react to a later test's location changes or DOM.
 const ctxListeners: (() => void)[] = [];
 function createFakeCtx() {
   return {
@@ -100,11 +101,20 @@ function createFakeCtx() {
       target.addEventListener(type, listener as EventListener);
       ctxListeners.push(() => target.removeEventListener(type, listener as EventListener));
     },
+    onInvalidated(callback: () => void) {
+      ctxListeners.push(callback);
+      return () => {};
+    },
   };
 }
 
-afterEach(() => {
+// Runs what WXT runs when the content script is invalidated.
+function invalidateContentScripts() {
   for (const remove of ctxListeners.splice(0)) remove();
+}
+
+afterEach(() => {
+  invalidateContentScripts();
   vi.restoreAllMocks();
 });
 
@@ -1361,6 +1371,28 @@ describe('content script', () => {
         expect(styleEl.textContent).toContain(`${FROM[0]}: oklch(0.7 0.2 45) !important;`);
       });
 
+      it('fades the shell platform bar with #ocb-platform-bar', async () => {
+        const { animate } = stubBrowser();
+
+        await switchFromOrangeToBlue({ shellBar: true });
+
+        const { bar } = getElements();
+        const platformBars = [document.querySelector('#ocb-platform-bar'), shellHosts()[0]];
+        expect(animate.mock.contexts).toEqual([...platformBars, bar, ...platformBars]);
+      });
+
+      it('fades a shell platform bar from its own knots where #ocb-platform-bar is missing', async () => {
+        const { animate } = stubBrowser();
+
+        await switchFromOrangeToBlue({ legacyBar: false, shellBar: true });
+
+        const host = shellHosts()[0];
+        expect(animate.mock.contexts).toEqual([host, getElements().bar, host]);
+        expect(host?.shadowRoot?.querySelectorAll('style')[1]?.textContent).toContain(
+          `${FROM[0]}: oklch(0.7 0.2 45) !important;`,
+        );
+      });
+
       it('fades again into the same fill after a page no rule matches', async () => {
         const { animate } = stubBrowser();
         await switchFromOrangeToBlue();
@@ -1376,9 +1408,11 @@ describe('content script', () => {
   });
 });
 
-// An orange project, then a switch to a blue one on both bars, over a mock console platform bar.
-async function switchFromOrangeToBlue() {
-  document.body.innerHTML = '<div id="ocb-platform-bar"></div>';
+// An orange project, then a switch to a blue one on both bars, over a mock console platform bar
+// (#ocb-platform-bar, a shell platform bar, or both).
+async function switchFromOrangeToBlue({ legacyBar = true, shellBar = false } = {}) {
+  document.body.innerHTML = legacyBar ? '<div id="ocb-platform-bar"></div>' : '';
+  if (shellBar) renderShellBar();
   const bars = (color: string) => ({
     topBar: { color: { paletteId: null, custom: solid(color) } },
     platformBar: { color: { paletteId: null, custom: solid(color) } },
@@ -1528,6 +1562,119 @@ describe('gradient fills', () => {
     });
 
     expect(styleEl.textContent).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
+  });
+});
+
+// Pages in the console's newer shell draw the platform bar in one-cloud-bar-widget, inside an open
+// shadow root that the console attaches and fills before it inserts the host (mica-widget's
+// container). The bar's text has colors of its own in there, set by the root's first style element.
+const SHELL_BAR_CONTENT =
+  '<style>.cfc-platform-bar-left * { color: #3c4043; }</style><pcc-platform-bar><cfc-platform-bar><div class="cfc-platform-bar-left"><span>Google Cloud</span></div></cfc-platform-bar></pcc-platform-bar>';
+
+function renderShellBar(): ShadowRoot {
+  const host = document.createElement('div');
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = SHELL_BAR_CONTENT;
+  document.body
+    .appendChild(document.createElement('one-cloud-bar-widget'))
+    .appendChild(document.createElement('mica-widget'))
+    .appendChild(document.createElement('div'))
+    .appendChild(host);
+  return root;
+}
+
+function shellHosts() {
+  return Array.from(document.querySelectorAll('one-cloud-bar-widget mica-widget div > div'));
+}
+
+describe('platform bar in the console shell', () => {
+  // The style elements the script put into a shell root: those after the console's own.
+  const copies = (root: ShadowRoot) =>
+    Array.from(root.querySelectorAll('style'))
+      .slice(1)
+      .map((style) => style.textContent);
+
+  // The document's rules, with the background on the root's host.
+  const shellCss = () => getElements().styleEl.textContent?.replace('#ocb-platform-bar {', ':host {') ?? '';
+
+  async function runOnTestProject(settings: ProjectSettingsOverrides = {}) {
+    await fakeBrowser.storage.local.set(tintSettingsWithRule(settings));
+    setTestProjectLocation();
+    runContentScript();
+    await flush();
+  }
+
+  it('paints a shell bar drawn before the script runs, background on its host and text inside', async () => {
+    const root = renderShellBar();
+    const elsewhere = document.body.appendChild(document.createElement('div')).attachShadow({ mode: 'open' });
+
+    await runOnTestProject({
+      platformBar: { color: { paletteId: null, custom: solid('#000080') } },
+      platformBarText: { color: { paletteId: null, custom: '#abcdef' } },
+    });
+
+    expect(shellCss()).toContain(':host { background-color: #000080 !important;');
+    expect(shellCss()).toContain('.pcc-platform-bar-button * { color: #abcdef !important;');
+    expect(copies(root)).toEqual([shellCss()]);
+    // Only one-cloud-bar-widget's roots, and the document's rules are unchanged.
+    expect(elsewhere.querySelectorAll('style')).toHaveLength(0);
+    expect(getElements().styleEl.textContent).toContain('#ocb-platform-bar { background-color: #000080 !important;');
+  });
+
+  it('paints a shell bar drawn later, and keeps it in step with the document', async () => {
+    await runOnTestProject();
+
+    const root = renderShellBar();
+    await flush();
+    expect(copies(root)).toEqual([shellCss()]);
+
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBarText: { enabled: false } }));
+    await flush();
+    expect(shellCss()).toMatch(/^:host \{[^\n]*\}$/);
+    expect(copies(root)).toEqual([shellCss()]);
+
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({ platformBar: { enabled: false } }));
+    await flush();
+    expect(shellCss()).toMatch(/^\.cfc-platform-bar-left \*/);
+    expect(copies(root)).toEqual([shellCss()]);
+
+    triggerLocationChange('/?project=unknown-project');
+    expect(copies(root)).toEqual(['']);
+  });
+
+  it('adds nothing to a shell bar while no rule paints it', async () => {
+    const root = renderShellBar();
+    runContentScript();
+    await flush();
+    expect(copies(root)).toEqual([]);
+
+    await fakeBrowser.storage.local.set(tintSettingsWithRule({}));
+    triggerLocationChange('/?project=test-project');
+    await flush();
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  it('puts the style back when the console empties the root in place', async () => {
+    const root = renderShellBar();
+    await runOnTestProject();
+
+    root.innerHTML = SHELL_BAR_CONTENT;
+    await flush();
+
+    expect(copies(root)).toEqual([shellCss()]);
+  });
+
+  it('stops watching for shell bars once the content script is invalidated', async () => {
+    await runOnTestProject();
+    const before = renderShellBar();
+    await flush();
+    expect(copies(before)).toEqual([shellCss()]);
+
+    invalidateContentScripts();
+    const after = renderShellBar();
+    await flush();
+
+    expect(copies(after)).toEqual([]);
   });
 });
 
