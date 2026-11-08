@@ -29,14 +29,14 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
-    "@heroui/react": "^3.2.6",
-    "@heroui/styles": "^3.2.6",
+    "@heroui/react": "^3.2.7",
+    "@heroui/styles": "^3.2.7",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.3",
+    "@biomejs/biome": "2.6.4",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",
