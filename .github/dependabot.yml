@@ -32,3 +32,24 @@ updates:
       npm-dependencies:
         patterns:
           - "*"
+    # HeroUI is held at 3.2.6 while pnpm-workspace.yaml pins React Aria below
+    # 1.22. @heroui/react 3.2.7 requires react-aria-components ^1.22.1 and
+    # imports react-aria-components/Sheet, which 1.21.1 does not ship: in #104
+    # both browser builds and 11 test files failed on that import.
+    # @heroui/react depends on the exact same version of @heroui/styles, so the
+    # two are held together. The entries list all three `update-types` rather
+    # than only the name or a `versions` range, because dependabot-core skips
+    # `update-types` conditions for security updates and keeps `versions`
+    # ranges; what a name-only entry does there is not documented. Remove both
+    # entries together with the React Aria overrides in pnpm-workspace.yaml.
+    ignore:
+      - dependency-name: "@heroui/react"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: "@heroui/styles"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
