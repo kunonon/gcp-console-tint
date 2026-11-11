@@ -12,5 +12,5 @@ down:
 # Build a production Chrome zip (Web Store submittable) into .output/.
 # One-shot container, so it works whether or not the dev stack is running.
 export:
-	docker compose run --rm dev sh -c "corepack enable && pnpm install && pnpm zip"
+	docker compose run --rm dev sh -c "npm install -g corepack@0.36.0 && corepack enable && pnpm install && pnpm zip"
 	@ls -t .output/*.zip | head -1
