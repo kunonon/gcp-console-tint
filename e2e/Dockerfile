@@ -1,4 +1,4 @@
-FROM node:24-trixie-slim
+FROM node:26-trixie-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -40,6 +40,7 @@ RUN apt-get update \
       xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable
+# node:26 images do not ship corepack, so it comes from npm at a pinned version.
+RUN npm install -g corepack@0.36.0 && corepack enable
 
 WORKDIR /workspace
