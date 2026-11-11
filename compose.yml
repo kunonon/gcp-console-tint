@@ -1,6 +1,6 @@
 services:
   dev:
-    image: node:24-bookworm-slim
+    image: node:24-trixie-slim
     working_dir: /app
     stdin_open: true
     command: sh -c "corepack enable && pnpm install && pnpm dev"
