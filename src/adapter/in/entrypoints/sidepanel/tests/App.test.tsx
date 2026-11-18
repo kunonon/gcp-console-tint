@@ -3126,7 +3126,10 @@ describe('App', () => {
       expect(await getStoredSettings()).toEqual(before);
       expect(consoleError).toHaveBeenCalledTimes(1);
 
-      await user.keyboard('{Escape}');
+      // Cancel with the Close button, not Escape. Disabling the focused Import button while saving
+      // moves focus to the body at the next rendering update (jsdom 31, as in browsers), and Escape
+      // from there only reaches the dialog if the save settled first, which made this test racy.
+      await user.click(within(dialog).getByRole('button', { name: 'Close' }));
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       await user.click(screen.getByRole('tab', { name: 'Rules' }));
       await addRule(user, 'normal-edit');
