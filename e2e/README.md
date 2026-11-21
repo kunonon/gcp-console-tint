@@ -23,7 +23,7 @@ To use the CI browser and driver versions locally, pass the pinned overrides to 
 
 ```sh
 docker compose --profile e2e run --rm --build \
-  -e E2E_CHROME_VERSION=157.0.8103.50 \
+  -e E2E_CHROME_VERSION=157.0.8103.78 \
   -e E2E_FIREFOX_VERSION=stable_159.0.1 \
   -e GECKODRIVER_VERSION=0.37.1 e2e
 ```
