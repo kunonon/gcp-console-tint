@@ -84,7 +84,7 @@ jobs:
         browser: [chrome, firefox]
         suite: [ui, other]
     env:
-      E2E_CHROME_VERSION: 157.0.8103.38
+      E2E_CHROME_VERSION: 157.0.8103.50
       E2E_FIREFOX_VERSION: stable_159.0.1
       GECKODRIVER_VERSION: 0.37.1
     steps:
