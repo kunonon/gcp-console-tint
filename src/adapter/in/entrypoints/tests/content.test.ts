@@ -1256,8 +1256,13 @@ describe('content script', () => {
       runContentScript();
       await flush();
 
+      // Read through the longhands: the shorthand's serialization drops defaults and differs between
+      // engines (Chrome also drops the 0s duration), while all of them, and jsdom 31, agree on these.
       const { bar } = getElements();
-      expect(bar.style.transition).toBe(`${COLOR_TRANSITIONS}, height 200ms ease`);
+      expect(bar.style.transitionProperty).toBe(`background-color, ${STRIPE_LIGHT}, ${STRIPE_DARK}, height`);
+      expect(bar.style.transitionDuration).toBe('0s, 300ms, 300ms, 200ms');
+      expect(bar.style.transitionTimingFunction).toBe('linear, ease, ease, ease');
+      expect(bar.style.transitionDelay).toBe('300ms, 0s, 0s, 0s');
     });
 
     it('adds transition declarations to the generated Platform Bar and text CSS rules', async () => {

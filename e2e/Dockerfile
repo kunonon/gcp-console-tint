@@ -1,15 +1,15 @@
-FROM node:24-bookworm-slim
+FROM node:26-trixie-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       fonts-liberation \
-      libasound2 \
-      libatk-bridge2.0-0 \
-      libatk1.0-0 \
-      libatspi2.0-0 \
+      libasound2t64 \
+      libatk-bridge2.0-0t64 \
+      libatk1.0-0t64 \
+      libatspi2.0-0t64 \
       libcairo2 \
-      libcups2 \
+      libcups2t64 \
       libdbus-1-3 \
       libdbus-glib-1-2 \
       libdrm2 \
@@ -17,8 +17,8 @@ RUN apt-get update \
       libfontconfig1 \
       libfreetype6 \
       libgbm1 \
-      libglib2.0-0 \
-      libgtk-3-0 \
+      libglib2.0-0t64 \
+      libgtk-3-0t64 \
       libnspr4 \
       libnss3 \
       libpango-1.0-0 \
@@ -40,6 +40,7 @@ RUN apt-get update \
       xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable
+# node:26 images do not ship corepack, so it comes from npm at a pinned version.
+RUN npm install -g corepack@0.36.0 && corepack enable
 
 WORKDIR /workspace

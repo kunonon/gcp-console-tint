@@ -29,8 +29,8 @@ Click the toolbar icon: the settings open in the side panel (Chrome) or sidebar 
 Build inside Docker (no Node or pnpm needed on the host):
 
 ```sh
-docker compose run --rm dev sh -c "corepack enable && pnpm install && pnpm build"          # Chrome  → .output/chrome-mv3
-docker compose run --rm dev sh -c "corepack enable && pnpm install && pnpm build:firefox"  # Firefox → .output/firefox-mv2
+docker compose run --rm dev sh -c "npm install -g corepack@0.36.0 && corepack enable && pnpm install && pnpm build"          # Chrome  → .output/chrome-mv3
+docker compose run --rm dev sh -c "npm install -g corepack@0.36.0 && corepack enable && pnpm install && pnpm build:firefox"  # Firefox → .output/firefox-mv2
 ```
 
 - **Chrome**: `chrome://extensions` → enable Developer mode → *Load unpacked* → select `.output/chrome-mv3`
